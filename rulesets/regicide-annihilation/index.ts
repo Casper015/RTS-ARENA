@@ -41,9 +41,10 @@ const ruleset: Ruleset = {
   types,
 
   setup(ctx) {
-    // D-214（用户：兵营放到基地后面，加大兵营被拆的难度）：兵营放在主基地正西边、隔一格（对手主要从东边来），
-    // 要拆它得先绕过主基地、顶着主基地的炮（D-210 曾挪到 (10, 7)、主基地射程外，给骚扰一个目标）
-    annihilationSetup(ctx, types, { mineAmount: MINE_AMOUNT, barracks: { x: 0, y: 3 } })
+    // D-215（用户：放到侧面一点，不要挡住金矿位置）：兵营放在主基地东北侧 (10, 2)，离主基地 5 格、离 (8, 1) 的金矿 3 格（不占矿旁边的格子）；
+    // 兵营四周的 8 个攻击位置一半在主基地射程内（西边、南边），一半在射程外（东边、北边）。
+    // 之前：D-210 挪到 (10, 7)、全在射程外（给骚扰一个目标）；D-214 放到主基地正西边、全在射程内（时间到的局涨到 47%）
+    annihilationSetup(ctx, types, { mineAmount: MINE_AMOUNT, barracks: { x: 10, y: 2 } })
     spawnLords(ctx, ANNIHILATION_W, ANNIHILATION_H, types)
     // 野怪营地（D-189）：内圈、外圈各一对，都在离两家主基地一样远的斜线上
     // D-193（用户）：赏金 150，死了的野怪每 900 tick 定时补满（拓荒是 100、营地清空后才刷新）
