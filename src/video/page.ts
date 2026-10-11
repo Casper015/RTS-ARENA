@@ -87,8 +87,10 @@ export interface ReplayFrame {
   progress: number
   /** 最后定格时显示结果 */
   final: boolean
-  /** 这段怎么放：battle 大战、skirmish 小冲突（D-225 起都是 4 倍速）、quiet 没动静快进 */
-  pace: "battle" | "skirmish" | "quiet"
+  /** 这段怎么放：fight 交战 4 倍速（D-226 不再分大战、小冲突）、quiet 没动静快进 */
+  pace: "fight" | "quiet"
+  /** 这段按几倍速放（取整；进度条旁写「交战 4x」「快进 16x」，D-226） */
+  speed: number
   /** 规则包画在地图上的标记（控制点、台址……），和回放页面一样 */
   markers: ({ kind: "zone"; x: number; y: number; w: number; h: number; owner: number | null; label?: string; color?: string } | { kind: "label"; x: number; y: number; text: string; owner?: number | null })[]
   /** 规则包的状态栏文字（比分、目标……） */
@@ -103,6 +105,8 @@ export interface ReplayFrame {
   healFx?: number[]
   /** 规则包放的画面特效（D-205）：区域、几帧前、飘的字、颜色 */
   ruleFx?: { x: number; y: number; w: number; h: number; age: number; text?: string; color?: string; radius?: number }[]
+  /** 一下挪了好几格的单位（击退这类，D-226）：[原来的 x, y, 现在画在的 x, y, 滑了多少（0～1）] 一组 5 个，画一道渐隐的轨迹 */
+  knockFx?: number[]
   /** 技能冷却环：[x, y, w, h, 冷却好了的比例（1 是能放了）] 一组 5 个 */
   cds?: number[]
   /** 正在回血的：[x, y, w, h] 一组 4 个 */
@@ -660,9 +664,8 @@ export function installVideoPage(): void {
       g.restore()
       y += 414
     }
-    vBullets(s.intro, SX + 22, y, SW - 22, VH - 114 - y, 26, 18, s.color, i - 8)
-    // 战绩往上挪一点，给最下面正中的「RTS Arena」留地方（D-224）
-    if (s.record?.length) fitLines(s.record.join(" · "), VW / 2, VH - 58, 24, 14, SW, 1, s.color, { bold: true, align: "center" })
+    vBullets(s.intro, SX + 22, y, SW - 22, VH - 96 - y, 26, 18, s.color, i - 8)
+    if (s.record?.length) fitLines(s.record.join(" · "), VW / 2, VH - 40, 24, 14, SW, 1, s.color, { bold: true, align: "center" })
   }
 
   /** 单位图形的半径是几格（D-220：直径 1.4 格，比一格大，挨着的单位边缘叠在一起）；工人还是原来的大小（不到一格，D-221 用户） */
@@ -791,11 +794,6 @@ export function installVideoPage(): void {
     return y + ls.length * size * 1.3
   }
 
-  /** 竖屏最下面正中的小署名（D-224，横屏在右下角；规则页最下面已经有署名和仓库地址、片尾也有，这两页不加） */
-  function vWatermark(): void {
-    text("RTS Arena", VW / 2, VH - 14, 18, "rgba(232,237,247,0.45)", { bold: true, align: "center" })
-  }
-
   /** 竖屏：渐变背景 */
   function vBackground(): void {
     const gr = g.createLinearGradient(0, 0, 0, VH)
@@ -921,6 +919,30 @@ export function installVideoPage(): void {
       g.fill()
       g.globalAlpha = 1
     }
+    // 被击退的（D-226）：从原来的位置拖一道浅色轨迹到现在画的位置，越往原处越淡、滑得越久越淡；单位本身画在插值的位置上
+    const kf = (f.knockFx ?? []) as number[]
+    g.save()
+    g.lineCap = "round"
+    g.lineWidth = TILE * UNIT_R * 1.5
+    for (let k = 0; k < kf.length; k += 5) {
+      const [x0, y0, x1, y1, p] = kf.slice(k, k + 5)
+      const ax = ox + (x0 + 0.5) * TILE
+      const ay = oy + (y0 + 0.5) * TILE
+      const bx = ox + (x1 + 0.5) * TILE
+      const by = oy + (y1 + 0.5) * TILE
+      const grad = g.createLinearGradient(ax, ay, bx, by)
+      // 滑的大部分时间都看得清，快滑完才淡掉
+      const a = 0.95 * (1 - p * p)
+      grad.addColorStop(0, "rgba(235,248,255,0)")
+      grad.addColorStop(0.5, `rgba(235,248,255,${0.45 * a})`)
+      grad.addColorStop(1, `rgba(235,248,255,${a})`)
+      g.strokeStyle = grad
+      g.beginPath()
+      g.moveTo(ax, ay)
+      g.lineTo(bx, by)
+      g.stroke()
+    }
+    g.restore()
     const e = f.ents as number[]
     for (let k = 0; k < e.length; k += 8) {
       const [x, y, ew, eh, seat, ti, hp, bp] = e.slice(k, k + 8)
@@ -1281,10 +1303,10 @@ export function installVideoPage(): void {
     roundRect(MX, by, s.width * TILE, 8, 4, "rgba(255,255,255,0.1)")
     roundRect(MX, by, Math.max(8, s.width * TILE * f.progress), 8, 4, C.accent)
     text(`第 ${f.t} tick`, MX + s.width * TILE, by - 6, 15, C.muted, { align: "right" })
-    // 大战、小冲突都 4 倍速（D-225），没动静快进（D-172、D-174）
+    // 交战 4x（D-226 不再分大战、小冲突），没动静快进、写实际倍速（D-172、D-174；D-226 用户：倍速写成 4x 这样）
     if (!f.final) {
-      if (f.pace === "quiet") text("▸▸ 快进", MX, by - 6, 15, C.accent, { bold: true })
-      else text(f.pace === "battle" ? "▶ 大战 4 倍速" : "▶ 交火 4 倍速", MX, by - 6, 15, C.text, { bold: true })
+      if (f.pace === "quiet") text(`▸▸ 快进 ${f.speed}x`, MX, by - 6, 15, C.accent, { bold: true })
+      else text(`▶ 交战 ${f.speed}x`, MX, by - 6, 15, C.text, { bold: true })
     }
     if (f.final) {
       g.globalAlpha = 0.85
@@ -1344,13 +1366,13 @@ export function installVideoPage(): void {
     roundRect(SX, by, SW, 8, 4, "rgba(255,255,255,0.1)")
     roundRect(SX, by, Math.max(8, SW * (f.progress ?? 0)), 8, 4, C.accent)
     text(`第 ${f.t ?? 0} tick`, SX + SW, by - 8, 18, C.muted, { align: "right" })
-    if (!f.final) text(f.pace === "quiet" ? "▸▸ 快进" : f.pace === "battle" ? "▶ 大战 4 倍速" : "▶ 交火 4 倍速", SX, by - 8, 18, f.pace === "quiet" ? C.accent : C.text, { bold: true })
+    if (!f.final) text(f.pace === "quiet" ? `▸▸ 快进 ${f.speed}x` : `▶ 交战 ${f.speed}x`, SX, by - 8, 18, f.pace === "quiet" ? C.accent : C.text, { bold: true })
     let y2 = by + 46
     if (s.win) {
       drawWin(s.win, f.t ?? 0, SX, y2, SW, 100, 22)
       y2 += 12 + 100 + 34
     }
-    const room = Math.max(0, Math.floor((VH - 46 - y2) / 28) + 1)
+    const room = Math.max(0, Math.floor((VH - 16 - y2) / 28) + 1)
     for (const ev of (f.events as string[]).slice(-room)) {
       fitLines(ev, SX, y2, 19, 14, SW, 1, C.muted)
       y2 += 28
@@ -1415,7 +1437,6 @@ export function installVideoPage(): void {
     else if (s.kind === "rules") vRules(s, a)
     else if (s.kind === "player") vPlayer(s, a)
     else vFrame(s, f ?? {}, i)
-    if (s.kind !== "brandClose" && s.kind !== "rules") vWatermark()
     g.restore()
     fade(i, s.frames)
     g.setTransform(1, 0, 0, 1, 0, 0)

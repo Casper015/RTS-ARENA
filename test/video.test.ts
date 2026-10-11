@@ -12,6 +12,8 @@ import { analyzeLeague, baseTypeOf, fitWinModel, twoSides, winCurve } from "../s
 import { matchPortraits } from "../src/video/workspace.ts"
 import { crc32, deflateSync } from "node:zlib"
 import type { Replay } from "../src/core/types.ts"
+import { ReplayModel } from "../src/core/replay-model.ts"
+import type { ReplayFrame } from "../src/video/page.ts"
 
 const ROOT = join(import.meta.dirname, "..")
 const CLI = join(ROOT, "src", "cli", "arena.ts")
@@ -277,7 +279,7 @@ test("平台拼的文字：中文名前后的空格去掉，英文名的留着",
   assert.equal(tidy("大肥鱼 获胜"), "大肥鱼获胜")
 })
 
-test("回放变速（D-172、D-174、D-225）：tick 随帧单调往前、首尾对齐；有单位倒下的交火（大战和小冲突）都 4 倍速，没动静的快进至少 4 倍", () => {
+test("回放变速（D-172、D-174、D-225、D-226）：tick 随帧单调往前、首尾对齐；有单位倒下的交战（大战和小冲突）都 4 倍速，没动静的快进至少 4 倍", () => {
   const series = readSeries(seriesFile)
   const g = [...series.results].sort((a, b) => b.tick - a.tick)[0]
   const replay = JSON.parse(readFileSync(join(TMP, "lg", g.replay), "utf8")) as Replay
@@ -292,26 +294,63 @@ test("回放变速（D-172、D-174、D-225）：tick 随帧单调往前、首尾
   assert.ok(skirmishes.length > 0, "这局应该有小冲突")
   const rate = replay.tickRate
   const T = replay.result.tick
-  const inBattle = (t: number) => battles.some(([x, y]) => t >= x && t < y)
-  const battleTicks = battles.reduce((a, [x, y]) => a + (y - x), 0)
-  let skirmishTicks = 0
-  for (const [x, y] of skirmishes) for (let t = x; t < y; t++) if (!inBattle(t)) skirmishTicks++
-  // 大战一共放 battleTicks / (4 × rate) 秒，小冲突 skirmishTicks / (4 × rate) 秒，没动静的最多 10 秒
-  const lo = (battleTicks / (4 * rate) + skirmishTicks / (4 * rate)) * fps
-  const hi = (battleTicks / (4 * rate) + (T - battleTicks) / (4 * rate)) * fps
+  const wins = [...battles, ...skirmishes]
+  const fightTicks = new Set<number>()
+  for (const [x, y] of wins) for (let t = x; t < y; t++) fightTicks.add(t)
+  // 交战一共放 fightTicks / (4 × rate) 秒（两段之间空得少的也按交战放，会多一些），没动静的最多 10 秒
+  const lo = (fightTicks.size / (4 * rate)) * fps
+  const hi = (T / (4 * rate)) * fps
   assert.ok(n >= lo - 2 && n <= Math.max(hi, lo + 10 * fps) + 2, `${n} 帧（${lo}～${hi}）`)
-  // 段中间的帧：大战、小冲突一秒都正好推进 4 × rate 个 tick
-  const check = (wins: [number, number][], mode: string, per: number) => {
-    for (const [x, y] of wins) {
-      const inside = ticks.map((_, i) => i).filter((i) => ticks[i] > x + 1 && ticks[i + fps] !== undefined && ticks[i + fps] < y - 1 && (mode === "battle" || !battles.some(([bx, by]) => by > ticks[i] && bx < ticks[i + fps])))
-      for (const i of inside.slice(0, 5)) assert.ok(Math.abs(ticks[i + fps] - ticks[i] - per * rate) <= 1, `${mode}：第 ${i} 帧起一秒推进了 ${ticks[i + fps] - ticks[i]} tick`)
-      for (const i of inside) assert.equal(p.mode(i), mode)
-    }
+  // 交战段中间的帧：一秒正好推进 4 × rate 个 tick
+  for (const [x, y] of wins) {
+    const inside = ticks.map((_, i) => i).filter((i) => ticks[i] > x + 1 && ticks[i + fps] !== undefined && ticks[i + fps] < y - 1)
+    for (const i of inside.slice(0, 5)) assert.ok(Math.abs(ticks[i + fps] - ticks[i] - 4 * rate) <= 1, `第 ${i} 帧起一秒推进了 ${ticks[i + fps] - ticks[i]} tick`)
+    for (const i of inside) assert.equal(p.mode(i), "fight")
   }
-  check(battles, "battle", 4)
-  check(skirmishes, "skirmish", 4)
   const quiet = ticks.slice(0, -1).map((_, i) => i).filter((i) => p.mode(i) === "quiet")
   if (quiet.length > fps) assert.ok(ticks[quiet[0] + fps] - ticks[quiet[0]] >= rate * 4 - 1)
+})
+
+test("击退这类一下挪好几格的（D-226）：滑过去、拖轨迹，落点那团特效和眩晕的金圈不画", () => {
+  const series = readSeries(seriesFile)
+  const g = [...series.results].sort((a, b) => b.tick - a.tick)[0]
+  const replay = JSON.parse(readFileSync(join(dirname(seriesFile), g.replay), "utf8")) as Replay
+  // 挑一个单位往右推 3 格，眩晕；落点一团没字的特效、原地一圈带字的。挑推完以后 40 tick 都不动的（免得它自己走开又算一次）
+  const model = new ReplayModel(replay)
+  const still = (id: number, K: number) => replay.frames.slice(K - 1, K + 40).every((f) => !(f.move ?? []).some((v, j) => j % 3 === 0 && v === id))
+  let K = 0
+  let u: { id: number; x: number; y: number } | undefined
+  for (let k = 30; k < replay.frames.length - 60 && !u; k += 10) {
+    u = [...model.stateAt(k - 1).ents.values()].find((e) => replay.types[e.type]?.kind === "unit" && e.owner >= 0 && still(e.id, k))
+    K = k
+  }
+  assert.ok(u, "这局找不到站着不动的单位")
+  const fr = replay.frames[K - 1]
+  fr.move = [...(fr.move ?? []), u.id, u.x + 3, u.y]
+  fr.fx = [...(fr.fx ?? []), { x: u.x + 3, y: u.y, w: 1, h: 1, color: "#9fd8ff", radius: 1 }, { x: u.x, y: u.y, w: 1, h: 1, color: "#9fd8ff", radius: 8, text: "击退" }]
+  fr.bf = [...(fr.bf ?? []), [u.id, ["眩晕"]]]
+  const dir = join(TMP, "knock")
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, "g.json"), JSON.stringify(replay))
+  const file = join(dir, "x.series.json")
+  writeFileSync(file, JSON.stringify({ ...series, results: series.results.map((r) => (r.index === g.index ? { ...r, replay: "g.json" } : { ...r, replay: `../${basename(dirname(seriesFile))}/${r.replay}` })) }))
+  const sc = buildScenes(readSeries(file), { ...script, players: [{ ...script.players[0], highlight: g.index }, script.players[1]] }, file, 30).find((x) => x.label.endsWith(`（第 ${g.index} 局）`))!
+  let i = 0
+  while (sc.frame!(i).t < K) i++
+  const at = (j: number) => sc.frame!(j) as ReplayFrame & { knockFx?: number[] }
+  const first = at(i)
+  // 刚推的那帧：轨迹从原来的位置开始，单位还在原处；6 帧后滑到半路
+  const kf = first.knockFx!
+  assert.ok(kf && kf[0] === u.x && kf[1] === u.y && kf[4] < 0.1, JSON.stringify(kf))
+  // 落点那团没字的特效不画，带字的照画；眩晕不算增益（没有金圈）
+  assert.deepEqual((first.ruleFx ?? []).filter((r) => r.radius === 1 && r.x === u.x + 3), [])
+  assert.ok((first.ruleFx ?? []).some((r) => r.text === "击退"))
+  const bf = first.buffed ?? []
+  for (let k = 0; k < bf.length; k += 2) assert.ok(bf[k + 1] !== u.y || Math.abs(bf[k] - kf[2]) > 0.01)
+  const mid = at(i + 6).knockFx!
+  assert.ok(mid && mid[0] === u.x && mid[2] > u.x + 0.5 && mid[2] < u.x + 3, JSON.stringify(mid))
+  // 0.6 秒（18 帧）后滑完：没有轨迹了
+  assert.ok(!at(i + 18).knockFx?.some((v, k) => k % 5 === 0 && v === u.x))
 })
 
 test("视频分析（D-177）：主基地认得出；胜率模型对称、看得出谁占优；雷达图每人 6 项、每项和最好的比；结果缓存", () => {

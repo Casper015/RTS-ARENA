@@ -277,10 +277,15 @@ const BATTLE_TAIL = 20
 /** 没动静的地方一共最多放几秒（快进至少 4 倍速） */
 const QUIET_SECONDS = 10
 const QUIET_MIN_SPEED = 4
-/** 大战按几倍速放（D-172 用户看了一倍速说太慢，改成 2；D-225 用户嫌节奏慢，和小冲突一样 4 倍速） */
-const BATTLE_SPEED = 4
-/** 其余有单位倒下的小冲突按几倍速放（D-174，用户：快进太快不知道发生了什么） */
-const SKIRMISH_SPEED = 4
+/**
+ * 有单位倒下的交战按几倍速放：D-172 大战 2 倍速（用户看了一倍速说太慢），D-174 小冲突 4 倍速（用户：快进太快不知道发生了什么），
+ * D-225 大战也 4 倍速（用户嫌节奏慢），D-226 不再分大战、小冲突（用户：都是 4 倍速没区别）
+ */
+const FIGHT_SPEED = 4
+/** 一下挪了好几格的单位（击退这类规则包 teleport）滑到落点要几帧（D-226，30 帧一秒：0.6 秒，4 倍速下也看得出谁被推走了） */
+const KNOCK_FRAMES = 18
+/** 眩晕在回放里跟增益记在一起（recorder.ts），视频里不画金圈（D-226：被击退的敌人套着金圈，像吃了增益） */
+const STUN = "眩晕"
 /** 两段交火中间只空了这么几 tick 就不快进了，免得快进一闪而过 */
 const SKIRMISH_GAP = 40
 
@@ -326,8 +331,8 @@ export function idleHighlightWarnings(script: VideoScript, seriesFile: string): 
   return out
 }
 
-/** 回放这一段怎么放：大战、小冲突（D-225 起都是 4 倍速，进度条旁标的字不一样）、没动静快进 */
-export type PaceMode = "battle" | "skirmish" | "quiet"
+/** 回放这一段怎么放：交战（有单位倒下，4 倍速，D-226 不再分大战、小冲突）、没动静快进 */
+export type PaceMode = "fight" | "quiet"
 
 /**
  * 回放里的交火时段（D-172、D-174）：同一套切分里，死 BIG_BATTLE 个以上、又不是一边倒的是大战（和视频侧栏标「大战」的一样），
@@ -371,18 +376,17 @@ export function fightWindows(replay: Replay): { battles: [number, number][]; ski
 }
 
 /**
- * 回放每帧对应的 tick（D-171、D-172、D-174，用户定）：大战按 BATTLE_SPEED 倍速放（1 秒 = BATTLE_SPEED × 规则包的 tickRate 个 tick），
- * 其余有单位倒下的小冲突按 SKIRMISH_SPEED 倍速，没动静的时间快进，加起来最多 QUIET_SECONDS 秒、至少 QUIET_MIN_SPEED 倍速。
+ * 回放每帧对应的 tick（D-171、D-172、D-174、D-225、D-226，用户定）：有单位倒下的交战（大战、小冲突）按 FIGHT_SPEED 倍速放
+ * （1 秒 = FIGHT_SPEED × 规则包的 tickRate 个 tick），没动静的时间快进，加起来最多 QUIET_SECONDS 秒、至少 QUIET_MIN_SPEED 倍速。
  * 返回一共放多少帧
  */
-export function pacing(replay: Replay, fps: number): { playFrames: number; tickOf: (i: number) => number; mode: (i: number) => PaceMode } {
+export function pacing(replay: Replay, fps: number): { playFrames: number; tickOf: (i: number) => number; mode: (i: number) => PaceMode; speed: (i: number) => number } {
   const T = Math.max(1, replay.result.tick)
   const rate = Math.max(1, replay.tickRate || 10)
   const { battles, skirmishes } = fightWindows(replay)
-  // 每个 tick 归哪一类：0 没动静、1 小冲突、2 大战
+  // 每个 tick 归哪一类：0 没动静、1 交战
   const cls = new Uint8Array(T)
-  for (const [x, y] of skirmishes) cls.fill(1, x, y)
-  for (const [x, y] of battles) cls.fill(2, x, y)
+  for (const [x, y] of [...skirmishes, ...battles]) cls.fill(1, x, y)
   for (let t = 0; t < T; ) {
     let e = t
     while (e < T && cls[e] === cls[t]) e++
@@ -391,16 +395,16 @@ export function pacing(replay: Replay, fps: number): { playFrames: number; tickO
   }
   const quietTicks = cls.reduce((a, c) => a + (c === 0 ? 1 : 0), 0)
   const quietSpeed = Math.max(QUIET_MIN_SPEED, quietTicks / (rate * QUIET_SECONDS))
-  const MODES: PaceMode[] = ["quiet", "skirmish", "battle"]
-  const SPEEDS = [quietSpeed, SKIRMISH_SPEED, BATTLE_SPEED]
+  const MODES: PaceMode[] = ["quiet", "fight"]
+  const SPEEDS = [quietSpeed, FIGHT_SPEED]
   // 一段一段：从哪个 tick 到哪个 tick、每 tick 几帧、怎么放
-  const segs: { t0: number; t1: number; perTick: number; mode: PaceMode; f0: number }[] = []
+  const segs: { t0: number; t1: number; perTick: number; mode: PaceMode; speed: number; f0: number }[] = []
   let f = 0
   for (let t = 0; t < T; ) {
     let e = t
     while (e < T && cls[e] === cls[t]) e++
     const perTick = fps / (rate * SPEEDS[cls[t]])
-    segs.push({ t0: t, t1: e, perTick, mode: MODES[cls[t]], f0: f })
+    segs.push({ t0: t, t1: e, perTick, mode: MODES[cls[t]], speed: SPEEDS[cls[t]], f0: f })
     f += (e - t) * perTick
     t = e
   }
@@ -418,6 +422,7 @@ export function pacing(replay: Replay, fps: number): { playFrames: number; tickO
       return Math.min(T, Math.max(0, Math.floor(g.t0 + (i - g.f0) / g.perTick)))
     },
     mode: (i) => segAt(Math.min(i, playFrames - 1)).mode,
+    speed: (i) => segAt(Math.min(i, playFrames - 1)).speed,
   }
 }
 
@@ -471,6 +476,16 @@ function replayScene(
   let castAt = new Map<string, number>()
   let bornAt = new Map<number, number>()
   let healedAt = new Map<number, number>()
+  // 一下挪了 2 格以上的单位（击退这类规则包 teleport，D-226）：从哪儿、第几帧开始滑
+  let knocks = new Map<number, { x0: number; y0: number; frame: number }>()
+  /** 第 i 帧画在哪：在滑的按缓出插值（先快后慢），滑完或没在滑就是实际位置；p 是滑了多少（0～1） */
+  const drawnAt = (id: number, e: { x: number; y: number }, i: number) => {
+    const k = knocks.get(id)
+    if (!k) return { x: e.x, y: e.y, p: 1 }
+    const p = Math.min(1, Math.max(0, (i - k.frame) / KNOCK_FRAMES))
+    const q = 1 - (1 - p) ** 2
+    return { x: k.x0 + (e.x - k.x0) * q, y: k.y0 + (e.y - k.y0) * q, p }
+  }
   const resetFx = () => {
     casts = []
     heals = []
@@ -478,6 +493,7 @@ function replayScene(
     castAt = new Map()
     bornAt = new Map(replay.initial.entities.map((e) => [e.id, 0]))
     healedAt = new Map()
+    knocks = new Map()
   }
   resetFx()
   let lastTick = 0
@@ -500,6 +516,17 @@ function replayScene(
         const e = state.ents.get(id)
         if (e && !removed.has(id) && replay.types[e.type]?.kind !== "resource") deaths.push({ x: e.x, y: e.y, frame: i })
       }
+      // 这一 tick 一下挪了 2 格以上的（规则包 teleport，比如击退）：画成从原来的位置滑过去（D-226，用户：4 倍速下根本看不出谁被击退）；
+      // 规则包在落点放的那团特效不画（用户：被击退的不用再显示这个意义不明的效果），带字的（领主身上的「击退」冲击波）照画
+      const landed = new Set<string>()
+      const mv = f.move ?? []
+      for (let j = 0; j < mv.length; j += 3) {
+        const e = state.ents.get(mv[j])
+        if (!e || Math.max(Math.abs(mv[j + 1] - e.x), Math.abs(mv[j + 2] - e.y)) < 2) continue
+        const from = drawnAt(mv[j], e, i)
+        knocks.set(mv[j], { x0: from.x, y0: from.y, frame: i })
+        landed.add(`${mv[j + 1]},${mv[j + 2]}`)
+      }
       for (const e of f.spawn ?? []) bornAt.set(e.id, f.t)
       for (const c of f.casts ?? []) {
         castAt.set(`${c.u}|${c.s}`, f.t)
@@ -513,7 +540,7 @@ function replayScene(
         for (const e of f.spawn ?? []) if (replay.types[e.type]?.kind === "resource" && Math.abs(e.x - caster.x) + Math.abs(e.y - caster.y) <= 4) targets.push({ x: e.x, y: e.y })
         casts.push({ x: caster.x, y: caster.y, targets, frame: i })
       }
-      for (const fx of f.fx ?? []) ruleFxs.push({ ...fx, frame: i })
+      for (const fx of f.fx ?? []) if (fx.text || !landed.has(`${fx.x},${fx.y}`)) ruleFxs.push({ ...fx, frame: i })
       const hl = f.heal ?? []
       for (let j = 0; j < hl.length; j += 2) {
         healedAt.set(hl[j], f.t)
@@ -538,24 +565,30 @@ function replayScene(
     // 技能冷却环 [x, y, w, h, 冷却好了的比例]、正在回血的 [x, y, w, h]（D-190）
     const cds: number[] = []
     const healing: number[] = []
+    // 正在滑的：[原来的 x, y, 现在画在的 x, y, 滑了多少] 一组 5 个（D-226）
+    const knockFx: number[] = []
     for (const e of state.ents.values()) {
       const ty = replay.types[e.type]
       if (!ty) continue
       const max = e.st?.maxHp ?? ty.maxHp
       const hp = ty.kind === "resource" || !max ? 100 : Math.max(0, Math.min(100, Math.round((100 * e.hp) / max)))
-      ents.push(e.x, e.y, ty.w, ty.h, e.owner, typeNames.indexOf(e.type), hp, e.bp ?? 100)
-      // 光环范围、身上有增益的单位（D-186）
-      if (e.bp === undefined) for (const a of ty.auras ?? []) auras.push(e.x, e.y, ty.w, ty.h, a.radius < 0 ? (e.st?.sight ?? ty.sight ?? 0) : a.radius, e.owner)
-      if (e.bf?.length && ty.kind === "unit") buffed.push(e.x, e.y)
+      const d = drawnAt(e.id, e, i)
+      const kn = knocks.get(e.id)
+      if (kn && d.p < 1) knockFx.push(kn.x0, kn.y0, d.x, d.y, d.p)
+      ents.push(d.x, d.y, ty.w, ty.h, e.owner, typeNames.indexOf(e.type), hp, e.bp ?? 100)
+      // 光环范围、身上有增益的单位（D-186；眩晕不算，D-226）
+      if (e.bp === undefined) for (const a of ty.auras ?? []) auras.push(d.x, d.y, ty.w, ty.h, a.radius < 0 ? (e.st?.sight ?? ty.sight ?? 0) : a.radius, e.owner)
+      if (e.bf?.some((b) => b !== STUN) && ty.kind === "unit") buffed.push(d.x, d.y)
       for (const k of ty.skills ?? []) {
         const last = castAt.get(`${e.id}|${k.id}`)
         const left = last !== undefined ? Math.max(0, last + k.cooldown - 1 - t) : Math.max(0, k.initialCooldown - (t - (bornAt.get(e.id) ?? 0)))
-        cds.push(e.x, e.y, ty.w, ty.h, left === 0 ? 1 : 1 - left / Math.max(1, k.cooldown))
+        cds.push(d.x, d.y, ty.w, ty.h, left === 0 ? 1 : 1 - left / Math.max(1, k.cooldown))
       }
       const regen = ty.passives?.find((x) => x.kind === "regen")
       const lh = healedAt.get(e.id)
-      if (regen && lh !== undefined && t - lh <= regen.every + 1) healing.push(e.x, e.y, ty.w, ty.h)
+      if (regen && lh !== undefined && t - lh <= regen.every + 1) healing.push(d.x, d.y, ty.w, ty.h)
     }
+    for (const [id, k] of knocks) if (!state.ents.has(id) || i - k.frame >= KNOCK_FRAMES) knocks.delete(id)
     casts = casts.filter((c) => i - c.frame < 18)
     heals = heals.filter((h) => i - h.frame < 14)
     ruleFxs = ruleFxs.filter((r) => i - r.frame < 24)
@@ -585,6 +618,7 @@ function replayScene(
       progress: T ? t / T : 1,
       final: i >= playFrames,
       pace: pace.mode(Math.min(i, playFrames - 1)),
+      speed: Math.round(pace.speed(Math.min(i, playFrames - 1))),
       markers: state.markers,
       status: relabelSeats(state.status, seats, false),
       ...(auras.length ? { auras } : {}),
@@ -592,6 +626,7 @@ function replayScene(
       ...(castFx.length ? { castFx } : {}),
       ...(healFx.length ? { healFx } : {}),
       ...(ruleFx.length ? { ruleFx } : {}),
+      ...(knockFx.length ? { knockFx } : {}),
       ...(cds.length ? { cds } : {}),
       ...(healing.length ? { healing } : {}),
     }
