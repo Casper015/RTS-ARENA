@@ -113,16 +113,21 @@ export function spawnMirrored(
   }
 }
 
-/** 标准开局（玩家 0 在左上，玩家 1 在中心对称处）：主基地、兵营、4 个工人、4 个家门口金矿。返回玩家 0 主基地左上角 */
+/**
+ * 标准开局（玩家 0 在左上，玩家 1 在中心对称处）：主基地、兵营、4 个工人、4 个家门口金矿。返回玩家 0 主基地左上角。
+ * barracks 是玩家 0 兵营的左上角（默认 (9, 6)；要在家门口 12×12 的空地里，别压着金矿和工人）
+ */
 export function standardStart(
   ctx: SetupContext,
   width: number,
   height: number,
   types: Record<string, TypeSpec>,
+  opts: { barracks?: { x: number; y: number } } = {},
 ): { x: number; y: number } {
+  const barracks = opts.barracks ?? { x: 9, y: 6 }
   spawnMirrored(ctx, width, height, types, [
     { type: "base", owner: 0, x: 3, y: 3 },
-    { type: "barracks", owner: 0, x: 9, y: 6 },
+    { type: "barracks", owner: 0, x: barracks.x, y: barracks.y },
     { type: "worker", owner: 0, x: 6, y: 3 },
     { type: "worker", owner: 0, x: 6, y: 4 },
     { type: "worker", owner: 0, x: 6, y: 5 },

@@ -1,4 +1,4 @@
-// 并行打局（D-209，用户：compare 并行）：开几个 worker 线程，每个自己加载一份规则包，一局一局分出去打；
+// 并行打局（D-209，用户：compare 并行；D-210 run、league 也用）：开几个 worker 线程，每个自己加载一份规则包，一局一局分出去打；
 // 每局只看种子和座位，谁先打完都一样，结果和一个线程按顺序打完全相同。只开 1 个时就在当前线程里打
 import { availableParallelism } from "node:os"
 import { Worker } from "node:worker_threads"
@@ -30,18 +30,20 @@ export async function runGames(
   names: Map<string, string>,
   jobs: GameJob[],
   threads: number,
-  onDone: (job: GameJob, replay: Replay) => void,
+  onDone: (job: GameJob, replay: Replay, ms: number) => void,
 ): Promise<void> {
   const failOf = (job: GameJob, msg: string) => new Error(`第 ${job.id} 局（种子 ${job.seed}）没打完：${msg}`)
   if (threads <= 1 || jobs.length <= 1) {
     for (const job of jobs) {
       let replay: Replay
+      const bots = await makeBots(rules, job.order, job.seed, names)
+      const t0 = performance.now()
       try {
-        replay = runMatch({ ruleset: rules, bots: await makeBots(rules, job.order, job.seed, names), seed: job.seed, teams: job.teams })
+        replay = runMatch({ ruleset: rules, bots, seed: job.seed, teams: job.teams })
       } catch (e) {
         throw failOf(job, (e as Error).message)
       }
-      onDone(job, replay)
+      onDone(job, replay, performance.now() - t0)
     }
     return
   }
@@ -70,12 +72,12 @@ export async function runGames(
         current = jobs[next++]
         w.postMessage(current)
       }
-      w.on("message", (m: { ready?: true; fatal?: string; error?: string; replay?: Replay }) => {
+      w.on("message", (m: { ready?: true; fatal?: string; error?: string; replay?: Replay; ms?: number }) => {
         if (m.fatal !== undefined) failed ??= new Error(`加载规则包失败：${m.fatal}`)
         else if (m.error !== undefined) failed ??= failOf(current!, m.error)
         else if (m.replay) {
           try {
-            onDone(current!, m.replay)
+            onDone(current!, m.replay, m.ms ?? 0)
           } catch (e) {
             failed ??= e as Error
           }
@@ -91,6 +93,30 @@ export async function runGames(
         if (!closed && !failed) failed = new Error("打局的线程意外退出")
         close()
       })
+    }
+  })
+}
+
+/**
+ * 和 runGames 一样，但按 jobs 的顺序调用 onDone（后面的先打完就先存着，等前面的）：run、league 的输出、汇总、排名
+ * 和一个线程按顺序打的完全一样（D-210）
+ */
+export async function runInOrder<J extends GameJob>(
+  rules: Ruleset,
+  src: RulesetRef,
+  names: Map<string, string>,
+  jobs: J[],
+  threads: number,
+  onDone: (job: J, replay: Replay, ms: number) => void,
+): Promise<void> {
+  const pos = new Map<GameJob, number>(jobs.map((j, i) => [j, i]))
+  const done = new Map<number, { replay: Replay; ms: number }>()
+  let next = 0
+  await runGames(rules, src, names, jobs, threads, (job, replay, ms) => {
+    done.set(pos.get(job)!, { replay, ms })
+    for (let r = done.get(next); r; r = done.get(next)) {
+      done.delete(next)
+      onDone(jobs[next++], r.replay, r.ms)
     }
   })
 }

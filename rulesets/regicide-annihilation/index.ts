@@ -41,12 +41,15 @@ const ruleset: Ruleset = {
   types,
 
   setup(ctx) {
-    annihilationSetup(ctx, types, { mineAmount: MINE_AMOUNT })
+    // D-210（第十轮试写：进攻不划算，只清野守家、从不推家的打法最优）：兵营 (9, 6) → (10, 7)，离主基地 7 格，出了主基地的射程，
+    // 给出门骚扰一个不用吃主基地炮火的目标（从兵营的东边、南边打挨不到，西边、北边还挨得到）
+    annihilationSetup(ctx, types, { mineAmount: MINE_AMOUNT, barracks: { x: 10, y: 7 } })
     spawnLords(ctx, ANNIHILATION_W, ANNIHILATION_H, types)
     // 野怪营地（D-189）：内圈、外圈各一对，都在离两家主基地一样远的斜线上
     // D-193（用户）：赏金 150，死了的野怪每 900 tick 定时补满（拓荒是 100、营地清空后才刷新）
-    // D-207（第八轮试写：中间矿挨着营地采不了）：营地离金矿至少 5 格，在矿边上采矿的工人惹不醒野怪
-    setupCamps(ctx, ANNIHILATION_W, ANNIHILATION_H, { x: 20, y: 19 }, { x: 14, y: 25 }, { bounty: 150, respawn: "periodic", mineGap: 5 })
+    // D-207（第八轮试写：中间矿挨着营地采不了）：营地离金矿至少 5 格，在矿边上采矿的工人惹不醒野怪；
+    // D-210（第十轮试写：中间矿离营地 5～8 格几乎没人采）：10 格，营地打起来野怪也追不到采矿的工人（追打范围 8 格；附近矿太多放不下时一格格放宽）
+    setupCamps(ctx, ANNIHILATION_W, ANNIHILATION_H, { x: 20, y: 19 }, { x: 14, y: 25 }, { bounty: 150, respawn: "periodic", mineGap: 10 })
   },
 
   onTick(ctx) {

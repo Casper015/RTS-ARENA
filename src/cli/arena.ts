@@ -8,7 +8,7 @@ import { mixSeed } from "../core/rng.ts"
 import type { Replay, Ruleset } from "../core/types.ts"
 import { compileBot, createBot } from "../sandbox/quickjs.ts"
 import { botName, displayFile, makeBots } from "./play.ts"
-import { defaultJobs, runGames, type GameJob } from "./game-pool.ts"
+import { defaultJobs, runGames, runInOrder, type GameJob } from "./game-pool.ts"
 import { botTsconfig, buildDts, buildPrompt, lineups, mapSection, setupWorld, typecheck, typecheckRuleset } from "./docgen.ts"
 import { serveViewer } from "./serve.ts"
 import {
@@ -95,6 +95,7 @@ run 的选项：
         --no-replays  不存回放和日志（跑很多局时省硬盘；汇总文件照写，做不了联赛视频）
         --quiet       每局只打一行（结果、谁出了错），最后的胜率照常打印
         --ticks N     每局打到第 N tick 就结束（按规则包到时间上限的规则判胜负），做开局、经济实验用
+        --jobs N      几个线程一起打（默认 CPU 逻辑核数减 2，最多 6；结果和输出和一局一局打的一样，--jobs 1 就是一局一局打）
         --json        每行输出一个 JSON 事件（start / game / summary / warning / error），给程序读
 league 的选项：
         --size K      每局几个人（默认 2；规则包不能两个人打时是它的最少人数）
@@ -106,7 +107,7 @@ league 的选项：
         --focus       只打第一个 bot（在 bot 目录里就是你的 bot）对其余每个，参考 bot 之间不打；两人局用。
                       比较两个版本：各跑一次 league <规则包> <版本> <对手...> --focus --seed 同一个数，对每个对手的种子一样
         --quiet       每局不打一行（每 10 局报一次进度），也不列精彩对局，只看最后的排名、对阵和统计
-        --seed、--out、--no-check、--no-replays、--json 同 run
+        --seed、--out、--no-check、--no-replays、--json、--jobs 同 run
                       名次分：第一名 1 分、最后一名 0 分、中间平分（两人局就是胜 1 平 0.5）；
                       等级分（1500 起）把名次拆成两两比较，按全部对局一起算，和打的先后顺序无关
 compare 的选项：
@@ -160,8 +161,8 @@ function say(msg: string): void {
 const OPTIONS: Record<string, Record<string, boolean>> = {
   docs: { out: false },
   clean: { all: true },
-  run: { seed: false, games: false, out: false, teams: false, "no-check": true, json: true, quiet: true, ticks: false, "no-replays": true },
-  league: { seed: false, size: false, teams: false, partners: false, "per-table": false, "per-pair": false, tables: false, out: false, "no-check": true, json: true, focus: true, "no-replays": true, quiet: true },
+  run: { seed: false, games: false, out: false, teams: false, jobs: false, "no-check": true, json: true, quiet: true, ticks: false, "no-replays": true },
+  league: { seed: false, size: false, teams: false, partners: false, "per-table": false, "per-pair": false, tables: false, out: false, jobs: false, "no-check": true, json: true, focus: true, "no-replays": true, quiet: true },
   check: { ticks: false },
   compare: { seed: false, "per-pair": false, out: false, jobs: false, "no-check": true, "no-replays": true, "all-replays": true },
   view: { port: false, open: true },
@@ -375,7 +376,8 @@ async function cmdRun(rules: Ruleset, src: RulesetRef, args: string[], opt: Reco
     writeFileSync(seriesFile, JSON.stringify(series, null, 1))
   }
   emit0({ type: "start", ruleset: rules.id, name: rules.name, games, seed: baseSeed, teams: series.teams, participants, series: basename(seriesFile) })
-  for (let g = 0; g < games; g++) {
+  // 先排好每一局，交给几个线程一起打（--jobs，D-210）；打完按局的顺序处理，输出和一个线程按顺序打的一样
+  const planned = [...Array(games).keys()].map((g) => {
     // 同一个种子把各队的位置轮换一遍（两边就是换边各打一次），抵消地图和随机数的影响。
     // seats[p] 是坐在 P{p} 的参赛者编号，teams[p] 是这个座位的队伍编号
     const seed = mirror ? baseSeed + g : baseSeed + Math.floor(g / k)
@@ -384,8 +386,10 @@ async function cmdRun(rules: Ruleset, src: RulesetRef, args: string[], opt: Reco
     const teams = rotated.flatMap((members, t) => members.map(() => t))
     const order = seats.map((i) => files[i])
     // --out 以 .json 结尾是单局的回放文件名，否则是目录
-    const file = games === 1 && outOpt?.endsWith(".json") ? outOpt : join(outOpt ?? "replays", `${rules.id}-${stamp()}-${runId}-s${seed}-g${g + 1}.json`)
-    const { replay, ms, logs } = await playAndSave(rules, order, names, seed, teams, noReplays ? null : file, g + 1)
+    const path = games === 1 && outOpt?.endsWith(".json") ? outOpt : join(outOpt ?? "replays", `${rules.id}-${stamp()}-${runId}-s${seed}-g${g + 1}.json`)
+    return { id: g + 1, g, seed, rotated, seats, teams, order, path, file: noReplays ? null : path }
+  })
+  await playAll(rules, src, names, planned, jobsOpt(opt), ({ g, seed, rotated, seats, teams, order, path: file }, replay, ms, logs) => {
     const lineup =
       k === n
         ? order.map((f, p) => `P${p}=${names.get(f)}`).join("  ")
@@ -433,7 +437,7 @@ async function cmdRun(rules: Ruleset, src: RulesetRef, args: string[], opt: Reco
     series.results.push(entry)
     saveSeries()
     emit0(entry)
-  }
+  })
   const avg = (xs: number[]) => Number((xs.reduce((a, b) => a + b, 0) / xs.length).toFixed(2))
   series.summary = {
     type: "summary",
@@ -501,32 +505,31 @@ function latestReplay(dir: string, match?: (file: string) => boolean): string | 
   return null
 }
 
-/**
- * 打一局，写回放和每个 bot 一份只有它自己信息的日志（开头附它视角的战报）。
- * 规则包出错（沙箱规则包的燃料、超时、返回值不对等）时这一局作废，整条命令停下
- */
-async function playAndSave(
+/** --jobs：几个线程一起打（D-209 compare，D-210 run、league），默认 CPU 逻辑核数减 2、最多 6 */
+function jobsOpt(opt: Record<string, string | true>): number {
+  const n = opt.jobs === undefined ? defaultJobs() : Number(opt.jobs)
+  if (!Number.isInteger(n) || n < 1 || n > 32) fail("--jobs 要是 1～32 的整数")
+  return n
+}
+
+/** 按顺序处理地打完一批局（runInOrder），有一局打不完就报错退出；打完的局在这里写回放和日志（--no-replays 时 file 是 null） */
+async function playAll<J extends GameJob & { order: string[]; file: string | null }>(
   rules: Ruleset,
-  order: string[],
+  src: RulesetRef,
   names: Map<string, string>,
-  seed: number,
-  teams: number[] | undefined,
-  file: string | null,
-  gameNo: number,
-): Promise<{ replay: Replay; ms: number; logs: { seat: number; name: string; file: string }[] }> {
-  const bots = await makeBots(rules, order, seed, names)
-  const t0 = performance.now()
-  let replay: Replay
+  jobs: J[],
+  threads: number,
+  onDone: (job: J, replay: Replay, ms: number, logs: { seat: number; name: string; file: string }[]) => void,
+): Promise<void> {
+  if (threads > 1 && jobs.length > 1) say(`（${Math.min(threads, jobs.length)} 个线程一起打，--jobs 调）`)
   try {
-    replay = runMatch({ ruleset: rules, bots, seed, teams })
+    await runInOrder(rules, src, names, jobs, threads, (job, replay, ms) => {
+      for (const w of checkLimits(rules, replay)) warn(w)
+      onDone(job, replay, ms, job.file === null ? [] : saveGame(replay, job.order, names, job.file, job.id))
+    })
   } catch (e) {
-    fail(`第 ${gameNo} 局（种子 ${seed}）没打完：${(e as Error).message}`)
+    fail((e as Error).message)
   }
-  const ms = performance.now() - t0
-  for (const w of checkLimits(rules, replay)) warn(w)
-  // --no-replays：回放和日志都不写
-  const logs = file === null ? [] : saveGame(replay, order, names, file, gameNo)
-  return { replay, ms, logs }
 }
 
 /** 写回放和每个座位的日志（日志开头附一份这个座位视角的战报） */
@@ -693,10 +696,11 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
   const record: LeagueGame[] = []
   /** 每局的看点，打完再按最终排名算爆冷、挑精彩对局 */
   const played: { index: number; seed: number; replay: string | null; tick: number; seats: number[]; sideOf: number[]; facts: GameFacts }[] = []
-  let index = 0
+  // 先排好每一局，交给几个线程一起打（--jobs，D-210）；打完按局的顺序处理，排名、汇总和一个线程按顺序打的一样
+  const planned: (GameJob & { index: number; table: number[]; seed: number; slots: number[][]; seats: number[]; order: string[]; path: string; file: string | null })[] = []
   for (let g = 0; g < perTable; g++)
     for (const { table, ti } of tableList) {
-      index++
+      const index = planned.length + 1
       const layouts = layoutsOf(table)
       const layout = layouts[g % layouts.length]
       // 同一桌、同一轮里只是换位置的几局用同一个种子
@@ -705,56 +709,58 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
       const seats = slots.flatMap((group, t) => (mode === "same" ? Array<number>(sizes![t]).fill(group[0]) : group))
       const teams = sizes ? slots.flatMap((group, t) => Array<number>(mode === "same" ? sizes![t] : group.length).fill(t)) : undefined
       const order = seats.map((i) => files[i])
-      const file = join(outDir, `${rules.id}-${stamp()}-${runId}-s${seed}-g${index}.json`)
-      const { replay, ms, logs } = await playAndSave(rules, order, names, seed, teams, noReplays ? null : file, index)
-      // 名次换成参赛者编号（同一个 bot 组队时去重）
-      const seen = new Set<number>()
-      const ranking = (replay.result.ranking ?? [])
-        .map((group) => [...new Set(group.map((p) => seats[p]))].filter((x) => !seen.has(x) && (seen.add(x), true)))
-        .filter((group) => group.length > 0)
-      record.push(mode === "mixed" ? { players: seats, ranking, teams: slots } : mode === "same" ? { players: slots.map((s) => s[0]), ranking } : { players: seats, ranking })
-      stats.add(seats, replay)
-      played.push({ index, seed, replay: noReplays ? null : basename(file), tick: replay.result.tick, seats, sideOf: replay.players.map((pl, p) => pl.team ?? p), facts: gameFacts(replay) })
-      const won = replay.result.winners ?? []
-      let lineup: string
-      let outcome: string
-      if (!sizes) {
-        lineup = seats.map((i, p) => `P${p}=${labels[i]}`).join(" ")
-        outcome = players === 2 ? (ranking[0]?.length === 1 ? `${labels[ranking[0][0]]} 赢` : "平局") : `名次 ${ranking.map((grp) => grp.map((i) => labels[i]).join(" = ")).join(" > ")}`
-      } else {
-        lineup = slots.map((_, t) => `队${t + 1}[${seats.map((i, p) => (teams![p] === t ? `P${p}=${labels[i]}` : "")).filter(Boolean).join(" ")}]`).join(" 对 ")
-        const winTeams = [...new Set(won.map((p) => teams![p]))]
-        outcome = winTeams.length === 1 ? `队${winTeams[0] + 1} 赢` : "平局"
-      }
-      if (quiet) {
-        if (index % 10 === 0 || index === total) say(`已打 ${index}/${total} 局`)
-      } else say(`第 ${index}/${total} 局  ${lineup}  种子 ${seed}：${outcome}（第 ${replay.result.tick} tick，${replay.result.reason}）  用时 ${(ms / 1000).toFixed(1)} 秒${noReplays ? "" : `  ${basename(file)}`}`)
-      const entry = {
-        type: "game",
-        index,
-        table,
-        seed,
-        seats,
-        names: order.map((f) => names.get(f)),
-        teams: teams ?? seats.map((_, p) => p),
-        winners: won,
-        ranking: replay.result.ranking,
-        reason: replay.result.reason,
-        tick: replay.result.tick,
-        /** 各座位的最终分数 */
-        scores: finalScores(replay),
-        ms: Math.round(ms),
-        replay: noReplays ? null : basename(file),
-        logs,
-        bots: botsBrief(replay),
-      }
-      series.results.push(entry)
-      series.standings = leagueStandings(labels, record)
-      series.stats = stats.toJSON()
-      saveSeries()
-      emit0(entry)
-      emit0({ type: "standings", ...series.standings, stats: series.stats })
+      const path = join(outDir, `${rules.id}-${stamp()}-${runId}-s${seed}-g${index}.json`)
+      planned.push({ id: index, index, table, seed, slots, seats, teams, order, path, file: noReplays ? null : path })
     }
+  await playAll(rules, src, names, planned, jobsOpt(opt), ({ index, table, seed, slots, seats, teams, order, path: file }, replay, ms, logs) => {
+    // 名次换成参赛者编号（同一个 bot 组队时去重）
+    const seen = new Set<number>()
+    const ranking = (replay.result.ranking ?? [])
+      .map((group) => [...new Set(group.map((p) => seats[p]))].filter((x) => !seen.has(x) && (seen.add(x), true)))
+      .filter((group) => group.length > 0)
+    record.push(mode === "mixed" ? { players: seats, ranking, teams: slots } : mode === "same" ? { players: slots.map((s) => s[0]), ranking } : { players: seats, ranking })
+    stats.add(seats, replay)
+    played.push({ index, seed, replay: noReplays ? null : basename(file), tick: replay.result.tick, seats, sideOf: replay.players.map((pl, p) => pl.team ?? p), facts: gameFacts(replay) })
+    const won = replay.result.winners ?? []
+    let lineup: string
+    let outcome: string
+    if (!sizes) {
+      lineup = seats.map((i, p) => `P${p}=${labels[i]}`).join(" ")
+      outcome = players === 2 ? (ranking[0]?.length === 1 ? `${labels[ranking[0][0]]} 赢` : "平局") : `名次 ${ranking.map((grp) => grp.map((i) => labels[i]).join(" = ")).join(" > ")}`
+    } else {
+      lineup = slots.map((_, t) => `队${t + 1}[${seats.map((i, p) => (teams![p] === t ? `P${p}=${labels[i]}` : "")).filter(Boolean).join(" ")}]`).join(" 对 ")
+      const winTeams = [...new Set(won.map((p) => teams![p]))]
+      outcome = winTeams.length === 1 ? `队${winTeams[0] + 1} 赢` : "平局"
+    }
+    if (quiet) {
+      if (index % 10 === 0 || index === total) say(`已打 ${index}/${total} 局`)
+    } else say(`第 ${index}/${total} 局  ${lineup}  种子 ${seed}：${outcome}（第 ${replay.result.tick} tick，${replay.result.reason}）  用时 ${(ms / 1000).toFixed(1)} 秒${noReplays ? "" : `  ${basename(file)}`}`)
+    const entry = {
+      type: "game",
+      index,
+      table,
+      seed,
+      seats,
+      names: order.map((f) => names.get(f)),
+      teams: teams ?? seats.map((_, p) => p),
+      winners: won,
+      ranking: replay.result.ranking,
+      reason: replay.result.reason,
+      tick: replay.result.tick,
+      /** 各座位的最终分数 */
+      scores: finalScores(replay),
+      ms: Math.round(ms),
+      replay: noReplays ? null : basename(file),
+      logs,
+      bots: botsBrief(replay),
+    }
+    series.results.push(entry)
+    series.standings = leagueStandings(labels, record)
+    series.stats = stats.toJSON()
+    saveSeries()
+    emit0(entry)
+    emit0({ type: "standings", ...series.standings, stats: series.stats })
+  })
   const st = leagueStandings(labels, record)
   const highlights = leagueHighlights(played, st, labels, mine ? 0 : undefined)
   series.summary = {

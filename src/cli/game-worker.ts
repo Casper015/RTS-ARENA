@@ -14,8 +14,9 @@ try {
   port.on("message", async (job: GameJob) => {
     try {
       const bots = await makeBots(rules, job.order, job.seed, nameMap)
+      const t0 = performance.now()
       const replay = runMatch({ ruleset: rules, bots, seed: job.seed, teams: job.teams })
-      port.postMessage({ id: job.id, replay })
+      port.postMessage({ id: job.id, replay, ms: performance.now() - t0 })
     } catch (e) {
       port.postMessage({ id: job.id, error: (e as Error).message })
     }

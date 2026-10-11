@@ -254,7 +254,7 @@ test("技能造价（D-192）：放成功才扣，不够被拒，规则包拒绝
   assert.ok(rejected.some((r) => /gold 不够：花钱要 20，现有 10/.test(r)), rejected.join("\n"))
 })
 
-test("击退（D-197、D-206、D-207）：领主视野内的敌方单位各自往外推 3 格、眩晕 20 tick，建筑和中立的不推；视野里没敌人被拒", async () => {
+test("击退（D-197、D-206、D-207、D-210）：领主视野内的敌方单位各自往外推 3 格、眩晕 30 tick，建筑和中立的不推；视野里没敌人被拒", async () => {
   const { lordType, regicideCast } = await import("../rulesets/common/regicide.ts")
   const events: GameEvent[] = []
   const before: Entity[] = []
@@ -291,8 +291,8 @@ test("击退（D-197、D-206、D-207）：领主视野内的敌方单位各自�
       stunned = mine(v, "grunt").map((e) => e.stunned)
     },
   )
-  // 被推的两个都在眩晕（第 1 tick 放的，挡住第 1～20 tick 的结算，第 2 tick 结束时还剩 18 tick）
-  assert.deepEqual(stunned, [18, 18])
+  // 被推的两个都在眩晕（第 1 tick 放的，挡住第 1～30 tick 的结算，第 2 tick 结束时还剩 28 tick）
+  assert.deepEqual(stunned, [28, 28])
   const far = (e: Entity) => Math.abs(e.x - 6) + Math.abs(e.y - 4)
   const grunts = after.filter((e) => e.type === "grunt" && e.owner === 1)
   assert.equal(grunts.length, 2)

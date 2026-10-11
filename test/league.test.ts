@@ -145,6 +145,16 @@ test("命令行：--no-replays 不存回放和日志；compare 两个版本按�
     const parallel = sh(["compare", "koth", "baseline", "hold", "boom", "idle", "--per-pair", "4", "--seed", "9", "--no-check", "--no-replays", "--jobs", "3"])
     assert.match(parallel, /3 个线程一起打/)
     assert.equal(table(parallel), table(serial))
+    // D-210：league、run 也一样（打完按局的顺序处理，每局一行的输出也一样）
+    const league = (jobs: string) => sh(["league", "koth", "baseline", "hold", "boom", "--per-pair", "2", "--seed", "4", "--no-check", "--no-replays", "--jobs", jobs])
+    const lg1 = league("1")
+    const lg3 = league("3")
+    const rank = (s: string) => s.slice(s.indexOf("名次"), s.indexOf("## 统计"))
+    assert.equal(rank(lg3), rank(lg1))
+    const games = (s: string) => s.split("\n").filter((l) => l.startsWith("第 ")).map((l) => l.replace(/用时 [\d.]+ 秒/, ""))
+    assert.deepEqual(games(lg3), games(lg1))
+    const run = (jobs: string) => sh(["run", "koth", "baseline", "hold", "--games", "4", "--seed", "8", "--no-check", "--no-replays", "--quiet", "--jobs", jobs])
+    assert.deepEqual(games(run("3")), games(run("1")))
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

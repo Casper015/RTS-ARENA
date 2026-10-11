@@ -36,8 +36,8 @@ const CONTESTED = [
 ]
 const CLASSIC_ANCHOR = { x: 18, y: 12 }
 
-/** 歼灭的开局：随机地图、主基地、兵营、4 个工人、金矿、200 金。mineAmount 是中间每个金矿的储量（默认 600；家门口的按金矿类型的默认储量） */
-export function annihilationSetup(ctx: SetupContext, types: Record<string, TypeSpec>, opts: { mineAmount?: number } = {}): void {
+/** 歼灭的开局：随机地图、主基地、兵营、4 个工人、金矿、200 金。mineAmount 是中间每个金矿的储量（默认 600；家门口的按金矿类型的默认储量），barracks 是兵营的位置（见 standardStart） */
+export function annihilationSetup(ctx: SetupContext, types: Record<string, TypeSpec>, opts: { mineAmount?: number; barracks?: { x: number; y: number } } = {}): void {
   const amount = opts.mineAmount ?? 600
   const map = randomSymmetricMap(ctx.rng, {
     width: W,
@@ -51,7 +51,7 @@ export function annihilationSetup(ctx: SetupContext, types: Record<string, TypeS
     connect: [{ x: 7, y: 7 }],
   })
   ctx.setTerrain(map?.terrain ?? symmetricTerrain(W, H, ".", CLASSIC_WALLS))
-  standardStart(ctx, W, H, types)
+  standardStart(ctx, W, H, types, { barracks: opts.barracks })
   if (map) for (const m of map.mines) ctx.spawn("goldmine", -1, m.x, m.y, { amount })
   else spawnMirrored(ctx, W, H, types, CONTESTED.map((o) => ({ type: "goldmine", owner: -1 as const, x: CLASSIC_ANCHOR.x + o.x, y: CLASSIC_ANCHOR.y + o.y, amount })))
   for (let p = 0; p < ctx.playerCount; p++) ctx.setResources(p, { gold: 200 })

@@ -125,12 +125,12 @@ export function setupCamps(ctx: SetupContext, W: number, H: number, inner: { x: 
   const ents = ctx.entities()
   const blocked = (x: number, y: number) => !walk(x, y) || ents.some((e) => ctx.dist(e, { x, y, w: 1, h: 1 }) === 0)
   const mineGap = options.mineGap ?? 3
-  const nearStatic = (x: number, y: number) =>
-    ents.some((e) => e.def.kind !== "unit" && ctx.dist(e, { x, y, w: 1, h: 1 }) < (e.def.kind === "resource" ? mineGap : 3))
+  const nearStatic = (x: number, y: number, gap: number) =>
+    ents.some((e) => e.def.kind !== "unit" && ctx.dist(e, { x, y, w: 1, h: 1 }) < (e.def.kind === "resource" ? gap : 3))
   const mirror = (p: { x: number; y: number }) => ({ x: W - 1 - p.x, y: H - 1 - p.y })
   // 营地的格子：中心、右边、下边（3 只）或者中心、右边（2 只）
   const shape = (size: number) => (size === 3 ? [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }] : [{ x: 0, y: 0 }, { x: 1, y: 0 }])
-  const place = (target: { x: number; y: number }, size: number) => {
+  const place = (target: { x: number; y: number }, size: number, gap: number) => {
     const offs = shape(size)
     for (let r = 0; r <= 8; r++)
       for (let dx = -r; dx <= r; dx++)
@@ -139,12 +139,14 @@ export function setupCamps(ctx: SetupContext, W: number, H: number, inner: { x: 
           const cells = offs.map((o) => ({ x: c.x + o.x, y: c.y + o.y }))
           // 镜像那一边的格子也要空着（中心对称的地图上一般一样，保险起见一起查）
           const all = [...cells, ...cells.map(mirror)]
-          if (all.every((p) => !blocked(p.x, p.y) && !nearStatic(p.x, p.y))) return cells
+          if (all.every((p) => !blocked(p.x, p.y) && !nearStatic(p.x, p.y, gap))) return cells
         }
     return null
   }
   for (const [target, size] of [[inner, 3], [outer, 2]] as const) {
-    const cells = place(target, size)
+    // 离资源点 mineGap 格放不下（附近矿太多），就一格格放宽到 3 格（D-210）
+    let cells: { x: number; y: number }[] | null = null
+    for (let gap = mineGap; gap >= 3 && !cells; gap--) cells = place(target, size, gap)
     if (!cells) continue
     for (const spots of [cells, cells.map(mirror)]) {
       const camp: Camp = { spots, ids: [], respawnAt: null, angry: false }
