@@ -1,99 +1,58 @@
-// 大模型试写（Sonnet 测试员第二轮 60 分钟交的 v7，偏强）：兵在家门口吃光环守住，领主 6 格内有 3 个以上敌兵就放击退（收录时把原来的点金换成了这个）；600～2600 tick 兵够 16 个就带着领主去清最近的野怪营地（集火，附近来了敌兵马上转去迎战）；击杀价值领先 600、兵够 20 个就反推。
-// 参数集中在顶部，方便每版改
+// 大模型试写（Haiku 60 分钟写的 v11）：工人只补 8 个、兵营一直排满，兵够 4 个就带着领主轮流清野，家附近来敌人全军回防、打不过整队撤；兵够 24 个（或 4200 tick 后 12 个、或看到对方领主）全军带领主推家。
+// 外部大模型试写的 bot（2026-10-10，D-213，换掉第二轮测试员写的旧 llm）：子代理（Haiku）只读了 PROMPT.md、看不到平台源码和参考 bot 的源码，
+// 27 分钟迭代到第 11 版，当时对 baseline、assassin、llm（旧）、turtle 各 16 局全胜，escort 15-1，llm2 14-2，farmer 12-4。原样收录，只改了开头的说明。
+//
+// 打法：
+// 经济：工人只补到 8 个（少了反而能早出兵、工人不容易被卷进战斗），分散去家门口的金矿采，矿旁 6 格内有敌人就不去，工人 4 格内有敌人就先撤回家；
+//       主基地只排工人，兵营队列尽量排满（战士:弓手约 2:1）。
+// 领主：跟在军队后面 3 格吃光环；领主 8 格内（同领主视野）有 3 个以上敌方单位就放击退。
+// 清野：兵够 4 个，就去离军队最近、还有野怪、附近没有敌军扎营的营地，用 attackMove 加 neutral 集火清（每次决策重下命令，清完换下一个，等野怪刷新再回来）。
+// 守家：家附近 12 格内出现敌方单位，全军过去打，打完再回集结点；打不过（8 格内敌方战斗单位不少于 0.9 倍我方兵数）就整队撤回集结点。
+// 进攻：兵够 24 个，或 4200 tick 后兵够 12 个，或看到对方领主（兵够 8 个），就全军带领主推对方主基地；落后的兵先回到军队中心再一起上；兵折到 6 个以下撤回守家。
 
-const WORKERS_WANT = 9
-const FARM_ARMY = 16 // 兵数到这个数且家里没威胁，就去清最近的野怪营地
-const FARM_ENABLED = true
-const FARM_UNTIL = 2600
-const ATTACK_ARMY = 999 // 兵数到这个数去攻击对手（v1 不攻击）
-const ARCHER_RATIO = 1 / 3
-const RALLY_D = 7 // 步兵集结点离主基地的步数
-const ARCHER_D = 5 // 弓手站位
-const LORD_D = 3 // 领主站位
-const PUSH_LEAD = 600 // 击杀价值领先多少、兵多少以上就反推
-const PUSH_ARMY = 20
+const WORKER_TARGET = 8
+const CLEAR_MIN = 4
+const ATTACK_MIN = 24
+const LATE_TICK = 4200
+const LATE_ATTACK_MIN = 12
+const RETREAT_BELOW = 6
+const LORD_SAFE_HP = 600
 
 let inited = false
-let baseE: Entity | null = null
-let dHome: number[] = []
-let dEnemyBase: number[] = []
+let homeC: Pos = { x: 0, y: 0 }
+let enemyC: Pos = { x: 0, y: 0 }
 let rally: Pos = { x: 0, y: 0 }
-let lordHome: Pos = { x: 0, y: 0 }
-let archerSpot: Pos = { x: 0, y: 0 }
-let campDist: number[][] = []
-let mode: "home" | "stage" | "fight" | "return" | "push" = "home"
 let campIdx = -1
-let stagePos: Pos | null = null
-let modeSince = 0
-let lastCast = -9999
-const squad = new Set<number>()
-let nextFarm = 0
+let attacking = false
 
-function isWalk(x: number, y: number): boolean {
+function walk(x: number, y: number): boolean {
   if (x < 0 || y < 0 || x >= game.width || y >= game.height) return false
-  return !!game.walkable[game.terrain[y][x]]
+  return game.walkable[game.terrain[y][x]] === true
 }
 
-function init(view: View): void {
-  inited = true
-  const mine = view.entities.filter((e) => e.owner === view.me)
-  baseE = mine.find((e) => e.type === "base") ?? null
-  if (!baseE) return
-  const eb = view.objectives.enemyBases[0]
-  dHome = pathDistances(null, baseE)
-  dEnemyBase = pathDistances(null, { x: eb.x, y: eb.y, w: 3, h: 3 } as unknown as Entity)
-  // 集结点：离我方主基地 8 步、离对方主基地最近
-  const W = game.width
-  let best = 1e9
-  let cands: Pos[] = []
-  const seatRev = view.me !== 0
-  for (let yy = 0; yy < game.height; yy++) {
-    for (let xx = 0; xx < game.width; xx++) {
-      const x = seatRev ? game.width - 1 - xx : xx
-      const y = seatRev ? game.height - 1 - yy : yy
-      const i = y * W + x
-      if (dHome[i] !== RALLY_D || !isWalk(x, y)) continue
-      const d = dEnemyBase[i]
-      if (d < 0) continue
-      if (d < best) {
-        best = d
-        cands = [{ x, y }]
-      } else if (d === best) cands.push({ x, y })
-    }
-  }
-  rally = cands[0] ?? { x: baseE.x + 6, y: baseE.y + 3 }
-  const dR = pathDistances(null, rally)
-  let bl = 1e9
-  lordHome = { x: baseE.x + 3, y: baseE.y + 1 }
-  for (let yy = 0; yy < game.height; yy++) {
-    for (let xx = 0; xx < game.width; xx++) {
-      const x = seatRev ? game.width - 1 - xx : xx
-      const y = seatRev ? game.height - 1 - yy : yy
-      const i = y * W + x
-      if (dHome[i] !== LORD_D || !isWalk(x, y) || dR[i] < 0) continue
-      if (dR[i] < bl) {
-        bl = dR[i]
-        lordHome = { x, y }
+// 离 p 最近的能走的格（一圈圈往外找）
+function nearWalk(p: Pos, r: number): Pos {
+  const x0 = Math.round(p.x)
+  const y0 = Math.round(p.y)
+  for (let d = 0; d <= r; d++) {
+    for (let dy = -d; dy <= d; dy++) {
+      for (let dx = -d; dx <= d; dx++) {
+        if (Math.abs(dx) + Math.abs(dy) !== d) continue
+        if (walk(x0 + dx, y0 + dy)) return { x: x0 + dx, y: y0 + dy }
       }
     }
   }
-  bl = 1e9
-  archerSpot = rally
-  for (let yy = 0; yy < game.height; yy++) {
-    for (let xx = 0; xx < game.width; xx++) {
-      const x = seatRev ? game.width - 1 - xx : xx
-      const y = seatRev ? game.height - 1 - yy : yy
-      const i = y * W + x
-      if (dHome[i] !== ARCHER_D || !isWalk(x, y) || dR[i] < 0) continue
-      if (dR[i] < bl) {
-        bl = dR[i]
-        archerSpot = { x, y }
-      }
-    }
-  }
-  for (const c of view.objectives.creepCamps) {
-    campDist.push(pathDistances(null, { x: c.x, y: c.y }))
-  }
+  return { x: Math.min(game.width - 1, Math.max(0, x0)), y: Math.min(game.height - 1, Math.max(0, y0)) }
+}
+
+// 从 from 往 to 的方向走 k 格（曼哈顿），落到能走的格上
+function along(from: Pos, to: Pos, k: number): Pos {
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const d = Math.abs(dx) + Math.abs(dy)
+  if (d === 0) return nearWalk(from, 3)
+  const s = Math.min(1, k / d)
+  return nearWalk({ x: from.x + dx * s, y: from.y + dy * s }, 3)
 }
 
 function centroid(us: Entity[]): Pos {
@@ -103,271 +62,192 @@ function centroid(us: Entity[]): Pos {
     sx += u.x
     sy += u.y
   }
-  return { x: Math.round(sx / us.length), y: Math.round(sy / us.length) }
+  return { x: sx / us.length, y: sy / us.length }
+}
+
+function nearestTo(list: Entity[], p: Pos): Entity {
+  let best = list[0]
+  let bd = dist(best, p)
+  for (const e of list) {
+    const d = dist(e, p)
+    if (d < bd) {
+      bd = d
+      best = e
+    }
+  }
+  return best
+}
+
+// 选还有野怪、离军队最近的营地；当前营地还有怪就继续清它。营地 9 格内有 2 个以上敌方单位的算有人，不去
+function pickCamp(view: View, c: Pos, foeUnits: Entity[]): number {
+  const camps = view.objectives.creepCamps
+  const hot = (cp: { x: number; y: number }): boolean =>
+    foeUnits.filter((e) => Math.abs(e.x - cp.x) + Math.abs(e.y - cp.y) <= 9).length >= 2
+  if (campIdx >= 0 && camps[campIdx] && camps[campIdx].alive > 0 && !hot(camps[campIdx])) return campIdx
+  let best = -1
+  let bestD = Infinity
+  for (let i = 0; i < camps.length; i++) {
+    if (camps[i].alive <= 0 || hot(camps[i])) continue
+    const d = Math.abs(camps[i].x - c.x) + Math.abs(camps[i].y - c.y)
+    if (d < bestD) {
+      bestD = d
+      best = i
+    }
+  }
+  return best
 }
 
 export function onTick(view: View, cmd: Commands): void {
-  if (!inited) init(view)
   const me = view.me
-  const my = view.entities.filter((e) => e.owner === me)
-  const base = my.find((e) => e.type === "base")
-  const bar = my.find((e) => e.type === "barracks")
-  const lord = my.find((e) => e.type === "lord")
-  const workers = my.filter((e) => e.type === "worker")
-  const army = my.filter((e) => e.type === "soldier" || e.type === "archer")
-  const enemies = view.entities.filter((e) => e.owner >= 0 && e.owner !== me)
-  const creeps = view.entities.filter((e) => e.type === "creep")
-  const t = view.tick
-  if (!base || !baseE) return
-
-  // ---------- 威胁判断 ----------
-  const homeRef: Pos[] = [base]
-  if (bar) homeRef.push(bar)
-  if (lord) homeRef.push(lord)
-  const wasField = mode === "stage" || mode === "fight" || mode === "return"
-  let fieldPos: Pos | null = null
-  if (wasField) {
-    const sqa = army.filter((u) => squad.has(u.id))
-    if (sqa.length > 0) fieldPos = centroid(sqa)
+  const E = view.entities
+  const T = game.types
+  const mine = E.filter((e) => e.owner === me)
+  const base = mine.find((e) => e.type === "base")
+  if (!base) return
+  const barracks = mine.find((e) => e.type === "barracks")
+  const lord = mine.find((e) => e.type === "lord")
+  const workers = mine.filter((e) => e.type === "worker")
+  const army = mine.filter((e) => e.type === "soldier" || e.type === "archer")
+  const eb = view.objectives.enemyBases.find((b) => b.owner !== me)
+  if (!eb) return
+  if (!inited) {
+    homeC = { x: base.x + 1, y: base.y + 1 }
+    enemyC = { x: eb.x + 1, y: eb.y + 1 }
+    rally = along(homeC, enemyC, 6)
+    inited = true
   }
-  const threats = enemies.filter(
-    (e) =>
-      (e.type === "soldier" || e.type === "archer" || e.type === "lord") &&
-      (homeRef.some((h) => dist(e, h) <= 10) || (fieldPos !== null && dist(e, fieldPos) <= 12))
-  )
-  const raiders = enemies.filter((e) => e.type === "worker" && dist(e, base) <= 10)
 
-  // ---------- 经济：生产 ----------
+  // 敌方（非中立）单位
+  const myTeam = view.players[me].team
+  const foes = E.filter((e) => e.owner >= 0 && view.players[e.owner].team !== myTeam)
+  const foeUnits = foes.filter((e) => T[e.type].kind === "unit")
+  const foeLord = foes.find((e) => e.type === "lord")
+  const threat = foeUnits.filter(
+    (e) => dist(e, base) <= 12 || (barracks !== undefined && dist(e, barracks) <= 12),
+  )
+
+  // 模式切换（进攻有滞后，不会一兵没了就来回切）
+  const n = army.length
+  if (attacking && n < RETREAT_BELOW) attacking = false
+  const lateGo = view.tick >= LATE_TICK && n >= LATE_ATTACK_MIN
+  if (!attacking && (n >= ATTACK_MIN || lateGo || (foeLord !== undefined && n >= 8))) attacking = true
+
+  const c: Pos = n > 0 ? centroid(army) : rally
+  let mode: "defend" | "clear" | "attack" = "defend"
+  let goal: Pos = rally
+  if (threat.length > 0) {
+    mode = "defend"
+    const t = nearestTo(threat, homeC)
+    goal = { x: t.x, y: t.y }
+  } else if (attacking) {
+    mode = "attack"
+    goal = foeLord ? { x: foeLord.x, y: foeLord.y } : enemyC
+  } else if (n >= CLEAR_MIN) {
+    campIdx = pickCamp(view, c, foeUnits)
+    if (campIdx >= 0) {
+      mode = "clear"
+      const cp = view.objectives.creepCamps[campIdx]
+      goal = { x: cp.x, y: cp.y }
+    } else {
+      campIdx = -1
+    }
+  } else {
+    campIdx = -1
+  }
+
+  // 打不过就撤：兵群 8 格内的敌方战斗单位（兵、弓、领主）不少于 0.9 倍我方兵数（且至少 3 个），
+  // 全军用 move 撤回集结点，让仗打在家门口（基地的火力和击退都在那边）
+  const fighters = foeUnits.filter((f) => f.type === "soldier" || f.type === "archer" || f.type === "lord")
+  const foesNear = fighters.filter((f) => dist(f, c) <= 8).length
+  const retreat = n > 0 && mode !== "defend" && foesNear >= 3 && foesNear * 10 >= n * 9
+  if (retreat) {
+    console.log(`t${view.tick} 撤退 army=${n} foes=${foesNear}`)
+    mode = "defend"
+    goal = rally
+    attacking = false
+  }
+
+  // 军队：进攻时离中心太远的先回到中心再一起上，别一个一个送
+  const gather = nearWalk(c, 2)
+  for (const u of army) {
+    if (retreat) cmd.move(u, rally.x, rally.y)
+    else if (mode === "clear") cmd.attackMove(u, goal.x, goal.y, { neutral: true })
+    else if (mode === "attack" && dist(u, c) > 7) cmd.attackMove(u, gather.x, gather.y)
+    else cmd.attackMove(u, goal.x, goal.y)
+  }
+
+  // 领主：跟在军队后面 3 格吃光环；血少就回家
+  if (lord) {
+    let lg: Pos
+    if (lord.hp < LORD_SAFE_HP) lg = along(homeC, rally, 2)
+    else if (n > 0) lg = along(c, homeC, 3)
+    else lg = along(homeC, rally, 3)
+    cmd.move(lord, lg.x, lg.y)
+    const cd = lord.skillCooldowns?.repel ?? 0
+    const close = foeUnits.filter((e) => dist(e, lord) <= 8).length
+    if (cd === 0 && close >= 3) cmd.cast(lord, "repel")
+  }
+
+  // 经济：金币记账，工人优先
   let gold = view.resources.gold
-  const unitCount = my.filter((e) => game.types[e.type].kind === "unit").length + (base.queue?.length ?? 0) + (bar?.queue?.length ?? 0)
-  const wQ = (base.queue ?? []).filter((q) => q.type === "worker").length
-  const wTotal = workers.length + wQ
-  let cap = game.unitCap - unitCount
-  if (bar && bar.queue !== undefined) {
-    // D-196 收录时改：兵营同时造 5 个，钱够就把队列排满（原来一次只排一个、队列留 2～3 个）
-    let qlen = bar.queue.length
-    const wantQ = game.types.barracks.parallel
-    const soldiersN = army.filter((e) => e.type === "soldier").length
-    const archersN = army.filter((e) => e.type === "archer").length
-    let archersQ = bar.queue.filter((q) => q.type === "archer").length
-    while (qlen < wantQ && cap > 0) {
-      const type: TypeName = archersN + archersQ < (soldiersN + archersN + qlen) * ARCHER_RATIO ? "archer" : "soldier"
-      const c = game.types[type].cost.gold ?? 0
-      if (gold < c) break
-      cmd.produce(bar, type)
-      gold -= c
-      cap--
-      qlen++
-      if (type === "archer") archersQ++
+  const wCost = T.worker.cost.gold ?? 50
+
+  const baseQ = base.queue?.length ?? 0
+  if (baseQ < 1 && workers.length < WORKER_TARGET && gold >= wCost) {
+    cmd.produce(base, "worker")
+    gold -= wCost
+  }
+
+  if (barracks && barracks.construction === undefined) {
+    const q = barracks.queue ?? []
+    let qn = q.length
+    let soldiers = army.filter((a) => a.type === "soldier").length + q.filter((x) => x.type === "soldier").length
+    let archers = army.filter((a) => a.type === "archer").length + q.filter((x) => x.type === "archer").length
+    const reserve = workers.length < WORKER_TARGET ? wCost : 0
+    while (qn < 5) {
+      const type: TypeName = soldiers <= 2 * archers ? "soldier" : "archer"
+      const cost = T[type].cost.gold ?? 0
+      if (gold - reserve < cost) break
+      cmd.produce(barracks, type)
+      gold -= cost
+      qn++
+      if (type === "soldier") soldiers++
+      else archers++
     }
   }
-  if (base.queue !== undefined && wTotal < WORKERS_WANT && cap > 0 && (base.queue?.length ?? 0) < 2 && gold >= 50) {
-    cmd.produce(base, "worker")
-    gold -= 50
-  }
 
-  // ---------- 经济：采集分配 ----------
-  const mines = view.entities.filter((e) => e.type === "goldmine" && (e.amount ?? 0) > 0)
+  // 工人：空闲的去离自己近、人少的金矿采
+  // 矿旁 6 格内有敌方单位的不去
+  const mines = E.filter(
+    (e) => T[e.type].kind === "resource" && (e.amount ?? 0) > 0 && !foeUnits.some((f) => dist(f, e) <= 6),
+  )
   const load = new Map<number, number>()
   for (const w of workers) {
     if (w.order?.kind === "gather") load.set(w.order.target, (load.get(w.order.target) ?? 0) + 1)
   }
   for (const w of workers) {
-    const go = w.order
-    if (go && go.kind === "gather" && mines.some((m) => m.id === go.target)) continue
-    let bestM: Entity | null = null
-    let bestC = 1e9
+    // 工人 4 格内有敌人就先撤回家
+    if (foeUnits.some((f) => dist(f, w) <= 4)) {
+      cmd.move(w, homeC.x, homeC.y)
+      continue
+    }
+    if (w.order && w.order.kind !== "idle") continue
+    let best: Entity | null = null
+    let bestS = Infinity
     for (const m of mines) {
-      const dh = dist(m, base)
-      if (dh > 30) continue
-      const l = load.get(m.id) ?? 0
-      const c = dh * 3 + l * (l >= 4 ? 100 : l >= 3 ? 20 : 6) + dist(m, w) * 0.5
-      if (c < bestC) {
-        bestC = c
-        bestM = m
+      const s = dist(w, m) + 2 * (load.get(m.id) ?? 0)
+      if (s < bestS) {
+        bestS = s
+        best = m
       }
     }
-    if (!bestM) {
-      // 家附近没矿了：去最近的
-      for (const m of mines) {
-        const c = dist(m, w)
-        if (c < bestC) {
-          bestC = c
-          bestM = m
-        }
-      }
-    }
-    if (bestM) {
-      cmd.gather(w, bestM)
-      load.set(bestM.id, (load.get(bestM.id) ?? 0) + 1)
+    if (best) {
+      cmd.gather(w, best)
+      load.set(best.id, (load.get(best.id) ?? 0) + 1)
     }
   }
 
-  // ---------- 模式切换 ----------
-  const homeThreat = threats.length > 0 || raiders.length >= 2
-  const camps = view.objectives.creepCamps
-  if (homeThreat && mode !== "home") {
-    if (wasField) nextFarm = t + 400
-    mode = "home"
-    modeSince = t
-    squad.clear()
-  }
-  const enemyScore = view.players[1 - me]?.score ?? 0
-  if (mode === "home" && !homeThreat && t > 1500 && army.length >= PUSH_ARMY && view.players[me].score - enemyScore >= PUSH_LEAD) {
-    mode = "push"
-    modeSince = t
-  }
-  if (mode === "home" && FARM_ENABLED && !homeThreat && t >= nextFarm && t >= 600 && t < FARM_UNTIL && army.length >= FARM_ARMY && lord) {
-    // 选最近且还有活野怪的营地
-    let bi = -1
-    let bd = 1e9
-    for (let i = 0; i < camps.length; i++) {
-      const c = camps[i]
-      if (c.alive === 0) continue
-      const d = dHome[c.y * game.width + c.x] - (c.size >= 3 ? 4 : 0)
-      if (dHome[c.y * game.width + c.x] >= 0 && d < bd) {
-        bd = d
-        bi = i
-      }
-    }
-    if (bi >= 0) {
-      campIdx = bi
-      // 集结点：离营地 5 步、离我方家最近
-      const cd = campDist[bi]
-      let bs = 1e9
-      let sp: Pos | null = null
-      for (let y = 0; y < game.height; y++) {
-        for (let x = 0; x < game.width; x++) {
-          const i = y * game.width + x
-          if (cd[i] === 5 && isWalk(x, y) && dHome[i] >= 0 && dHome[i] < bs) {
-            bs = dHome[i]
-            sp = { x, y }
-          }
-        }
-      }
-      if (sp) {
-        stagePos = sp
-        mode = "stage"
-        modeSince = t
-        squad.clear()
-        for (const u of army) squad.add(u.id)
-      }
-    }
-  }
-
-  // ---------- 领主 ----------
-  if (lord) {
-    let lordTarget: Pos | null = null
-    if (!lordTarget) {
-      if (mode === "home") {
-        lordTarget = lordHome
-        if (homeThreat && army.length > 0) {
-          const cc = centroid(army)
-          let rear = army[0]
-          for (const u of army) if (dist(u, cc) < dist(rear, cc)) rear = u
-          lordTarget = { x: rear.x, y: rear.y }
-        }
-      } else if (army.length > 0) {
-        const pool = (mode === "push" ? army : army.filter((u) => squad.has(u.id)))
-        const arr = pool.length > 0 ? pool : army
-        let rear = arr[0]
-        for (const u of arr) if (dHome[u.y * game.width + u.x] < dHome[rear.y * game.width + rear.x]) rear = u
-        lordTarget = { x: rear.x, y: rear.y }
-      }
-    }
-    if (lordTarget && dist(lord, lordTarget) > 1) cmd.move(lord, lordTarget.x, lordTarget.y)
-  }
-
-  // ---------- 军队 ----------
-  const inField = mode === "stage" || mode === "fight" || mode === "return"
-  const sq = inField ? army.filter((u) => squad.has(u.id)) : army
-  if (inField) {
-    for (const u of army) {
-      if (squad.has(u.id)) continue
-      const spot = u.type === "archer" ? archerSpot : rally
-      if (dist(u, spot) > 2 && u.order?.kind !== "move") cmd.move(u, spot.x, spot.y)
-    }
-  }
-  if (mode === "home") {
-    if (homeThreat) {
-      const all = [...threats, ...raiders]
-      // 最近的威胁
-      const refP: Pos = fieldPos ?? (army.length > 0 ? centroid(army) : base)
-      let tgt = all[0]
-      for (const e of all) if (dist(e, refP) < dist(tgt, refP)) tgt = e
-      const eLord = enemies.find((e) => e.type === "lord")
-      for (const u of army) {
-        if (eLord && dist(u, eLord) <= (u.type === "archer" ? 5 : 3)) cmd.attack(u, eLord)
-        else cmd.attackMove(u, tgt.x, tgt.y)
-      }
-    } else {
-      for (const u of army) {
-        const spot = u.type === "archer" ? archerSpot : rally
-        if (dist(u, spot) > 2 && u.order?.kind !== "move") cmd.move(u, spot.x, spot.y)
-      }
-    }
-  } else if (mode === "push") {
-    const eb = view.objectives.enemyBases[0]
-    const eLord = enemies.find((e) => e.type === "lord")
-    for (const u of army) {
-      if (eLord && dist(u, eLord) <= (u.type === "archer" ? 5 : 3)) cmd.attack(u, eLord)
-      else cmd.attackMove(u, eb.x + 1, eb.y + 1)
-    }
-    if (army.length < 10) {
-      mode = "home"
-      modeSince = t
-    }
-  } else if (mode === "stage" && stagePos) {
-    for (const u of sq) if (dist(u, stagePos) > 2) cmd.attackMove(u, stagePos.x, stagePos.y)
-    const near = sq.filter((u) => dist(u, stagePos!) <= 4).length
-    if ((near >= sq.length * 0.9 && lord && dist(lord, stagePos) <= 6) || t - modeSince > 300) {
-      mode = "fight"
-      modeSince = t
-    }
-  } else if (mode === "fight") {
-    const c = camps[campIdx]
-    if (!c || c.alive === 0) {
-      mode = "return"
-      modeSince = t
-    } else {
-      const cr = creeps.filter((e) => dist(e, { x: c.x, y: c.y }) <= 9)
-      if (cr.length === 0) {
-        // 还没看见：往营地走
-        for (const u of sq) cmd.attackMove(u, c.x, c.y)
-      } else {
-        const cen = sq.length > 0 ? centroid(sq) : { x: c.x, y: c.y }
-        let tgt = cr[0]
-        for (const e of cr) {
-          if (e.hp < tgt.hp || (e.hp === tgt.hp && dist(e, cen) < dist(tgt, cen))) tgt = e
-        }
-        for (const u of sq) cmd.attack(u, tgt)
-      }
-    }
-    if (sq.length < 6) {
-      mode = "return"
-      modeSince = t
-    }
-    if (t - modeSince > 900) {
-      mode = "return"
-      modeSince = t
-    }
-  } else if (mode === "return") {
-    for (const u of sq) {
-      const spot = u.type === "archer" ? archerSpot : rally
-      if (dist(u, spot) > 3) cmd.attackMove(u, spot.x, spot.y)
-    }
-    if (sq.every((u) => dist(u, rally) <= 8) || t - modeSince > 300) {
-      mode = "home"
-      modeSince = t
-      nextFarm = t + 100
-      squad.clear()
-    }
-  }
-
-  // 击退（D-197 收录时改，原来是点金、召唤箭塔）：领主 6 格内有 3 个以上敌兵就放；放在最后，免得前面对被推走的敌人下的 attack 被拒
-  if (lord && (lord.skillCooldowns?.repel ?? 1) === 0 && enemies.filter((e) => (e.type === "soldier" || e.type === "archer") && dist(e, lord) <= 6).length >= 3) cmd.cast(lord, "repel")
-
-  if (t % 500 === 0) {
-    console.log(`t=${t} mode=${mode} army=${army.length} workers=${workers.length} gold=${view.resources.gold} lordCD=${lord?.skillCooldowns?.repel} score=${view.players[me].score}`)
+  if (view.tick % 300 === 0) {
+    console.log(`t${view.tick} mode=${mode} army=${n} workers=${workers.length} gold=${view.resources.gold} camp=${campIdx}`)
   }
 }
