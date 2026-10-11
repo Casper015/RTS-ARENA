@@ -1,4 +1,4 @@
-// 联赛视频：把联赛汇总 + 大模型写的脚本排成一串场景（开场阵容（带平台署名）→ 规则介绍 → 选手介绍 → 排行榜 → 精彩对局 → 片尾署名），
+// 联赛视频：把联赛汇总 + 大模型写的脚本排成一串场景（规则介绍（带平台署名）→ 排名和对局数据 → 每个参赛选手「介绍 → 他的高光对局」→ 片尾署名，横竖屏一样，D-221），
 // 用本机的 Chrome / Edge 无头模式逐帧画出来、编成 MP4。回放场景每帧的局面在这边从回放算好再送进页面
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import { createRequire } from "node:module"
@@ -6,7 +6,7 @@ import { basename, dirname, join, resolve } from "node:path"
 import { applyFrame, ReplayModel, type State } from "../core/replay-model.ts"
 import type { Replay } from "../core/types.ts"
 import { findBrowser, launchBrowser } from "./browser.ts"
-import { checkScript, codeFacts, factTags, gameScores, highlightPlayerWarnings, PLAYER_PAGE_CHARS, PLAYER_PAGE_MIN, readSeries, resolveBotFile, RULES_PAGE_CHARS, SCRIPT_LIMITS, scriptWarnings, type SeriesFile, type VideoScript } from "./brief.ts"
+import { checkScript, codeFacts, contestantNames, highlightPlayerWarnings, playerGames, PLAYER_PAGE_CHARS, PLAYER_PAGE_MIN, readSeries, resolveBotFile, RULES_PAGE_CHARS, SCRIPT_LIMITS, scriptWarnings, type SeriesFile, type VideoScript } from "./brief.ts"
 import { installVideoPage, type ReplayFrame, type SceneData } from "./page.ts"
 import { excitement, gameFacts } from "../cli/highlights.ts"
 import { fighterTest, groupBattles, isRout } from "../cli/battles.ts"
@@ -47,7 +47,7 @@ export interface RenderOptions {
   /** 预览图和检查截图放在哪个目录（默认视频旁边的 preview/）；--out 指到别处时截图也不跟过去 */
   imagesDir?: string
   onProgress?: (done: number, total: number) => void
-  /** 竖屏版（1080×1920，D-183）：开场阵容、规则，然后每个选手「介绍 → 他的高光对局」，最后排名和片尾 */
+  /** 竖屏版（1080×1920，D-183）：段落和横屏一样（D-221），按竖屏排版 */
   vertical?: boolean
 }
 
@@ -60,13 +60,13 @@ interface Scene {
 }
 
 const sec = (fps: number, s: number) => Math.round(fps * s)
-/** 片头片尾、选手页的节奏：时长和页内动画都比原来快这么多倍（D-146，用户要求快 1.3 倍左右；标题卡 D-149 退回原速，D-184 又减半，见 CARD_SPEED） */
+/** 片头片尾、选手页的节奏：时长和页内动画都比原来快这么多倍（D-146，用户要求快 1.3 倍左右） */
 export const BRISK = 1.3
+/** 规则页、选手页的时长又砍一半（D-221，用户），页内的动画也快一倍，免得没出全就切走了 */
+const HALF = 2
 /** 平台拼出来的文字在名字前后留了空格（给英文名用的）；名字是中文时，汉字之间的空格去掉："98% 的 大肥鱼" → "98% 的大肥鱼" */
 export const tidy = (s: string) => s.replace(/([一-鿿）」』]) (?=[一-鿿（「『])/g, "$1")
 /** 按要读的字数定时长（大约每秒读 11 个字），限制在 min～max 秒 */
-/** 精彩对局标题卡的时长减半、页内动画快一倍（D-184） */
-const CARD_SPEED = 2
 const readSecs = (chars: number, base: number, min: number, max: number) => Math.min(max, Math.max(min, base + chars / 11))
 const len = (...xs: (string | null | undefined)[]) => xs.reduce((a, x) => a + [...(x ?? "")].length, 0)
 /** 代码卡片上不值得占行的：空注释、分隔线 */
@@ -112,11 +112,11 @@ export function buildScenes(
   /** 选手有形象图就用联赛名字当图的名字（页面里按它取），头像按 avatar 裁 */
   const imageOf = (name: string) => (sp(name)?.portrait ? name : null)
   const avatarOf = (name: string) => (sp(name)?.avatar?.length === 3 ? sp(name)!.avatar! : DEFAULT_AVATAR)
-  // 精彩对局：脚本指定的，或者联赛挑的前 3 局
+  // 每个选手那局高光对局的标题和解说（脚本的 highlights）；脚本没写就从联赛挑的前 3 局里挑
   const picks: { index: number; title?: string; commentary?: string }[] = script.highlights?.length
     ? script.highlights
     : (sum.highlights ?? []).slice(0, 3).map((h) => ({ index: h.index }))
-  /** 一局精彩对局要用的东西：回放、双方、结果、标题、解说、座位 */
+  /** 一局高光对局要用的东西：回放、结果、标题、解说、座位 */
   const hlData = (pick: { index: number; title?: string; commentary?: string }) => {
     const g = series.results.find((r) => r.index === pick.index)!
     const replay = loadReplay(g.replay)
@@ -131,36 +131,10 @@ export function buildScenes(
     const title = pick.title || sides.map((s) => s.name).join(" 对 ")
     const commentary = pick.commentary || null
     const seats = seatOf.map((i, p) => ({ name: display(g.names[p]), color: color(i), avatar: imageOf(g.names[p]), crop: avatarOf(g.names[p]) }))
-    return { g, replay, seatOf, sides, result, title, commentary, seats }
+    return { g, replay, result, title, commentary, seats }
   }
-  // 开场（D-179，用户：视频三秒跳出率高）：第一帧就是全体选手的立绘阵容和一句大字（不从黑屏淡入，也当封面）；
-  // 平台署名和仓库地址用小字放在它最下面（D-181：冷开场效果不好删掉，片头署名页也不单独出现）
-  const hookText = script.hook?.text || `${names.length} 位选手的${series.ruleset.name}联赛，谁能夺冠？`
-  scenes.push({
-    label: "开场阵容",
-    data: {
-      kind: "lineup",
-      frames: sec(fps, 2.5),
-      title: hookText,
-      sub: `${series.ruleset.name}联赛 · ${names.length} 位选手 · ${series.results.length} 局`,
-      players: script.players.map((p) => ({ name: display(p.name), color: color(names.indexOf(p.name)), portrait: imageOf(p.name) })),
-    },
-  })
-  /**
-   * 竖屏里每个选手的高光对局（D-183）：脚本写了 players[].highlight 就用它；否则在精彩对局（先脚本的、再联赛挑的）里
-   * 找第一局有他、还没给别人用过的；精彩对局里没有（或者都给别人用了），从他打过的局里挑：赢过就挑结束最快的一局，没赢过就挑撑得最久的
-   */
-  const highlightOf = (p: VideoScript["players"][number], used: Set<number>): number | null => {
-    if (p.highlight !== undefined) return p.highlight
-    const pool = [...picks.map((x) => x.index), ...(sum.highlights ?? []).map((h) => h.index)]
-    const has = (idx: number) => series.results.find((r) => r.index === idx)?.names.includes(p.name) ?? false
-    const fromPool = pool.find((idx) => has(idx) && !used.has(idx))
-    if (fromPool !== undefined) return fromPool
-    const mine = series.results.filter((r) => r.names.includes(p.name) && !used.has(r.index))
-    const won = mine.filter((r) => r.winners.some((w) => r.names[w] === p.name)).sort((a, b) => a.tick - b.tick)
-    return (won[0] ?? [...mine].sort((a, b) => b.tick - a.tick)[0])?.index ?? pool.find(has) ?? null
-  }
-  // 规则介绍（开场阵容之后直接是它）：脚本写的几句（不写就用规则包的一句话简介），配第一局精彩对局的开局地图和单位图例
+  // 规则介绍（D-221 去掉了开场阵容，视频从它开始，第一帧不从黑屏淡入，底部有平台署名）：
+  // 脚本写的几句（不写就用规则包的一句话简介），配第一局高光对局的开局地图和单位图例
   const rulesLines = script.rules?.length ? script.rules : series.ruleset.summary ? [series.ruleset.summary] : []
   const mapIndex = script.highlights?.[0]?.index ?? sum.highlights?.[0]?.index ?? series.results[0]?.index
   const mapGame = series.results.find((r) => r.index === mapIndex)
@@ -169,9 +143,14 @@ export function buildScenes(
     const seatOf = mapGame.names.map((n) => names.indexOf(n))
     scenes.push({ label: "规则介绍", data: rulesScene(replay, series.ruleset.name, rulesLines, `第 ${mapGame.index} 局的开局地图`, seatOf.map((i) => color(i)), fps, specs) })
   }
+  // 只介绍参赛 bot，平台自带的参考 bot（陪练）只出现在排名页（D-221，用户）
+  const own = new Set(contestantNames(series))
   // 选手按联赛名次倒着出场，最后一名先上、冠军压轴（D-181，用户要求）；名次一样的按脚本里的顺序
   const rankOf = (name: string) => sum.standings.find((x) => x.index === names.indexOf(name))?.rank ?? names.length
-  const byRank = script.players.map((p, k) => ({ p, k })).sort((a, b) => rankOf(b.p.name) - rankOf(a.p.name) || a.k - b.k)
+  const byRank = script.players
+    .filter((p) => own.has(p.name))
+    .map((p, k) => ({ p, k }))
+    .sort((a, b) => rankOf(b.p.name) - rankOf(a.p.name) || a.k - b.k)
   const playerScene = (p: VideoScript["players"][number]): Scene => {
     const i = names.indexOf(p.name)
     const st = sum.standings.find((s) => s.index === i)
@@ -188,9 +167,10 @@ export function buildScenes(
       label: `选手 ${p.displayName || p.name}`,
       data: {
         kind: "player",
-        // 按字数算：原来按每秒 11 字的 1.3 倍（约 14 字）读、4.6～13 秒；D-183 时长减半、字数不变（用户：观众是读长文本很快的程序员），2.3～6.5 秒
-        frames: sec(fps, Math.min(13, Math.max(4.6, len(p.tagline, ...p.intro) / (11 * BRISK))) / 2),
-        speed: BRISK,
+        // 按字数算：原来按每秒 11 字的 1.3 倍（约 14 字）读、4.6～13 秒；D-183、D-221 时长两次减半、字数不变
+        // （用户：观众是读长文本很快的程序员），1.15～3.25 秒，页内动画也快一倍
+        frames: sec(fps, Math.min(13, Math.max(4.6, len(p.tagline, ...p.intro) / (11 * BRISK))) / 2 / HALF),
+        speed: BRISK * HALF,
         color: color(i),
         displayName: p.displayName || p.name,
         name: p.name,
@@ -209,57 +189,49 @@ export function buildScenes(
       },
     }
   }
-  const standingsScene = (secs: number): Scene => ({
-    label: "联赛排名",
+  const players = byRank.map(({ p }) => playerScene(p))
+  // 排名页（D-221，用户：规则之后加排名页，列出所有选手的排名和各种对局数据；时长和砍半后的选手介绍一样）：
+  // 每局平均的数据，加上规则包自己记的统计（最多 2 项）；参考 bot 标「陪练」
+  const bots = sum.stats?.bots ?? []
+  const customKeys = [...new Set(bots.flatMap((b) => Object.keys(b.custom ?? {})))].slice(0, 2)
+  const num = (x: number) => (x >= 100 ? String(Math.round(x)) : x.toFixed(1))
+  const columns = ["胜局用时", "采集", "造单位", "击杀", "损失", "拆建筑", ...customKeys]
+  const standingFrames = players.length ? Math.round(players.reduce((t, x) => t + x.data.frames, 0) / players.length) : sec(fps, 3)
+  scenes.push({
+    label: "联赛排名和对局数据",
     data: {
       kind: "standings",
-      frames: sec(fps, secs),
+      frames: standingFrames,
+      speed: HALF,
       title: "联赛排名",
-      rows: sum.standings.map((s) => ({ name: display(s.name), color: color(s.index), rank: s.rank, record: `${s.wins} 胜 ${s.draws} 平 ${s.losses} 负 · 等级分 ${s.elo}`, rate: s.rate, elo: s.elo, portrait: imageOf(s.name) })),
+      sub: `${names.length} 个 bot · ${series.results.length} 局 · 数据是每局平均，胜局用时是赢的局平均打了几 tick${own.size < names.length ? " · 灰色的是平台自带的陪练" : ""}`,
+      columns,
+      rows: sum.standings.map((st) => {
+        const b = bots.find((x) => x.name === st.name)
+        const g = b?.games || 1
+        const cells = b
+          ? [b.winGames ? String(Math.round(b.winTicks / b.winGames)) : "—", num(b.income / g), num(b.produced / g), num(b.killedUnits / g), num(b.lostUnits / g), num(b.killedBuildings / g), ...customKeys.map((k) => num((b.custom?.[k] ?? 0) / g))]
+          : columns.map(() => "—")
+        return { name: display(st.name), color: color(st.index), rank: st.rank, record: `${st.wins}-${st.draws}-${st.losses}`, rate: st.rate, elo: st.elo, ref: !own.has(st.name), cells }
+      }),
     },
   })
-  // 全联赛之最（最快、最久、比分最接近）的标签，挑中这几局时排在看点最前面
-  const tags = factTags(series, gameScores(series, seriesFile))
-  /** 一局精彩对局：标题卡（withCard 时）和整局回放；no 是第几局 */
-  const hlScenes = (pick: { index: number; title?: string; commentary?: string }, no: number, withCard: boolean, label: string): Scene[] => {
-    const { g, replay, sides, result, title, commentary, seats } = hlData(pick)
-    const out: Scene[] = []
-    if (withCard) {
-      const hl = sum.highlights?.find((h) => h.index === pick.index)
-      const reasons = [...(tags.get(g.index) ?? []), ...(hl ? hl.reasons.map(relabel) : gameReasons(replay, g.names.map(display)).map(tidy))].slice(0, 4)
-      out.push({
-        label: `${label} 标题卡（第 ${g.index} 局）`,
-        // 按要读的字数（标题、对阵、结果、看点、解说）算原来的 4.5～8 秒，再减半成 2.3～4 秒，页内动画也快一倍（D-184，用户：标题卡太长；字数不变）
-        data: { kind: "hlTitle", frames: sec(fps, readSecs(len(commentary) + 0.4 * len(...reasons), 2.5, 4.5, 8) / CARD_SPEED), speed: CARD_SPEED, no, title, sides, result: `第 ${g.index} 局 · ${result} · 第 ${g.tick} tick · ${relabel(g.reason)}`, reasons, commentary },
-      })
-    }
-    const rs = replayScene(replay, no, title, commentary, seats, result, fps, analysis?.weights ?? null)
-    // 竖屏没有标题卡，回放顶上的小字写成「<选手>的高光对局」
-    out.push({ label: `${label} 回放${withCard ? "" : `（第 ${g.index} 局）`}`, ...rs, data: withCard ? rs.data : { ...rs.data, kicker: label } as SceneData })
-    return out
-  }
-  // 片尾名单按脚本里的顺序
-  const credits = script.players.map((s) => `${s.displayName || s.name}${s.byline ? ` · ${s.byline}` : ""}`)
-  const close: Scene = { label: "总结、片尾署名和选手名单", data: { kind: "brandClose", frames: sec(fps, 6.5 / BRISK), speed: BRISK, outro: script.outro || null, credits: [...credits, "比赛、回放、精彩对局和这段视频都由平台自动生成"] } }
-  if (opts.vertical) {
-    // 竖屏（D-183，用户：竖屏改成「选手 A 介绍、A 的高光对局、选手 B 介绍、B 的高光对局」，和横屏做出区别）：
-    // 按名次倒着，每人一页介绍，紧接着整局放这个选手的高光对局（不加标题卡，回放顶上有标题和解说）；最后是排名和片尾
-    const used = new Set<number>()
-    byRank.forEach(({ p }, k) => {
-      scenes.push(playerScene(p))
-      const idx = highlightOf(p, used)
-      if (idx === null) return
-      used.add(idx)
-      scenes.push(...hlScenes(picks.find((x) => x.index === idx) ?? { index: idx }, k + 1, false, tidy(`${p.displayName || p.name} 的高光对局`)))
-    })
-    scenes.push(standingsScene(5))
-    scenes.push(close)
-    return scenes
-  }
-  for (const { p } of byRank) scenes.push(playerScene(p))
-  scenes.push(standingsScene(6))
-  picks.forEach((pick, k) => scenes.push(...hlScenes(pick, k + 1, true, `精彩对局 ${k + 1}`)))
-  scenes.push(close)
+  // 每个参赛选手：介绍，紧接着整局放他的高光对局（D-183 竖屏这样排，D-221 横屏也一样，没有标题卡；回放顶上写「<选手>的高光对局」、标题和解说）
+  const games = playerGames(series, byRank.map(({ p }) => p), picks.map((x) => x.index))
+  byRank.forEach(({ p }, k) => {
+    scenes.push(players[k])
+    const idx = games.get(p.name)
+    if (idx === null || idx === undefined) return
+    const { g, replay, result, title, commentary, seats } = hlData(picks.find((x) => x.index === idx) ?? { index: idx })
+    const label = tidy(`${p.displayName || p.name} 的高光对局`)
+    const rs = replayScene(replay, k + 1, title, commentary, seats, result, fps, analysis?.weights ?? null)
+    scenes.push({ label: `${label} 回放（第 ${g.index} 局）`, ...rs, data: { ...rs.data, kicker: label } as SceneData })
+  })
+  // 片尾名单：参赛选手，按脚本里的顺序
+  const credits = script.players.filter((s) => own.has(s.name)).map((s) => `${s.displayName || s.name}${s.byline ? ` · ${s.byline}` : ""}`)
+  scenes.push({ label: "总结、片尾署名和选手名单", data: { kind: "brandClose", frames: sec(fps, 6.5 / BRISK), speed: BRISK, outro: script.outro || null, credits: [...credits, "比赛、回放、精彩对局和这段视频都由平台自动生成"] } })
+  // 第一段（规则介绍）的第一帧就是完整画面，不从黑屏淡入（原来开场阵容的做法，D-179）
+  if (scenes[0]) scenes[0] = { ...scenes[0], data: { ...scenes[0].data, first: true } }
   return scenes
 }
 
@@ -306,8 +278,9 @@ function rulesScene(replay: Replay, ruleset: string, lines: string[], mapNote: s
   const chars = lines.reduce((a, l) => a + [...l].length, 0)
   return {
     kind: "rules",
-    // 按字数算，再减半（D-183：用户让规则介绍时长减半、字数不变），最长 6 秒
-    frames: sec(fps, readSecs(chars, 4, 6, 12) / 2),
+    // 按字数算，再两次减半（D-183、D-221：用户让规则介绍时长减半、字数不变），1.5～3 秒，页内动画也快一倍
+    frames: sec(fps, readSecs(chars, 4, 6, 12) / 2 / HALF),
+    speed: HALF,
     ruleset,
     lines,
     mapNote,
@@ -793,13 +766,16 @@ export function lintScript(seriesFile: string, script: VideoScript, fps = 30, ot
   const series = readSeries(seriesFile)
   const errors = checkScript(script, series)
   const warnings = [...scriptWarnings(script, otherRulesets), ...highlightPlayerWarnings(script, readSeries(seriesFile)), ...idleHighlightWarnings(script, seriesFile), ...portraitWarnings(script)]
+  // 参考 bot（陪练）写进 players 也不会出现在视频里（D-221 只介绍参赛 bot）
+  const own = new Set(contestantNames(series))
+  if (Array.isArray(script.players))
+    for (const p of script.players) if (p && typeof p.name === "string" && series.participants.some((x) => x.name === p.name) && !own.has(p.name)) warnings.push(`players 里的 ${p.name} 是平台自带的参考 bot（陪练），视频里不介绍它（只出现在排名页），删掉就行`)
   const L = SCRIPT_LIMITS
   const n = (s?: string) => [...(s ?? "")].length
   const counts: string[] = []
   const row = (k: string, v: unknown, max: number) => {
     if (typeof v === "string") counts.push(`${k}：${n(v)} / ${max}${n(v) > max ? "  ← 超了" : ""}`)
   }
-  row("hook.text", script.hook?.text, L.hook)
   if (Array.isArray(script.rules)) {
     script.rules.forEach((l, i) => row(`rules[${i}]`, l, L.rulesLine))
     const total = script.rules.reduce((a, l) => a + n(l), 0)

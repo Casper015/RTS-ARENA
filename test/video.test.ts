@@ -5,7 +5,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
 import { after, test } from "node:test"
-import { checkScript, codeFacts, factTags, gameScores, highlightPlayerWarnings, readSeries, resolveBotFile, scriptWarnings, videoBrief, type VideoScript } from "../src/video/brief.ts"
+import { checkScript, codeFacts, contestantNames, factTags, gameScores, highlightPlayerWarnings, isReferenceBot, readSeries, resolveBotFile, scriptWarnings, videoBrief, type SeriesFile, type VideoScript } from "../src/video/brief.ts"
 import { findBrowser } from "../src/video/browser.ts"
 import { buildScenes, fightWindows, idleHighlightWarnings, pacing, relabelSeats, tidy, timelineOf } from "../src/video/render.ts"
 import { analyzeLeague, baseTypeOf, fitWinModel, twoSides, winCurve } from "../src/video/analysis.ts"
@@ -52,6 +52,16 @@ export function onTick(view: View, cmd: Commands): void {
   assert.equal(f.features["注释里的感叹号"], 1)
 })
 
+test("只介绍参赛 bot（D-221）：规则包 bots/ 里的参考 bot 是陪练，不用写进 players、不出现在视频的选手页；全是参考 bot 时都算参赛", () => {
+  assert.ok(isReferenceBot("..\\..\\Code\\rts-arena\\rulesets\\regicide-annihilation\\bots\\llm.ts", "regicide-annihilation"))
+  assert.ok(!isReferenceBot("GPT.ts", "regicide-annihilation"))
+  assert.ok(!isReferenceBot("../rulesets/capture/bots/x.ts", "regicide-annihilation"))
+  const mixed = { ruleset: { id: "capture", name: "夺点" }, participants: [{ name: "GPT", file: "GPT.ts" }, { name: "baseline", file: "../rulesets/capture/bots/baseline.ts" }] } as unknown as SeriesFile
+  assert.deepEqual(contestantNames(mixed), ["GPT"])
+  const refs = { ...mixed, participants: [{ name: "baseline", file: "rulesets/capture/bots/baseline.ts" }, { name: "rush", file: "rulesets/capture/bots/rush.ts" }] } as SeriesFile
+  assert.deepEqual(contestantNames(refs), ["baseline", "rush"])
+})
+
 test("素材包：每个选手的文件名、成绩、代码指标，脚本模板；脚本检查列出所有问题", () => {
   const b = videoBrief(seriesFile)
   assert.deepEqual(
@@ -60,8 +70,11 @@ test("素材包：每个选手的文件名、成绩、代码指标，脚本模�
   )
   assert.ok(b.players.every((p) => p.code && p.code.lines > 10 && p.standing))
   const series = readSeries(seriesFile)
-  // 模板本身还没填，检查不过
+  // 模板本身还没填，检查不过；没有开场大字了，每个选手挑好一局高光对局，highlights 里同一局待填标题和解说（D-221）
   assert.ok(checkScript(b.scriptTemplate, series).some((e) => e.includes("待填")))
+  assert.equal((b.scriptTemplate as unknown as Record<string, unknown>).hook, undefined)
+  assert.ok(b.scriptTemplate.players.every((p) => typeof p.highlight === "number"))
+  assert.deepEqual(new Set(b.scriptTemplate.highlights!.map((h) => h.index)), new Set(b.scriptTemplate.players.map((p) => p.highlight)))
   const bad = checkScript({ players: [{ name: "nobody", tagline: "x", intro: [] }], highlights: [{ index: 99 }] }, series)
   assert.ok(bad.some((e) => e.includes("联赛里的名字")))
   assert.ok(bad.some((e) => e.includes("intro")))
@@ -154,6 +167,8 @@ test("脚本提醒：粗体字段里的「一」像破折号，常规字重的�
   assert.ok(w[0].startsWith("outro 是粗体") && w[1].startsWith("highlights[0].commentary 是粗体"))
   // 不再有标题页（D-177）：老脚本的 title、userText、theme 提醒删掉
   assert.ok(scriptWarnings({ title: "x", userText: "y", players: [] }).some((x) => /title、userText 不再使用/.test(x)))
+  // 开场阵容删掉了（D-221）：老脚本的 hook 提醒删掉
+  assert.ok(scriptWarnings({ hook: { text: "x" }, players: [] }).some((x) => /hook 不再使用/.test(x)))
   assert.deepEqual(scriptWarnings(null), [])
   // 选手页：tagline 加 intro 超过 260 字太挤，少于 160 字页面显得空，都提醒（4～5 句、180～260 字；D-183 只减半时长、字数不变）
   const long = scriptWarnings({ players: [{ name: "a", tagline: "定位", intro: ["很长".repeat(70), "很长".repeat(70)] }] })
@@ -167,32 +182,35 @@ test("脚本提醒：粗体字段里的「一」像破折号，常规字重的�
   assert.match(other[0], /rules\[0\] 提到了别的规则包「拓荒」/)
 })
 
-test("场景编排：片头片尾署名、标题、每个选手、排名、精彩对局（标题卡 + 回放）", () => {
+test("场景编排（D-221）：规则介绍 → 排名和对局数据 → 每个参赛选手「介绍 → 他的高光对局」→ 片尾，横竖屏一样", () => {
   const series = readSeries(seriesFile)
   assert.deepEqual(checkScript(script, series), [])
   const scenes = buildScenes(series, script, seriesFile, 10)
   const kinds = scenes.map((s) => s.data.kind)
-  // 开场（D-179）：第一帧是选手阵容（平台署名用小字放在它下面），接着直接是规则介绍（D-181：冷开场、片头署名页都删了）
-  assert.deepEqual(kinds.slice(0, 2), ["lineup", "rules"])
-  assert.ok(!kinds.includes("brandOpen" as never))
-  const lineup = scenes[0].data as { title: string; players: { name: string }[] }
-  assert.equal(lineup.players.length, 2)
-  assert.match(lineup.title, /2 位选手的夺点联赛，谁能夺冠？/)
-  // 片头片尾、选手页、标题卡的节奏加快：带 speed，时长按它缩短（片头 3.5 秒 → 2.7 秒）
-  for (const s of scenes.filter((x) => ["brandOpen", "player", "brandClose"].includes(x.data.kind))) assert.equal((s.data as { speed?: number }).speed, 1.3)
-  // 标题卡时长减半、动画快一倍（D-184），最长 4 秒
-  for (const s of scenes.filter((x) => x.data.kind === "hlTitle")) assert.ok((s.data as { speed?: number }).speed === 2 && s.data.frames <= 4 * 10)
+  // 没有开场阵容、标题卡（D-221，用户：砍掉开头的肖像排列，直接从规则开始放）；规则之后是排名
+  assert.deepEqual(kinds, ["rules", "standings", "player", "replay", "player", "replay", "brandClose"])
+  // 第一段从第一帧起就是完整画面（不从黑屏淡入），别的段不是
+  assert.equal(scenes[0].data.first, true)
+  assert.ok(scenes.slice(1).every((x) => !x.data.first))
+  // 规则页、选手页时长再砍一半、页内动画快一倍（D-221）：规则 1.5～3 秒，选手 1.15～3.25 秒
+  assert.equal((scenes[0].data as { speed?: number }).speed, 2)
+  assert.ok(scenes[0].data.frames >= 15 && scenes[0].data.frames <= 30, String(scenes[0].data.frames))
+  const pages = scenes.filter((x) => x.data.kind === "player")
+  for (const x of pages) assert.ok((x.data as { speed?: number }).speed === 2.6 && x.data.frames >= 11 && x.data.frames <= 33, String(x.data.frames))
+  // 排名页和砍半后的选手页一样长（取平均，用户），列出所有 bot 和每局平均的数据
+  const st = scenes[1].data as { frames: number; rows: { name: string; ref: boolean; cells: string[]; record: string }[]; columns: string[] }
+  assert.equal(st.frames, Math.round(pages.reduce((t, x) => t + x.data.frames, 0) / pages.length))
+  assert.equal(st.rows.length, 2)
+  assert.deepEqual(st.columns.slice(0, 6), ["胜局用时", "采集", "造单位", "击杀", "损失", "拆建筑"])
+  assert.ok(st.rows.every((r) => r.cells.length === st.columns.length && /^\d+-\d+-\d+$/.test(r.record)))
   // 选手页按名次倒着出场：最后一名先上
-  const order = scenes.filter((x) => x.data.kind === "player").map((x) => (x.data as { rank: number }).rank)
+  const order = pages.map((x) => (x.data as { rank: number }).rank)
   assert.deepEqual(order, [...order].sort((a, b) => b - a))
-  assert.equal(kinds.at(-1), "brandClose")
   // 片尾名单按脚本里的出场顺序
   const close = scenes.at(-1)!.data as { credits: string[] }
   assert.deepEqual(close.credits.slice(0, 2), ["基准 · 平台自带", "rush"])
-  // 片头之后直接是规则介绍（D-177：没有标题页了）
-  assert.deepEqual(kinds.slice(1, 6), ["rules", "player", "player", "standings", "hlTitle"])
-  // 规则介绍：没写 rules 就用规则包的一句话简介；配第一局精彩对局的开局地图（有控制点标记）和单位图例（带近战 / 射程）
-  const rules = scenes[1].data as { lines: string[]; ents: number[]; markers: { kind: string }[]; legend: { name: string; detail: string }[]; tickNote: string }
+  // 规则介绍：没写 rules 就用规则包的一句话简介；配一局的开局地图（有控制点标记）和单位图例（带近战 / 射程）
+  const rules = scenes[0].data as { lines: string[]; ents: number[]; markers: { kind: string }[]; legend: { name: string; detail: string }[]; tickNote: string }
   assert.match(rules.tickNote, /1 秒 = 10 tick，一局最多 \d+ tick/)
   assert.equal(rules.lines.length, 1)
   assert.ok(rules.ents.length > 0 && rules.markers.some((m) => m.kind === "zone"))
@@ -203,18 +221,14 @@ test("场景编排：片头片尾署名、标题、每个选手、排名、精�
   // 选手页按字数定时长（介绍长的那页更长）
   const longIntro = buildScenes(series, { ...script, players: [{ ...script.players[0], intro: ["一句比较长的介绍，".repeat(8)] }, script.players[1]] }, seriesFile, 10)
   const players = longIntro.filter((s) => s.data.kind === "player")
-  assert.ok(players[0].data.frames > players[1].data.frames, players.map((s) => s.data.frames).join(","))
+  const long0 = players.find((x) => (x.data as { name: string }).name === script.players[0].name)!
+  const long1 = players.find((x) => (x.data as { name: string }).name === script.players[1].name)!
+  assert.ok(long0.data.frames > long1.data.frames, players.map((s) => s.data.frames).join(","))
   const withRules = buildScenes(series, { ...script, rules: ["占住正中的控制点，点里只有你的单位时每 tick 得 1 分", "先拿满 600 分的赢"] }, seriesFile, 10)
   assert.equal((withRules.find((x) => x.data.kind === "rules")!.data as { lines: string[] }).lines.length, 2)
-  // 脚本写了开场的大字就用它
-  const hooked = buildScenes(series, { ...script, hook: { text: "两个参考 bot 谁更强？" } }, seriesFile, 10)
-  assert.equal((hooked[0].data as { title: string }).title, "两个参考 bot 谁更强？")
-  // 竖屏（D-183）：开场、规则，然后每个选手「介绍 → 他的高光对局（整局，不加标题卡）」，最后排名和片尾
+  // 竖屏的段落和横屏一样
   const vert = buildScenes(series, script, seriesFile, 10, undefined, null, { vertical: true })
-  assert.deepEqual(
-    vert.map((x) => x.data.kind),
-    ["lineup", "rules", "player", "replay", "player", "replay", "standings", "brandClose"],
-  )
+  assert.deepEqual(vert.map((x) => x.data.kind), kinds)
   // 没写 players[].highlight：从精彩对局里挑有他的，两个人不重复
   const vIdx = vert.filter((x) => x.data.kind === "replay").map((x) => Number(/（第 (\d+) 局）$/.exec(x.label)![1]))
   assert.equal(new Set(vIdx).size, 2)
@@ -222,15 +236,13 @@ test("场景编排：片头片尾署名、标题、每个选手、排名、精�
   const pin = series.results.at(-1)!.index
   const pinned = { ...script, players: [{ ...script.players[0], highlight: pin }, script.players[1]] }
   assert.deepEqual(checkScript(pinned, series), [])
-  assert.ok(buildScenes(series, pinned, seriesFile, 10, undefined, null, { vertical: true }).some((x) => x.label === `基准的高光对局 回放（第 ${pin} 局）` && x.data.kind === "replay" && (x.data as { kicker?: string }).kicker === "基准的高光对局"))
+  assert.ok(buildScenes(series, pinned, seriesFile, 10).some((x) => x.label === `基准的高光对局 回放（第 ${pin} 局）` && x.data.kind === "replay" && (x.data as { kicker?: string }).kicker === "基准的高光对局"))
   assert.match(checkScript({ ...script, players: [{ ...script.players[0], highlight: 9999 }, script.players[1]] }, series).join("\n"), /players\[0\]\.highlight 要是联赛里的局号/)
-  const hl = series.summary!.highlights!.slice(0, 3).length
-  assert.equal(kinds.filter((k) => k === "replay").length, hl)
   // 时间表：每段都有名字，首尾相接
   const tl = timelineOf(scenes, 10)
-  assert.equal(tl[0].label, "开场阵容")
+  assert.equal(tl[0].label, "规则介绍")
   assert.ok(tl.every((x, k) => x.label && (k === 0 || x.from === tl[k - 1].to)))
-  assert.ok(tl.some((x) => /^选手 基准$/.test(x.label)) && tl.some((x) => /^精彩对局 1 回放$/.test(x.label)))
+  assert.ok(tl.some((x) => /^选手 基准$/.test(x.label)) && tl.some((x) => /^联赛排名和对局数据$/.test(x.label)))
   // 回放场景每帧都能算出局面，最后一帧定格显示结果；往回要的帧从头重算，结果一样
   const rs = scenes.find((s) => s.data.kind === "replay")
   if (rs) {
@@ -396,9 +408,11 @@ test("video-init：视频目录里有说明、选手代码、战报、待填脚�
   assert.ok(existsSync(join(dir, "RULES.md")))
   // 说明里的例子只用占位，不出现真实的模型名、外号（免得诱导大模型去猜这场的选手是谁写的）
   assert.doesNotMatch(prompt, /DeepSeek|大肥鱼|GPT6\.1sol|Gemini/)
-  assert.match(prompt, /2\. \*\*规则介绍\*\*/)
+  assert.match(prompt, /1\. \*\*规则介绍\*\*/)
+  assert.match(prompt, /2\. \*\*联赛排名\*\*/)
+  assert.doesNotMatch(prompt, /开场阵容（|hook\.text|标题卡看点/)
   assert.match(prompt, /照这个目录里的 `RULES\.md` 写/)
-  assert.match(prompt, /\| 标题卡看点 \|/)
+  assert.match(prompt, /\| 看点 \|/)
   assert.match(prompt, /全联赛结束得最快的胜局（\d+ tick）/)
   // 速查里每类都有一行，没有的明写"没有"
   for (const k of ["爆冷", "克制环", "逆转", "比分最接近的胜局", "规则包事件最多的局"]) assert.match(prompt, new RegExp(`\\n- ${k}`))
@@ -416,8 +430,8 @@ test("video-init：视频目录里有说明、选手代码、战报、待填脚�
     ["portraits/claude baseline.png", "portraits/hero rush.png"],
   )
   assert.equal((tmpl as unknown as Record<string, unknown>).userText, undefined)
-  // 写给大模型的：每段显示在哪、自动看点别重复、每人的颜色、每局数据
-  assert.match(prompt, /别重复看点/)
+  // 写给大模型的：每段显示在哪、每人那局都要写进 highlights、每人的颜色、每局数据
+  assert.match(prompt, /每个选手那局都要写进/)
   assert.match(prompt, /byline` 会出现在片尾/)
   assert.match(prompt, /视频里的颜色：蓝色/)
   assert.match(prompt, /每局数据/)
@@ -453,11 +467,11 @@ test("渲染：在视频目录里不写参数出预览图；本机有浏览器�
   assert.match(lint, /格式没问题/)
   const out = sh(["video", "--preview", "1,6"], dir)
   assert.match(out, /预览图/)
-  assert.match(out, /每段的时间（整段 [\d.]+ 秒）：\n\s+0\.0～2\.5\s+秒  开场阵容\n\s+2\.5～[\d.]+\s+秒  规则介绍/)
+  assert.match(out, /每段的时间（整段 [\d.]+ 秒）：\n\s+0\.0～[\d.]+\s+秒  规则介绍\n\s+[\d.]+～[\d.]+\s+秒  联赛排名和对局数据\n\s+[\d.]+～[\d.]+\s+秒  选手 \S+\n\s+[\d.]+～[\d.]+\s+秒  .+的高光对局 回放（第 \d+ 局）/)
   assert.ok(statSync(join(dir, "preview", "夺点联赛-6s.png")).size > 10_000)
-  // 竖屏（D-179、D-183）：开场阵容、规则、选手页和回放都按竖屏画，1080×1920；选手介绍后面紧跟他的高光对局
+  // 竖屏（D-179、D-183、D-221）：段落和横屏一样，规则、排名、选手页和回放都按竖屏画，1080×1920
   const vert = sh(["video", "--vertical", "--preview", "1,5", "--out", "竖.mp4"], dir)
-  assert.match(vert, /0\.0～2\.5\s+秒  开场阵容\n\s+2\.5～[\d.]+\s+秒  规则介绍\n\s+[\d.]+～[\d.]+\s+秒  选手 \S+\n\s+[\d.]+～[\d.]+\s+秒  .+的高光对局 回放（第 \d+ 局）/)
+  assert.match(vert, /0\.0～[\d.]+\s+秒  规则介绍\n\s+[\d.]+～[\d.]+\s+秒  联赛排名和对局数据\n\s+[\d.]+～[\d.]+\s+秒  选手 \S+\n\s+[\d.]+～[\d.]+\s+秒  .+的高光对局 回放（第 \d+ 局）/)
   const vpng = readFileSync(join(dir, "preview", "竖-5s.png"))
   assert.deepEqual([vpng.readUInt32BE(16), vpng.readUInt32BE(20)], [1080, 1920])
   // 两张以上的预览拼一张总览
@@ -467,7 +481,7 @@ test("渲染：在视频目录里不写参数出预览图；本机有浏览器�
   const auto = sh(["video", "--preview", "auto"], dir)
   const shots = /预览图：(.*)/.exec(auto)![1].split("、")
   const segs = auto.split("\n").filter((l) => /^\s+[\d.]+～/.test(l))
-  assert.equal(shots.length, segs.length + segs.filter((l) => l.endsWith("回放")).length)
+  assert.equal(shots.length, segs.length + segs.filter((l) => /回放(（第 \d+ 局）)?$/.test(l)).length)
   assert.ok(shots.every((f) => existsSync(join(dir, f))))
   const full = sh(["video", "--out", "v.mp4", "--fps", "10", "--check", "2"], dir)
   assert.match(full, /浏览器解码检查：时长 [\d.]+ 秒，1920×1080/)

@@ -8,7 +8,7 @@ import { gameFacts } from "../cli/highlights.ts"
 import { gameSeatStats, type SeatGameStats } from "../cli/league-stats.ts"
 import { buildReport } from "../cli/report.ts"
 import type { Replay } from "../core/types.ts"
-import { factTags, PLAYER_PAGE_CHARS, PLAYER_PAGE_MIN, readSeries, RULES_PAGE_CHARS, SCRIPT_LIMITS, videoBrief, type VideoBrief, type VideoScript } from "./brief.ts"
+import { contestantNames, factTags, PLAYER_PAGE_CHARS, PLAYER_PAGE_MIN, readSeries, RULES_PAGE_CHARS, SCRIPT_LIMITS, videoBrief, type VideoBrief, type VideoScript } from "./brief.ts"
 import { gameReasons, PALETTE_NAMES, tidy } from "./render.ts"
 
 export const VIDEO_CONFIG = "arena-video.json"
@@ -27,7 +27,9 @@ export function readVideoConfig(dir: string): VideoConfig | null {
 
 /** 要附战报的几局：联赛挑的精彩对局、每个选手赢得最快的一局、最长的一局（最多 12 局） */
 function reportGames(brief: VideoBrief, series: ReturnType<typeof readSeries>): number[] {
-  const picks = new Set<number>((brief.highlights ?? []).map((h) => h.index))
+  // 每个参赛选手那局高光对局（模板里挑好的）先出战报，再是联赛挑的精彩对局、每人赢得最快的一局、最长的一局
+  const picks = new Set<number>((brief.scriptTemplate.highlights ?? []).map((h) => h.index))
+  for (const h of brief.highlights ?? []) picks.add(h.index)
   for (const p of series.participants) {
     const mine = series.results.filter((r) => r.names.includes(p.name))
     const wins = mine.filter((r) => r.winners.some((w) => r.names[w] === p.name)).sort((a, b) => a.tick - b.tick)
@@ -35,14 +37,14 @@ function reportGames(brief: VideoBrief, series: ReturnType<typeof readSeries>): 
   }
   const longest = [...series.results].sort((a, b) => b.tick - a.tick)[0]
   if (longest) picks.add(longest.index)
-  return [...picks].sort((a, b) => a - b).slice(0, 12)
+  return [...picks].slice(0, 16).sort((a, b) => a - b)
 }
 
 /** 每局另外记下的：最终比分（规则包的分数）、规则包写了几条事件（夺下控制点、商队被劫……） */
 interface GameExtra {
   scores: number[]
   notes: number
-  /** 挑这局当精彩对局时，标题卡上自动显示的看点（和视频里一样） */
+  /** 这局的看点（全联赛之最、逆转、爆冷……），写解说时参考 */
   card: string[]
   /** 最大一仗死了几个（和战报「战斗」一节同一套切分） */
   biggest: number
@@ -133,7 +135,7 @@ export function createVideoWorkspace(seriesFile: string, dir: string, opts: Work
     write(`reports/game-${g.index}.md`, `# 第 ${g.index} 局：${g.names.join(" 对 ")}\n\n（P0、P1……是座位，顺序和标题里的名字一样）\n\n${buildReport(replay)}`)
     reported.push(g.index)
   }
-  // 全联赛之最的标签排在看点最前面（和渲染时一样），最多 4 条
+  // 全联赛之最的标签排在看点最前面，最多 4 条
   const tags = factTags(series, new Map([...extra].map(([i, x]) => [i, x.scores])))
   for (const [i, x] of extra) x.card = [...(tags.get(i) ?? []), ...x.card].slice(0, 4)
   // 规则说明：规则介绍那一段照它写（联赛汇总里记了规则包目录就用它，没记就按名字找平台自带的）
@@ -186,6 +188,7 @@ function videoPrompt(
 ): string {
   const L = SCRIPT_LIMITS
   const rs = brief.ruleset.name
+  const own = new Set(contestantNames(series))
   const out: string[] = []
   out.push(`# 联赛视频脚本说明（「${rs}」联赛，${brief.players.length} 位选手，${brief.league.games} 局）`)
   out.push("")
@@ -195,18 +198,17 @@ function videoPrompt(
   out.push("")
   out.push("脚本只管文字，排版、配色、动画、回放都是平台做的。没有配音。按顺序：")
   out.push("")
-  out.push("1. **开场阵容**（抓住前 3 秒，2.5 秒）：第一帧就是全体选手的立绘阵容（按 `players` 的顺序），上面压一句大字（`hook.text`，30 字以内；不写就是\"<人数> 位选手的<规则包>联赛，谁能夺冠？\"），最下面一行小字是平台署名和仓库地址（自动加，去不掉；没有单独的片头页）。这一帧也当封面。大字要像短视频标题：一句话点出冲突或悬念（谁对谁、谁是黑马、谁翻车），别写成说明文。")
-  out.push(`2. **规则介绍**：左边是你写的 \`rules\`（1～${L.rulesLines} 句，逐句出现），右边自动配上第一局精彩对局的开局地图（控制点这类标记也画出来）和单位图例（形状、字、名字、造价、生命、近战还是射程几格）。\`rules\` 不写就只显示规则包的一句话简介${series.ruleset.summary ? `："${series.ruleset.summary}"` : ""}。`)
-  out.push("3. **每个选手一页**，**按联赛名次倒着出场**：最后一名先上、冠军压轴（`players` 的顺序只管开场阵容和片尾名单）。左边是 `displayName`、`byline`（小字）、`tagline`（一句话定位，醒目）、`intro`（逐句出现）；背后是这个选手形象图的半透明半身像（`portrait`）；右上是平台算的**能力雷达图**（6 项，都从这场联赛的对局数据算：经济＝每局采集、生产＝每局造的单位、战斗＝击杀占比（击杀 ÷（击杀＋损失），旁边标杀伤比）、进攻＝每局拆的建筑、克制＝打在被自己克的兵上的伤害占比（没有克制的规则包换成速胜＝赢的局平均多快结束）、防守＝每局丢的建筑和工人越少越高，丢得最多的是 0；其余几项和全联赛最好的比），右下是代码指标和联赛战绩。雷达图的数字观众看得到，`intro` 里不用逐项复述，挑最突出的一两项讲原因。")
-  out.push("4. **联赛排名**（自动）。")
-  out.push("5. **精彩对局**，按 `highlights` 的顺序，每局两段：")
-  out.push("   - 标题卡：你的 `title`、对阵双方、结果（谁赢、第几 tick、怎么结束的）、**自动列出的看点**（就是下面「全部对局」表里这局的「标题卡看点」，最多 4 条：全联赛最快 / 最久 / 比分最接近这类标签排在前面，联赛挑的精彩对局接着是「精彩对局」一节冒号后面那几条，别的局是平台从回放算的），最后是你的 `commentary`。**`commentary` 别重复看点里已经有的话**，讲看点没讲的：这局的来龙去脉、关键的一下、和选手风格的关系。")
-  out.push("   - 回放：**大战按 2 倍速放**（侧栏标「大战」的那几场：死 6 个以上、不是一边倒的，1 秒 = 2 × 规则包的 tickRate 个 tick，进度条旁显示「大战 2 倍速」），**其余有单位倒下的小冲突按 4 倍速放**（哪怕只死一个、一边倒的也算，进度条旁显示「交火 4 倍速」），**没动静的地方快进**（加起来最多 10 秒），所以一局回放多长主要看打了多少仗，每段的秒数看命令列出的时间表。顶上一行是你的 `title` 和 `commentary`；地图上各家的主基地画成选手的头像（从 `portrait` 裁的）；侧栏选手下面是**实时胜率预测**（按全联赛对局拟合的模型，看当时的兵力、工人、建筑、分数，带一条到当前为止的曲线），胜率大起大落的地方就是解说值得点的地方；地图上画着规则包的标记（控制点、台址这类区域，按归属上色）；右边侧栏是双方实时的兵数、工人数、建筑数、分数（分数的意思看规则包：歼灭是击杀价值、夺点是控制分），规则包的状态栏（比分、目标），和\"战况\"：第一次交火、规则包写的事件（比如\"哈基米夺下控制点\"，战报的关键事件里带\"（规则包）\"的那些）、失去建筑、大战、出局，放不下时只留最新的几条。大战和战报\"战斗\"一节是同一套切分，侧栏只列死 6 个以上的（这局最大的一仗都不到 6 个时，列死 3 个以上的、叫「交战」，和战报一样），开打就显示\"交战中\"、损失随时间往上加，打完显示起止时间；只有一方在死人、有一方没死兵（兵冲进矿区杀工人、撞上箭塔）或者死得少的一方不到对方 1/4 的，打完标「一边倒」，不算大战。")
-  out.push("6. **片尾**：最上面是你的 `outro`（可以不写），然后是平台署名，最后是选手名单（按 `players` 的顺序），每人一行 \"`displayName` · `byline`\"。**`byline` 会出现在片尾的正式名单里**，写编程工具、出品方这类正经信息，玩笑放在 `tagline` 和介绍里。")
+  out.push(`1. **规则介绍**（视频从它开始，第一帧就是完整画面，也当封面）：左边是你写的 \`rules\`（1～${L.rulesLines} 句，逐句出现），右边自动配上第一个选手那局高光对局的开局地图（控制点这类标记也画出来）和单位图例（形状、字、名字、造价、生命、近战还是射程几格），最下面一行小字是平台署名和仓库地址（自动加，去不掉）。\`rules\` 不写就只显示规则包的一句话简介${series.ruleset.summary ? `："${series.ruleset.summary}"` : ""}。`)
+  out.push("2. **联赛排名**（自动）：所有 bot（参赛选手和平台自带的陪练）的名次、胜-平-负、得分率、等级分，和每局平均的对局数据（胜局用时、采集、造单位、击杀、损失、拆建筑，规则包自己记的统计），陪练画得灰一些、名字后面标「陪练」。")
+  out.push("3. **每个参赛选手：介绍页，紧接着整局放他的一局高光对局**，**按联赛名次倒着出场**：最后一名先上、冠军压轴（`players` 的顺序只管片尾名单）。**只介绍参赛选手**，平台自带的参考 bot（陪练）只出现在排名页，`players` 里不用写它们。")
+  out.push("   - 介绍页：左边是 `displayName`、`byline`（小字）、`tagline`（一句话定位，醒目）、`intro`（逐句出现）；背后是这个选手形象图的半透明半身像（`portrait`）；右上是平台算的**能力雷达图**（6 项，都从这场联赛的对局数据算：经济＝每局采集、生产＝每局造的单位、战斗＝击杀占比（击杀 ÷（击杀＋损失），旁边标杀伤比）、进攻＝每局拆的建筑、克制＝打在被自己克的兵上的伤害占比（没有克制的规则包换成速胜＝赢的局平均多快结束）、防守＝每局丢的建筑和工人越少越高，丢得最多的是 0；其余几项和全联赛最好的比），右下是代码指标和联赛战绩。雷达图的数字观众看得到，`intro` 里不用逐项复述，挑最突出的一两项讲原因。")
+  out.push("   - 高光对局：哪一局由 `players[].highlight` 定（联赛的局号，这局要有他；模板里已经按联赛挑的精彩对局给每人挑好了一局，可以换）；不写就从 `highlights` 和联赛挑的精彩对局里找第一局有他、还没给别人用过的，都没有就从他打过的局里挑（赢过挑结束最快的，没赢过挑撑得最久的）。回放顶上一行小字是「<选手> 的高光对局」，后面是这局在 `highlights` 里的 `title` 和 `commentary`（没写就只有对阵双方），所以**每个选手那局都要写进 `highlights`**，换了 `highlight` 的局号也要跟着改 `highlights`。")
+  out.push("   - 回放：**大战按 2 倍速放**（侧栏标「大战」的那几场：死 6 个以上、不是一边倒的，1 秒 = 2 × 规则包的 tickRate 个 tick，进度条旁显示「大战 2 倍速」），**其余有单位倒下的小冲突按 4 倍速放**（哪怕只死一个、一边倒的也算，进度条旁显示「交火 4 倍速」），**没动静的地方快进**（加起来最多 10 秒），所以一局回放多长主要看打了多少仗，每段的秒数看命令列出的时间表。地图上各家的主基地画成选手的头像（从 `portrait` 裁的）；侧栏选手下面是**实时胜率预测**（按全联赛对局拟合的模型，看当时的兵力、工人、建筑、分数，带一条到当前为止的曲线），胜率大起大落的地方就是解说值得点的地方；地图上画着规则包的标记（控制点、台址这类区域，按归属上色）；侧栏是双方实时的兵数、工人数、建筑数、分数（分数的意思看规则包：歼灭是击杀价值、夺点是控制分），规则包的状态栏（比分、目标），和\"战况\"：第一次交火、规则包写的事件（比如\"哈基米夺下控制点\"，战报的关键事件里带\"（规则包）\"的那些）、失去建筑、大战、出局，放不下时只留最新的几条。大战和战报\"战斗\"一节是同一套切分，侧栏只列死 6 个以上的（这局最大的一仗都不到 6 个时，列死 3 个以上的、叫「交战」，和战报一样），开打就显示\"交战中\"、损失随时间往上加，打完显示起止时间；只有一方在死人、有一方没死兵（兵冲进矿区杀工人、撞上箭塔）或者死得少的一方不到对方 1/4 的，打完标「一边倒」，不算大战。")
+  out.push("4. **片尾**：最上面是你的 `outro`（可以不写），然后是平台署名，最后是参赛选手名单（按 `players` 的顺序），每人一行 \"`displayName` · `byline`\"。**`byline` 会出现在片尾的正式名单里**，写编程工具、出品方这类正经信息，玩笑放在 `tagline` 和介绍里。")
   out.push("")
-  out.push("**竖屏版**（`--vertical`，可选，1080×1920）用同一份脚本，排法和横屏不一样：开场阵容、规则介绍（规则在上、地图和图例在下）之后，按名次倒着，**每个选手的介绍页后面紧跟着整局放他的一局高光对局**（选手 A 介绍、A 的高光对局、选手 B 介绍、B 的高光对局……），没有标题卡（回放顶上照样有 `title` 和 `commentary`），最后是排名和片尾。哪一局由 `players[].highlight` 定（联赛的局号，这局要有他）；不写就从 `highlights` 和联赛挑的精彩对局里找第一局有他、还没给别人用过的；精彩对局里没有他（或者都给别人用了）时，从他打过的局里挑：赢过就挑结束最快的一局，没赢过就挑撑得最久的（这样的局没有你写的标题和解说）。想让竖屏每人一局都有解说，就让 `highlights` 覆盖到每个选手，或者给每人写 `highlight` 并把那局也写进 `highlights`。")
+  out.push("**竖屏版**（`--vertical`，可选，1080×1920）用同一份脚本、同样的段落，按竖屏排版（规则在上、地图和图例在下；回放的地图在画面正中，标题和双方在上，胜率和战况在下）；两边各留 108 像素的安全边（抖音这类平台在长屏手机上会裁掉左右两边）。")
   out.push("")
-  out.push(`每段多长是按字数算的：选手页 2.3～6.5 秒、规则页最长 6 秒（字多的长些），标题卡 2.3～4 秒（字多的长些）。观众是读长文本很快的程序员，页面节奏快、字可以多：每个选手的 \`tagline\` 加 \`intro\` 一共写 180～${PLAYER_PAGE_CHARS} 字正好（4～5 句、每句 40～60 字，选手页的字号比别的页小）：少于 ${PLAYER_PAGE_MIN} 字页面显得空、超过 ${PLAYER_PAGE_CHARS} 字太挤，命令都会提醒。每次运行 \`rts-arena video\` 都会列出每段从第几秒到第几秒。`)
+  out.push(`每段多长是按字数算的：选手页 1.2～3.3 秒、规则页 1.5～3 秒（字多的长些），排名页和选手页一样长。观众是读长文本很快的程序员（看不完会暂停），页面节奏快、字可以多：每个选手的 \`tagline\` 加 \`intro\` 一共写 180～${PLAYER_PAGE_CHARS} 字正好（4～5 句、每句 40～60 字，选手页的字号比别的页小）：少于 ${PLAYER_PAGE_MIN} 字页面显得空、超过 ${PLAYER_PAGE_CHARS} 字太挤，命令都会提醒。每次运行 \`rts-arena video\` 都会列出每段从第几秒到第几秒。`)
   out.push("")
   out.push("## 怎么写")
   out.push("")
@@ -227,10 +229,10 @@ function videoPrompt(
   )
   out.push("- **介绍要有依据**：文件名、代码、参赛报告、下面的成绩和 `reports/` 的战报里看得到的才写，数字照抄，不编造没发生的事。成绩差的写它的特点和输在哪，可以调侃，但别贬低。")
   out.push("- **不知道的事别写成事实**：平台不知道每个 bot 是怎么写出来的、改了几轮。代码里的版本号（v3、v6 之类）和自称的绝招都是作者自己写的，只能说\"自称\"\"注释里写着\"。")
-  out.push(`- **精彩对局**：挑 3～${L.highlights} 局（最多 ${L.highlights} 局；用户说了要几局就挑几局），按想讲的故事排顺序。**别挑后半局没人打仗的局**：打满时间比分的局常常是前面打几仗、后面两边都在家挂机等时间到，回放里观众只能看着进度条快进（最后一仗打完还剩整局 30% 以上的，命令会提醒）；挑仗打到最后、拆家结束的。**每局的 \`title\` 和 \`commentary\` 都要照这一局写**：对阵双方是谁、谁赢了，查「全部对局」表和战报，别从别的视频的脚本里抄（命令会提醒标题、解说里提到了不在这局的选手）。下面"精彩对局"里是联赛自动挑的，也可以从"全部对局"里挑别的（表里有每局双方的采集、损失、击杀，找"最快""最险""最惨烈"的局用得上）。解说里说的事要在战报里查得到：\`reports/\` 里有这几局：${reported.map((i) => `第 ${i} 局`).join("、")}；其他局在这个目录里运行 \`rts-arena report <回放文件>\` 看，回放文件名在"全部对局"表里。战报里的 P0、P1 是座位，顺序和对阵里的名字一样。`)
+  out.push(`- **每个选手的高光对局**：模板里已经给每个参赛选手挑好了一局（\`players[].highlight\`，\`highlights\` 里同一局待填标题和解说），可以换成更能代表他的一局（最多 ${L.highlights} 局）。**别挑后半局没人打仗的局**：打满时间比分的局常常是前面打几仗、后面两边都在家挂机等时间到，回放里观众只能看着进度条快进（最后一仗打完还剩整局 30% 以上的，命令会提醒）；挑仗打到最后、拆家结束的。**每局的 \`title\` 和 \`commentary\` 都要照这一局写**：对阵双方是谁、谁赢了，查「全部对局」表和战报，别从别的视频的脚本里抄（命令会提醒标题、解说里提到了不在这局的选手）。下面"精彩对局"里是联赛自动挑的，也可以从"全部对局"里挑别的（表里有每局双方的采集、损失、击杀和看点，找"最快""最险""最惨烈"的局用得上），换局时 \`players[].highlight\` 和 \`highlights\` 一起改。解说里说的事要在战报里查得到：\`reports/\` 里有这几局：${reported.map((i) => `第 ${i} 局`).join("、")}；其他局在这个目录里运行 \`rts-arena report <回放文件>\` 看，回放文件名在"全部对局"表里。战报里的 P0、P1 是座位，顺序和对阵里的名字一样。`)
   out.push(`- **字数上限**（按字符算：汉字、字母、数字、空格、标点都算 1 个）：displayName ${L.displayName}、byline ${L.byline}、tagline ${L.tagline}、intro 1～${L.introLines} 句（建议 4～5 句）每句 ${L.introLine}、精彩对局 title ${L.hlTitle}、commentary ${L.commentary}、outro ${L.outro}。超了命令会报出来。`)
   out.push("- **粗体字段别写\"一\"**：`tagline`、精彩对局的 `title` 和 `commentary`、`outro` 是粗体，\"一\"在粗体下就是一道横线，像破折号（\"唯一一胜\"看成\"唯——胜\"，\"只输一局\"看成\"只输—局\"）。数量写阿拉伯数字（\"只输 1 局\"），别的换个说法（\"一波\"→\"突袭\"，\"一边倒\"→\"倒向对面\"）；`intro` 是常规字重，不受影响。")
-  out.push("- 平台署名（开场阵容底部、片尾）是自动加的；介绍和解说里不要冒充平台的口吻。")
+  out.push("- 平台署名（规则页底部、片尾）是自动加的；介绍和解说里不要冒充平台的口吻。")
   out.push("")
   out.push("## 脚本格式（script.json）")
   out.push("")
@@ -238,10 +240,9 @@ function videoPrompt(
   out.push(
     JSON.stringify(
       {
-        hook: { text: "开场的一句大字（30 字以内，可以不写）" },
         rules: ["规则介绍 1～4 句：怎么赢、关键机制"],
-        players: [{ name: "联赛里的名字（必须和下面一样）", displayName: "显示名", byline: "一行小字（也上片尾名单）", tagline: "一句话定位", intro: ["介绍 4～5 句"], portrait: "portraits/形象图.png（可以不写）" }],
-        highlights: [{ index: 1, title: "这局的标题", commentary: "一句话解说（别重复自动看点）" }],
+        players: [{ name: "参赛选手在联赛里的名字（必须和下面一样）", displayName: "显示名", byline: "一行小字（也上片尾名单）", tagline: "一句话定位", intro: ["介绍 4～5 句"], highlight: 1, portrait: "portraits/形象图.png（可以不写）" }],
+        highlights: [{ index: 1, title: "这局的标题", commentary: "一句话解说" }],
         outro: "一句总结（可以不写）",
       },
       null,
@@ -250,7 +251,7 @@ function videoPrompt(
   )
   out.push("```")
   out.push("")
-  out.push("`highlights` 里的 `index` 是联赛的**局号**（「全部对局」表的第一列），不是第几个。所有选手都要写，`players` 的顺序是开场阵容和片尾名单的顺序（选手页按名次倒序，平台排）；`hook`、`rules`、`displayName`、`byline`、`portrait`、`avatar`、`highlight`（竖屏版接在介绍后面放的局号）、`highlights` 里的 `title` 和 `commentary`、`outro` 都可以不写。视频没有标题页，也不展示用户的话。`highlights` 不写就用联赛挑的前 3 局、不带解说。`script.json` 里已经有一份待填的模板，把\"待填\"都换掉（不要的字段直接删）。")
+  out.push("`highlight` 和 `highlights` 里的 `index` 是联赛的**局号**（「全部对局」表的第一列），不是第几个。参赛选手都要写（平台自带的陪练不用写），`players` 的顺序是片尾名单的顺序（选手页按名次倒序，平台排）；`rules`、`displayName`、`byline`、`portrait`、`avatar`、`highlight`、`highlights` 里的 `title` 和 `commentary`、`outro` 都可以不写。视频没有开场阵容、标题页和标题卡，也不展示用户的话。`script.json` 里已经有一份待填的模板，把\"待填\"都换掉（不要的字段直接删）。")
   out.push("")
   out.push("## 出视频（在这个目录里运行）")
   out.push("")
@@ -258,7 +259,7 @@ function videoPrompt(
   out.push("rts-arena video --lint                # 只核对脚本：格式、每段字数和上限、时间表（不出图，几秒钟），字数对了再出预览")
   out.push("rts-arena video --preview auto        # 每段各出一张预览图（放在 preview/ 里，另有一张总览拼图），先看排版、字有没有挤出去")
   out.push("rts-arena video --preview 12.5,40     # 只看这几秒（秒数从上一条命令列出的时间表里找）")
-  out.push("rts-arena video --vertical --check auto  # 可选：竖屏版（1080×1920：开场阵容、规则，然后每个选手的介绍接着他的一局高光对局，最后排名；回放的地图在画面正中，标题和双方在上、胜率和战况在下），文件名后面加「-竖屏」")
+  out.push("rts-arena video --vertical --check auto  # 可选：竖屏版（1080×1920，段落和横屏一样，按竖屏排版），文件名后面加「-竖屏」")
   out.push("rts-arena video --check auto          # 出视频，并从成品里每段截一张图检查（也放在 preview/ 里；也可以写秒数：--check 5,60）")
   out.push("```")
   out.push("")
@@ -281,7 +282,7 @@ function videoPrompt(
   out.push("- 写法特征里：`cmd.xxx` 是调用这个命令的地方有几处；\"自己寻路\"是 bfs、astar、path、flowField 之类的词出现几次；\"状态机模式\"是 `mode =` / `mode:` 出现几次；\"实测或调参注释\"是\"实测、调参、调出来、回放数据\"出现几次；\"版本号\"是 v3、v1.2、VERSION 这类出现几次")
   out.push("")
   brief.players.forEach((p, i) => {
-    out.push(`#### ${p.name}`)
+    out.push(`#### ${p.name}${own.has(p.name) ? "" : "（平台自带的参考 bot，陪练：只出现在排名页，不用写介绍）"}`)
     out.push("")
     out.push(`- 代码：\`${botFile.get(p.name) ?? "（没找到文件）"}\`；文件名拆开：${p.fileNameParts.map((x) => `"${x}"`).join(" / ")}`)
     out.push(`- 视频里的颜色：${PALETTE_NAMES[i % PALETTE_NAMES.length]}色（选手页、排名、回放里都是这个颜色）`)
@@ -309,16 +310,16 @@ function videoPrompt(
   out.push("")
   out.push("### 精彩对局（联赛按逆转、优势换手、两边都伤得重、大战、险胜、爆冷自动挑的；一边倒的不算）")
   out.push("")
-  out.push("冒号后面的几条就是标题卡上自动显示的看点，解说不用重复。")
+  out.push("冒号后面的几条是平台算的看点，写解说时可以用。")
   out.push("")
   if (!brief.highlights?.length) out.push("没有（大多是一边倒）。可以从全部对局里挑。")
   for (const h of brief.highlights ?? []) out.push(`- 第 ${h.index} 局 ${h.who}，${h.winner ? `${h.winner} 赢` : "平局"}（第 ${h.tick} tick，精彩度 ${h.score}）：${h.reasons.join("；")}`)
   out.push("")
   out.push("### 全部对局")
   out.push("")
-  out.push("「标题卡看点」是挑这局当精彩对局时标题卡上自动显示的（最多 4 条），解说别重复它们。每局数据按对阵的顺序，每人一组：采集 / 损失单位（其中工人）/ 击杀单位 / 拆建筑；规则包有分数时后面是最终比分，有规则包事件时是事件条数（详情在战报的关键事件里，带\"（规则包）\"的那些）。")
+  out.push("「看点」是平台从回放算的（最多 4 条：全联赛之最、逆转、爆冷……），写解说时可以用。每局数据按对阵的顺序，每人一组：采集 / 损失单位（其中工人）/ 击杀单位 / 拆建筑；规则包有分数时后面是最终比分，有规则包事件时是事件条数（详情在战报的关键事件里，带\"（规则包）\"的那些）。")
   out.push("")
-  out.push("| 局 | 对阵（座位顺序） | 结果 | tick | 结束原因 | 每局数据 | 标题卡看点 | 战报 / 回放 |")
+  out.push("| 局 | 对阵（座位顺序） | 结果 | tick | 结束原因 | 每局数据 | 看点 | 战报 / 回放 |")
   out.push("|---|---|---|---|---|---|---|---|")
   for (const r of series.results) {
     const winners = [...new Set(r.winners.map((w) => r.names[w]))]
@@ -408,14 +409,14 @@ function quickFacts(series: ReturnType<typeof readSeries>, brief: VideoBrief, ex
         }
       }
   out.push(cycles.length ? `- 克制环（两两对阵赢多输少连成一圈）：${cycles.slice(0, 3).join("；")}` : "- 克制环：没有（两两对阵赢多输少的方向没有连成一圈）")
-  // 逆转：标题卡看点里有"逆转"的局（落后过还赢了）
+  // 逆转：看点里有"逆转"的局（落后过还赢了）
   const comebacks = R.filter((r) => extra.get(r.index)?.card.some((c) => c.startsWith("逆转")))
   out.push(
     comebacks.length
       ? `- 逆转（落后过还赢了，共 ${comebacks.length} 局）：${comebacks
           .slice(0, 10)
           .map((r) => `第 ${r.index} 局 ${winnersOf(r).join("、")} 赢（${extra.get(r.index)!.card.find((c) => c.startsWith("逆转"))!.replace(/^逆转：/, "")}）`)
-          .join("；")}${comebacks.length > 10 ? "……（其余的在「全部对局」表的标题卡看点里）" : ""}`
+          .join("；")}${comebacks.length > 10 ? "……（其余的在「全部对局」表的看点里）" : ""}`
       : "- 逆转：没有（赢的一方都没落后过太多）",
   )
   // 死人最多的一仗
