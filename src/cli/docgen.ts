@@ -96,7 +96,7 @@ export function unitTable(rules: Ruleset): string {
         d.buildTicks || "—",
         d.moveTicks || "不能动",
         d.sight || "—",
-        d.attack ? `${d.attack.damage} / ${d.attack.range} / ${d.attack.cooldown}${vsText(d.attack.vs)}` : "—",
+        d.attack ? `${d.attack.damage} / ${d.attack.range} / ${d.attack.cooldown}${vsText(d.attack.vs)}${d.attack.splash ? `（溅射 ${d.attack.splash} 格）` : ""}` : "—",
         d.gather ? `${d.gather.amount} / ${d.gather.ticks} / ${d.gather.capacity}` : "—",
         d.dropOff ? "是" : "—",
         d.produces.length ? `${d.produces.join("、")}${d.parallel > 1 ? `（同时造 ${d.parallel} 个）` : ""}` : "—",
@@ -107,6 +107,9 @@ export function unitTable(rules: Ruleset): string {
   }
   if (defs.some(({ d }) => d.attack?.vs)) {
     rows.push("", "攻击一列括号里是**克制倍数**（`game.types[类型].attack.vs`）：打这些类型时伤害乘这个倍数，四舍五入。比如「打 cavalry ×3」是打 cavalry 一下的伤害是 damage × 3（倍数小于 1 就是打这类吃亏）。")
+  }
+  if (defs.some(({ d }) => d.attack?.splash)) {
+    rows.push("", "「溅射 N 格」（`attack.splash`，D-217）：打中目标时，目标占的格子往外扩 N 格的方圈里（1 格就是周围一圈 8 格）别的敌方实体也挨一下，伤害按各自的类型算克制倍数；自己人不挨。兵挤成一团时挨得多。")
   }
   if (building) {
     const names = [...buildable].map((n) => "`" + n + "`").join("、")

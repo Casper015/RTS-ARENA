@@ -425,6 +425,75 @@ test("并行生产（D-196）：parallel 3 的建筑，队列里前 3 个同时�
   assert.equal(count[21], 4)
 })
 
+test("溅射（D-217）：打中目标时周围一圈的敌方实体也挨一下（按各自的类型算倍数），两格外的、自己人不挨；落点放特效", () => {
+  const gun: TypeSpec = { kind: "unit", maxHp: 100, moveTicks: 1, sight: 8, attack: { damage: 10, range: 5, cooldown: 50, splash: 1, vs: { big: 3 } }, look }
+  // 不会攻击的假人：免得挨着的单位自己打起来
+  const dummy: TypeSpec = { kind: "unit", maxHp: 100, moveTicks: 1, sight: 1, look }
+  const hp: Record<string, number> = {}
+  const replay = play(
+    mini([], {
+      maxTicks: 3,
+      types: { ...TYPES, gun, dummy, big: dummy },
+      setup(ctx) {
+        ctx.setTerrain(Array(8).fill(".".repeat(14)))
+        ctx.spawn("gun", 0, 1, 3)
+        ctx.spawn("dummy", 1, 6, 3) // 目标
+        ctx.spawn("big", 1, 7, 4) // 斜对角：挨溅射，打 big ×3
+        ctx.spawn("dummy", 1, 8, 3) // 两格外：不挨
+        ctx.spawn("dummy", 0, 6, 2) // 自己人：不挨
+      },
+    }),
+    (v, cmd) => {
+      const target = v.entities.find((e) => e.owner === 1 && e.x === 6 && e.y === 3)
+      if (v.tick === 0 && target) cmd.attack(mine(v, "gun")[0], target)
+      for (const e of v.entities) hp[`${e.owner}:${e.x},${e.y}`] = e.hp
+    },
+  )
+  assert.deepEqual([hp["1:6,3"], hp["1:7,4"], hp["1:8,3"], hp["0:6,2"]], [90, 70, 100, 100])
+  const fx = replay.frames.flatMap((f) => f.fx ?? [])
+  assert.deepEqual(fx, [{ x: 5, y: 2, w: 3, h: 3, color: "#ff9a3c", radius: 1 }])
+})
+
+test("农田（D-218）：工人贴着建好的农田闲着就耕作，每 56 tick 给 5 金；一块田只算一个工人，离开一格就不产", async () => {
+  const { farmInfo, farmTick, farmType, resetFarms, FARM_GOLD, FARM_TICKS } = await import("../rulesets/common/farm.ts")
+  const worker: TypeSpec = { kind: "unit", maxHp: 40, moveTicks: 3, sight: 3, look }
+  const run = (cells: [number, number][]) => {
+    const gold: number[] = []
+    let info: ReturnType<typeof farmInfo> = []
+    play(
+      mini([], {
+        maxTicks: FARM_TICKS * 2 + 1,
+        types: { ...TYPES, worker, farm: farmType() },
+        setup(ctx) {
+          ctx.setTerrain(Array(8).fill(".".repeat(12)))
+          resetFarms()
+          ctx.spawn("farm", 0, 4, 2)
+          for (const [x, y] of cells) ctx.spawn("worker", 0, x, y)
+          ctx.spawn("grunt", 1, 11, 7)
+        },
+        onTick: (ctx) => farmTick(ctx),
+        objectives: (ctx, p) => farmInfo(ctx, p),
+      }),
+      (v) => {
+        gold[v.tick] = v.resources.gold
+        info = v.objectives as ReturnType<typeof farmInfo>
+      },
+    )
+    return { gold, info }
+  }
+  // 一个工人贴着：第 56、112 tick 各给 5 金
+  const one = run([[3, 2]])
+  assert.deepEqual([one.gold[FARM_TICKS - 1], one.gold[FARM_TICKS], one.gold[FARM_TICKS * 2]], [0, FARM_GOLD, FARM_GOLD * 2])
+  assert.equal(one.info.length, 1)
+  assert.ok(one.info[0].farmer !== null)
+  // 两个工人贴着同一块：还是只算一份
+  assert.equal(run([[3, 2], [6, 3]]).gold[FARM_TICKS * 2], FARM_GOLD * 2)
+  // 离开一格：不产
+  const away = run([[2, 2]])
+  assert.equal(away.gold[FARM_TICKS * 2], 0)
+  assert.equal(away.info[0].farmer, null)
+})
+
 test("眩晕（D-207）：ctx.stun 的单位这些 tick 不走、不打，命令不变、过后接着做；bot 看得到 stunned；damaged 事件带攻击者的主人和类型", () => {
   const pos: [number, number][] = []
   const stunned: (number | undefined)[] = []

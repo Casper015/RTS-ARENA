@@ -117,10 +117,10 @@ export function killValueOf(types: Record<string, TypeSpec>, type: string, finis
   return types[type].kind === "building" && finished ? cost * 2 : cost
 }
 
-/** 读这一 tick 的死亡事件，给击杀者加击杀价值（拆自己的地基不算） */
-export function scoreKills(ctx: RuleContext, types: Record<string, TypeSpec>): void {
+/** 读这一 tick 的死亡事件，给击杀者加击杀价值（拆自己的地基不算）；ignore 里的类型打死的不算（攻城拓荒：主基地开火打死的，D-217） */
+export function scoreKills(ctx: RuleContext, types: Record<string, TypeSpec>, ignore: string[] = []): void {
   for (const ev of ctx.events) {
-    if (ev.kind === "died" && ev.killer >= 0 && ev.owner >= 0 && ev.killer !== ev.owner) ctx.addScore(ev.killer, killValueOf(types, ev.type, !ev.unfinished))
+    if (ev.kind === "died" && ev.killer >= 0 && ev.owner >= 0 && ev.killer !== ev.owner && !ignore.includes(ev.killerType ?? "")) ctx.addScore(ev.killer, killValueOf(types, ev.type, !ev.unfinished))
   }
 }
 

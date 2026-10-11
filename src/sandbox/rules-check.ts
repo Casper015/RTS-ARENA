@@ -85,6 +85,7 @@ export function checkRulesetData(d: unknown, callbacks: string[]): string[] {
       if (s.attack !== undefined && s.attack !== null) {
         const a = s.attack
         if (!isObj(a) || !isInt(a.damage, 0) || !isInt(a.range, 1, 16) || !isInt(a.cooldown, 1)) bad(`${at}.attack 要写成 { damage ≥ 0, range 1～16, cooldown ≥ 1 }（整数）`)
+        else if (a.splash !== undefined && !isInt(a.splash, 1, 3)) bad(`${at}.attack.splash（溅射）要是 1～3 的整数`)
         else if (a.vs !== undefined) {
           // 克制倍数（D-166）：打这些类型时伤害乘几倍
           if (!isObj(a.vs)) bad(`${at}.attack.vs 要写成 { 类型名: 倍数 }，比如 { cavalry: 3 }`)

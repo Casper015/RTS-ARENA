@@ -221,6 +221,7 @@ function combat(w: World): void {
     e.attackCd = atk.cooldown
   }
   // 先全部算完再扣血：同一 tick 互相攻击的双方都能打出伤害
+  const splashed: EntityState[] = []
   for (let i = 0; i < hits.length; i += 2) {
     const a = hits[i]
     const t = hits[i + 1]
@@ -234,11 +235,37 @@ function combat(w: World): void {
     t.lastHitType = a.type
     w.shots.push(a.id, t.id)
     if (t.owner >= 0) w.pushEvent(t.owner, { kind: "damaged", tick: w.tick, id: t.id, by: a.id, byOwner: a.owner, byType: a.type, damage: dmg })
+    if (a.def.attack!.splash) splash(w, a, t, a.def.attack!.splash, splashed)
   }
   for (let i = 1; i < hits.length; i += 2) {
     const t = hits[i]
     if (t.alive && t.hp <= 0) w.destroy(t, t.lastHitBy, false, t.lastHitNeutral)
   }
+  for (const o of splashed) if (o.alive && o.hp <= 0) w.destroy(o, o.lastHitBy, false, o.lastHitNeutral)
+}
+
+/**
+ * 溅射（D-217，炮这类）：目标占的格子往外扩 r 格的方圈里，别的能打的实体也挨一下（伤害按各自的类型算 vs、算增益）；
+ * 打玩家的东西时不溅到中立的。在落点放一个画面特效（回放里看得到）
+ */
+function splash(w: World, a: EntityState, t: EntityState, r: number, out: EntityState[]): void {
+  for (const o of w.ents.values()) {
+    if (o === t || !o.alive || !canHit(w, a, o) || (o.owner < 0 && t.owner >= 0)) continue
+    const dx = Math.max(0, o.x - (t.x + t.w - 1), t.x - (o.x + o.w - 1))
+    const dy = Math.max(0, o.y - (t.y + t.h - 1), t.y - (o.y + o.h - 1))
+    if (Math.max(dx, dy) > r) continue
+    const dmg = buffedDamage(damageOf(a.def.attack!, o.type), a.dmgPct, o.defPct)
+    o.hp -= dmg
+    o.lastCombat = w.tick
+    o.lastHitBy = a.owner
+    o.lastHitNeutral = a.owner < 0
+    o.lastHitType = a.type
+    out.push(o)
+    if (o.owner >= 0) w.pushEvent(o.owner, { kind: "damaged", tick: w.tick, id: o.id, by: a.id, byOwner: a.owner, byType: a.type, damage: dmg })
+  }
+  const x = Math.max(0, t.x - r)
+  const y = Math.max(0, t.y - r)
+  w.effect({ x, y, w: Math.min(w.width, t.x + t.w + r) - x, h: Math.min(w.height, t.y + t.h + r) - y, color: "#ff9a3c", radius: 1 })
 }
 
 // ---------- 移动 ----------

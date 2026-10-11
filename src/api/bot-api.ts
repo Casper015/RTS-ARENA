@@ -38,9 +38,11 @@ export interface TypeDef {
   /**
    * 攻击能力；null 表示不能攻击。打中目标后要等 cooldown 个 tick 才能再打。
    * vs 是克制倍数（没有就是不克制谁）：打 vs 里列出的类型时，伤害 = damage × 倍数，四舍五入。比如 { cavalry: 3 } 是打骑兵伤害乘 3。
+   * splash 是溅射（D-217，没有就是只打目标）：打中目标时，目标占的格子往外扩 splash 格的方圈里（splash 是 1 就是周围一圈 8 格）别的实体也挨一下，
+   * 伤害按各自的类型算 vs；自己人和盟友不挨，打玩家的东西时也不溅到中立的。
    * 局中改过数值的实体，damage 看它的 stats.attack，倍数仍看这里
    */
-  attack: { damage: number; range: number; cooldown: number; vs?: Partial<Record<TypeName, number>> } | null
+  attack: { damage: number; range: number; cooldown: number; vs?: Partial<Record<TypeName, number>>; splash?: number } | null
   /** 采集能力；null 表示不能采集。贴着资源点每 ticks 个 tick 采 amount，身上最多带 capacity */
   gather: { amount: number; ticks: number; capacity: number } | null
   /** 采集者能否在这里交货 */
