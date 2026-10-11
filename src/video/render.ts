@@ -260,7 +260,7 @@ export function buildScenes(
 }
 
 /**
- * 对战胜负页下面的一句克制关系（D-223）：两两对阵赢多输少连成一圈的（克制环）挑最稳的一个（三条边里赢得最少的那条也赢得最多）；
+ * 对战胜负页下面的一句克制关系（D-223）：两两对阵赢多输少连成一圈的（克制环）挑最稳的一个（三条边里赢得最少的那条也赢得最多，D-224 不再说一共几个环）；
  * 没有环就说名次最高的是不是通吃、名次低的赢了名次高的（爆冷）有哪几对
  */
 export function counterSentence(series: SeriesFile, display: (name: string) => string = (x) => x): string {
@@ -280,20 +280,18 @@ export function counterSentence(series: SeriesFile, display: (name: string) => s
   const h = (i: number, j: number) => `${edge(i, j)!.w}:${edge(i, j)!.l}`
   const ids = st.map((x) => x.index)
   let best: { cyc: number[]; score: number } | null = null
-  let count = 0
   for (const a of ids)
     for (const b of ids)
       for (const c of ids) {
         if (a === b || b === c || a === c || !(beats(a, b) && beats(b, c) && beats(c, a))) continue
         // 同一个环只数一次（从三个人里编号最小的开始）
         if (a > b || a > c) continue
-        count++
         const score = Math.min(margin(a, b), margin(b, c), margin(c, a))
         if (!best || score > best.score) best = { cyc: [a, b, c], score }
       }
   if (best) {
     const [a, b, c] = best.cyc
-    return tidy(`克制环：${name(a)} 克 ${name(b)}（${h(a, b)}）、${name(b)} 克 ${name(c)}（${h(b, c)}）、${name(c)} 又克 ${name(a)}（${h(c, a)}）${count > 1 ? `，这样的环共有 ${count} 个` : ""}`)
+    return tidy(`克制环：${name(a)} 克 ${name(b)}（${h(a, b)}）、${name(b)} 克 ${name(c)}（${h(b, c)}）、${name(c)} 又克 ${name(a)}（${h(c, a)}）`)
   }
   const top = st[0].index
   const allTop = ids.every((j) => j === top || beats(top, j))

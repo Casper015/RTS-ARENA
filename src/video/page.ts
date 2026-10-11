@@ -745,24 +745,15 @@ export function installVideoPage(): void {
     watermark()
   }
 
-  /**
-   * 竖屏的排名页（D-221）：一行一个 bot，第一行是名次、名字、胜-平-负和得分率；人少、每行够高时下面再用三列放等级分和每局平均的对局数据
-   * （D-223，用户：竖屏排名页加回横屏同款详细数据），人多（参考 bot 也在）时只留第一行
-   */
+  /** 竖屏的排名页（D-221）：一行一个 bot，只有名次、名字、胜-平-负和得分率（D-223 试过人少时加详细数据，超出框，D-224 去掉，数据只在横屏版里） */
   function vStandings(s: Any, i: number): void {
     const p = ease(i / 10)
     text("RTS Arena", VW / 2, 56, 22, C.accent, { bold: true, align: "center", alpha: p })
     text(s.title, VW / 2, 122, 48, C.text, { bold: true, align: "center", alpha: p })
+    const top = 150 + (s.rows.some((r: Any) => r.ref) ? fitLines("灰色的是平台自带的陪练", VW / 2, 182, 18, 12, SW, 1, C.muted, { align: "center", alpha: p }) - 150 : 20)
     const n = s.rows.length
-    const detail = (VH - 40 - 230) / Math.max(1, n) >= 112
-    const sub = detail ? s.sub : s.rows.some((r: Any) => r.ref) ? "灰色的是平台自带的陪练" : ""
-    const top = sub ? fitLines(sub, VW / 2, 176, 18, 12, SW, 2, C.muted, { align: "center", alpha: p, wrapFirst: true }) + 4 : 170
-    const rh = Math.min(detail ? 150 : 96, (VH - 40 - top) / Math.max(1, n))
-    const f1 = detail ? Math.max(18, Math.min(30, Math.round(rh * 0.23))) : Math.max(13, Math.min(30, Math.round(rh * 0.44)))
-    // 详细数据：等级分 + 每局平均的各项，三列排
-    const items = (r: Any): [string, string][] => [["等级分", String(r.elo)], ...s.columns.map((c: string, k: number) => [c, r.cells[k]] as [string, string])]
-    const lines = detail ? Math.ceil(items(s.rows[0]).length / 3) : 0
-    const f2 = Math.max(14, Math.min(22, Math.round((rh - f1 - 26) / Math.max(1, lines) / 1.32)))
+    const rh = Math.min(96, (VH - 60 - top) / Math.max(1, n))
+    const f1 = Math.max(13, Math.min(30, Math.round(rh * 0.44)))
     s.rows.forEach((r: Any, k: number) => {
       const y = top + k * rh
       const a = ease((i - 4 - k * 1.2) / 8) * (r.ref ? 0.62 : 1)
@@ -771,7 +762,7 @@ export function installVideoPage(): void {
       g.fillStyle = r.color
       g.fillRect(SX, y + 3, 5, rh - 6)
       g.globalAlpha = 1
-      const by = detail ? y + 12 + f1 : y + rh / 2 + f1 * 0.36
+      const by = y + rh / 2 + f1 * 0.36
       const xName = SX + 16 + f1 * 2.5
       text(`#${r.rank}`, SX + 16, by, f1, r.ref ? C.muted : r.color, { bold: true, alpha: a })
       // 右边：得分率（条 + 百分比），左边是胜-平-负
@@ -780,8 +771,8 @@ export function installVideoPage(): void {
       g.font = font(f1, true)
       const barR = xPct - g.measureText("100%").width - 10
       g.globalAlpha = a
-      roundRect(barR - 70, by - f1 * 0.36 - 5, 70, 10, 5, "rgba(255,255,255,0.08)")
-      if (r.rate > 0) roundRect(barR - 70, by - f1 * 0.36 - 5, Math.max(10, 70 * r.rate), 10, 5, r.ref ? "#8fa0bf" : r.color)
+      roundRect(barR - 70, y + rh / 2 - 5, 70, 10, 5, "rgba(255,255,255,0.08)")
+      if (r.rate > 0) roundRect(barR - 70, y + rh / 2 - 5, Math.max(10, 70 * r.rate), 10, 5, r.ref ? "#8fa0bf" : r.color)
       g.globalAlpha = 1
       g.font = font(f1 - 4)
       const recW = g.measureText(r.record).width
@@ -796,17 +787,6 @@ export function installVideoPage(): void {
         const nw = Math.min(g.measureText(r.name).width, nameW - tagW)
         text("陪练", xName + nw + 6, by - 1, tagPx, C.muted, { alpha: a })
       }
-      if (!detail) return
-      // 三列：灰色的名字 + 白色的数
-      const cw = (SW - 32) / 3
-      items(r).forEach(([label, value], j) => {
-        const x = SX + 18 + (j % 3) * cw
-        const yy = by + 10 + (Math.floor(j / 3) + 1) * f2 * 1.32
-        g.font = font(f2)
-        const lw = g.measureText(label).width
-        text(label, x, yy, f2, C.muted, { alpha: a })
-        text(value, x + lw + 8, yy, f2, C.text, { bold: true, alpha: a })
-      })
     })
   }
 
@@ -1019,6 +999,11 @@ export function installVideoPage(): void {
     const ls = g.measureText(s).width > maxW ? wrapBalanced(s, maxW).slice(0, maxLines) : [s]
     ls.forEach((l, k) => text(l, x, y + k * size * 1.3, size, color, opts))
     return y + ls.length * size * 1.3
+  }
+
+  /** 竖屏最下面正中的小署名（D-224，横屏在右下角；规则页最下面已经有署名和仓库地址、片尾也有，这两页不加） */
+  function vWatermark(): void {
+    text("RTS Arena", VW / 2, VH - 14, 18, "rgba(232,237,247,0.45)", { bold: true, align: "center" })
   }
 
   /** 竖屏：渐变背景 */
@@ -1567,7 +1552,7 @@ export function installVideoPage(): void {
       drawWin(s.win, f.t ?? 0, SX, y2, SW, 100, 22)
       y2 += 12 + 100 + 34
     }
-    const room = Math.max(0, Math.floor((VH - 16 - y2) / 28) + 1)
+    const room = Math.max(0, Math.floor((VH - 46 - y2) / 28) + 1)
     for (const ev of (f.events as string[]).slice(-room)) {
       fitLines(ev, SX, y2, 19, 14, SW, 1, C.muted)
       y2 += 28
@@ -1636,6 +1621,7 @@ export function installVideoPage(): void {
     else if (s.kind === "rules") vRules(s, a)
     else if (s.kind === "player") vPlayer(s, a)
     else vFrame(s, f ?? {}, i)
+    if (s.kind !== "brandClose" && s.kind !== "rules") vWatermark()
     g.restore()
     fade(i, s.frames)
     g.setTransform(1, 0, 0, 1, 0, 0)
