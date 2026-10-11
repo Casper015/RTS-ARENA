@@ -1,4 +1,4 @@
-// 刺杀：凑够 12 个兵（战士弓手 2:1）带着领主出门，直奔对方领主开局的角落，看得见对方领主就全体追着打（杀了领主直接赢）；不到 12 个兵、家里没事时去清最近的野怪营地（先聚齐再集火）；野怪咬过来附近的兵一起集火还手。
+// 刺杀：凑够 12 个兵（战士弓手 2:1）带着领主出门，直奔对方领主开局的角落，看得见对方领主就全体追着打（杀了领主直接赢）；不到 12 个兵、家里没事时去清最近的野怪营地（先聚齐再集火）；野怪咬过来（咬兵、咬领主都算）附近的兵一起集火还手，领主被咬就往家撤。
 // - 没看见对方领主时去它开局的角落找（和自己领主的开局位置中心对称），路上只打 5 格内挡路的兵。
 // - 领主跟在军队后面 3 格（和领主随军一样），6 格内有 3 个以上敌兵就放击退；其余（经济、回防）和基准一样。
 const ATTACK_AT = 12
@@ -286,14 +286,18 @@ function repel(view: View, cmd: Commands): void {
 
 /**
  * 野怪咬过来就还手（D-203 改成集火）：贴着我方兵（3 格内）的野怪里，每个兵挑自己 8 格内血最少的那只打，
- * 附近的兵就会一起打同一只（原来各打离自己最近的，清野时零零散散被野怪吃掉）
+ * 附近的兵就会一起打同一只（原来各打离自己最近的，清野时零零散散被野怪吃掉）。
+ * D-212（第十轮试写：领主站在发怒的营地边上，3 只野怪 300 tick 就把它磨死，直接判负）：贴着领主的野怪也算，领主往家撤
  */
 function retaliate(view: View, cmd: Commands): void {
   const creeps = view.entities.filter((e) => e.type === "creep")
   if (creeps.length === 0) return
   const army = view.entities.filter((u) => u.owner === view.me && (u.type === "soldier" || u.type === "archer"))
-  const biting = creeps.filter((k) => army.some((u) => dist(k, u) <= 3))
+  const lord = view.entities.find((e) => e.owner === view.me && e.type === "lord")
+  const biting = creeps.filter((k) => army.some((u) => dist(k, u) <= 3) || (lord !== undefined && dist(k, lord) <= 3))
   if (biting.length === 0) return
+  const base = view.entities.find((e) => e.owner === view.me && e.type === "base")
+  if (lord && base && biting.some((k) => dist(k, lord) <= 3)) moveTo(cmd, lord, pointToward(base, lord, 3))
   for (const u of army) {
     let c: Entity | undefined
     for (const k of biting) if (dist(k, u) <= 8 && (!c || k.hp < c.hp)) c = k

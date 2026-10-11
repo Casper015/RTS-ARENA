@@ -1,4 +1,4 @@
-// 守家反击：兵守在家门口、领主在旁边给光环，6 格内有 3 个以上敌兵就放击退，不主动进攻，但兵够 8 个、家里没事就去清最近的野怪营地（先聚齐再集火）；挡住一波进攻（守的时候杀了 4 个以上）就趁对方兵少反攻，快到时间上限还不领先就出击；野怪咬过来附近的兵一起集火还手。
+// 守家反击：兵守在家门口、领主在旁边给光环，6 格内有 3 个以上敌兵就放击退，不主动进攻，但兵够 8 个、家里没事就去清最近的野怪营地（先聚齐再集火）；挡住一波进攻（守的时候杀了 4 个以上）就趁对方兵少反攻，快到时间上限还不领先就出击；野怪咬过来（咬兵、咬领主都算）附近的兵一起集火还手，领主被咬就往家撤。
 // - 集结点离兵营只有 3 格（在家里的领主光环范围内）；家里或领主附近来敌人全军回防，领主跟着守军。
 // - 其余（经济、挑目标、撤退）和基准一样。
 const ATTACK_AT = 60
@@ -22,6 +22,9 @@ let lordHome: Pos | null = null
 /** 正在清的营地（"x,y"）和开始去清它的 tick */
 let farmCamp = ""
 let farmSince = 0
+/** 对方兵营的位置（和自己兵营中心对称）、是不是已经拆掉了（D-212） */
+let enemyBarracksSpot: Pos | null = null
+let enemyBarracksDead = false
 
 const isCombat = (e: Entity) => e.type === "soldier" || e.type === "archer"
 
@@ -255,7 +258,13 @@ function mainTick(view: View, cmd: Commands): void {
     return
   }
 
-  const goal = enemyBuildings.find((e) => e.type === "barracks") ?? enemyBuildings.find((e) => e.type === "base")
+  // D-212：先拆对方的兵营（D-210 起在对方主基地射程外，拆它不吃炮），没看见就去它的位置；拆掉了再去拆主基地
+  if (barracks) enemyBarracksSpot ??= { x: game.width - barracks.x - barracks.w, y: game.height - barracks.y - barracks.h }
+  for (const ev of view.events) if (ev.kind === "died" && ev.type === "barracks" && ev.owner >= 0 && ev.owner !== view.me) enemyBarracksDead = true
+  const seenBarracks = enemyBuildings.find((e) => e.type === "barracks")
+  if (!seenBarracks && enemyBarracksSpot && army.some((u) => dist(u, enemyBarracksSpot!) <= 3)) enemyBarracksDead = true
+  const goal = seenBarracks ?? enemyBuildings.find((e) => e.type === "base")
+  const march = !enemyBarracksDead && enemyBarracksSpot ? enemyBarracksSpot : enemyBaseCenter
   const sendHome = home.length >= REINFORCE_AT || out.length === 0
   for (const u of army) {
     if (out.indexOf(u) < 0 && !sendHome) {
@@ -265,7 +274,7 @@ function mainTick(view: View, cmd: Commands): void {
     const fighters = enemyUnits.filter((e) => dist(e, u) <= 8 || (e.type === "lord" && dist(e, u) <= 10))
     if (fighters.length > 0) attack(cmd, u, pickTarget(u, fighters)!)
     else if (goal && dist(u, goal) <= 12) attack(cmd, u, goal)
-    else attackMove(cmd, u, enemyBaseCenter)
+    else attackMove(cmd, u, march)
   }
 }
 
@@ -292,14 +301,18 @@ function repel(view: View, cmd: Commands): void {
 
 /**
  * 野怪咬过来就还手（D-203 改成集火）：贴着我方兵（3 格内）的野怪里，每个兵挑自己 8 格内血最少的那只打，
- * 附近的兵就会一起打同一只（原来各打离自己最近的，清野时零零散散被野怪吃掉）
+ * 附近的兵就会一起打同一只（原来各打离自己最近的，清野时零零散散被野怪吃掉）。
+ * D-212（第十轮试写：领主站在发怒的营地边上，3 只野怪 300 tick 就把它磨死，直接判负）：贴着领主的野怪也算，领主往家撤
  */
 function retaliate(view: View, cmd: Commands): void {
   const creeps = view.entities.filter((e) => e.type === "creep")
   if (creeps.length === 0) return
   const army = view.entities.filter((u) => u.owner === view.me && (u.type === "soldier" || u.type === "archer"))
-  const biting = creeps.filter((k) => army.some((u) => dist(k, u) <= 3))
+  const lord = view.entities.find((e) => e.owner === view.me && e.type === "lord")
+  const biting = creeps.filter((k) => army.some((u) => dist(k, u) <= 3) || (lord !== undefined && dist(k, lord) <= 3))
   if (biting.length === 0) return
+  const base = view.entities.find((e) => e.owner === view.me && e.type === "base")
+  if (lord && base && biting.some((k) => dist(k, lord) <= 3)) moveTo(cmd, lord, pointToward(base, lord, 3))
   for (const u of army) {
     let c: Entity | undefined
     for (const k of biting) if (dist(k, u) <= 8 && (!c || k.hp < c.hp)) c = k
