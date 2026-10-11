@@ -129,6 +129,14 @@ export function installVideoPage(): void {
   const VH = 1280
   let VERT = false
   let VS = 1.5
+  /**
+   * 竖屏左右的安全边距（D-220）：抖音在长屏手机上把 9:16 的视频放大到铺满屏幕高度，左右各裁掉 3%～10%，
+   * 所以竖屏的字、头像和地图都放在中间 SW 宽里（输出 1080 宽时两边各留 108 像素）
+   */
+  const SX = 72
+  const SW = VW - 2 * SX
+  /** 地图上的字（规则包标记、特效飘字）：竖屏的格子小，字放大一些 */
+  const fxPx = (px: number) => (VERT ? Math.round(px * 1.4) : px)
   let landCanvas: OffscreenCanvas | null = null
   let landG: OffscreenCanvasRenderingContext2D | null = null
   type Any = Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -601,15 +609,15 @@ export function installVideoPage(): void {
   /** 竖屏的规则页（D-183）：上面是标题和规则几句，下面是拉满宽度的开局地图和单位图例 */
   function vRules(s: Any, i: number): void {
     const p = ease(i / 15)
-    text("规则", 40, 90, 26, C.accent, { bold: true, alpha: p })
-    fitLines(`${s.ruleset}怎么玩`, 40, 156, 48, 28, VW - 80, 1, C.text, { bold: true })
+    text("规则", SX, 90, 26, C.accent, { bold: true, alpha: p })
+    fitLines(`${s.ruleset}怎么玩`, SX, 156, 48, 28, SW, 1, C.text, { bold: true })
     // 规则最多占到 560 高，字多就缩字号
-    const y = vBullets(s.lines, 64, 196, VW - 100, 360, 28, 20, C.accent, i)
+    const y = vBullets(s.lines, SX + 22, 196, SW - 22, 360, 28, 20, C.accent, i)
     // 地图在下面拉满宽度；高度给图例（按两栏算）和最下面的 tick 说明留出地方
     const y0 = Math.max(y + 16, 400)
     const legendH = 58 + Math.ceil(s.legend.length / 2) * 34
-    rulesMap(s, i, 20, y0, VW - 40, Math.min(520, VH - 80 - y0 - legendH), VH - 70)
-    if (s.tickNote) text(s.tickNote, 40, VH - 30, 18, C.muted, { alpha: ease((i - 20) / 15) })
+    rulesMap(s, i, SX, y0, SW, Math.min(520, VH - 80 - y0 - legendH), VH - 70)
+    if (s.tickNote) fitLines(s.tickNote, SX, VH - 30, 18, 12, SW, 1, C.muted, { alpha: ease((i - 20) / 15) })
   }
 
   /**
@@ -629,18 +637,18 @@ export function installVideoPage(): void {
     }
     g.fillStyle = s.color
     g.fillRect(0, 0, VW, 10 * p)
-    text(`选手 · 联赛第 ${s.rank} 名`, 44, 80, 24, s.color, { bold: true, alpha: p })
-    fitLines(s.displayName, 44, 148, 60, 30, VW - 88, 1, C.text, { bold: true })
+    text(`选手 · 联赛第 ${s.rank} 名`, SX, 80, 24, s.color, { bold: true, alpha: p })
+    fitLines(s.displayName, SX, 148, 60, 30, SW, 1, C.text, { bold: true })
     let y = 190
     if (s.byline) {
-      fitLines(s.byline, 46, y, 22, 14, VW - 88, 1, C.muted)
+      fitLines(s.byline, SX + 2, y, 22, 14, SW, 1, C.muted)
       y += 10
     }
-    y = fitLines(s.tagline, 44, y + 42, 32, 22, VW - 88, 2, C.accent, { bold: true }) - 10
+    y = fitLines(s.tagline, SX, y + 42, 32, 22, SW, 2, C.accent, { bold: true }) - 10
     if (s.radar) {
       const a2 = ease((i - 14) / 20)
       g.globalAlpha = a2
-      roundRect(30, y, VW - 60, 400, 14, "rgba(10,15,26,0.6)", C.line)
+      roundRect(SX, y, SW, 400, 14, "rgba(10,15,26,0.6)", C.line)
       g.globalAlpha = 1
       g.save()
       g.translate(VW / 2, y + 200)
@@ -649,8 +657,8 @@ export function installVideoPage(): void {
       g.restore()
       y += 414
     }
-    vBullets(s.intro, 66, y, VW - 100, VH - 96 - y, 26, 18, s.color, i - 8)
-    if (s.record?.length) fitLines(s.record.join(" · "), VW / 2, VH - 40, 24, 16, VW - 60, 1, s.color, { bold: true, align: "center" })
+    vBullets(s.intro, SX + 22, y, SW - 22, VH - 96 - y, 26, 18, s.color, i - 8)
+    if (s.record?.length) fitLines(s.record.join(" · "), VW / 2, VH - 40, 24, 14, SW, 1, s.color, { bold: true, align: "center" })
   }
 
   function standings(s: Any, i: number): void {
@@ -720,14 +728,17 @@ export function installVideoPage(): void {
     watermark()
   }
 
+  /** 单位图形的半径是几格（D-220：直径 1.4 格，比一格大，挨着的单位边缘叠在一起）；工人小一点 */
+  const UNIT_R = 0.7
+  const unitR = (ty: Any) => TILE * (ty.worker ? 0.6 : UNIT_R)
   /** 一格多大：按地图大小算，尽量铺满左边（输出时是整数像素，地形不会有缝） */
   let TILE = 18
   const MX = 24
   const MY = 92
   function fitTile(s: Any): void {
-    // 竖屏：地图拉满宽度（D-181）
+    // 竖屏：地图拉满安全宽度（D-181；D-220 两边留出抖音会裁掉的边）
     if (VERT) {
-      TILE = Math.floor((VW / s.width) * VS) / VS
+      TILE = Math.floor((SW / s.width) * VS) / VS
       return
     }
     const t = Math.min(26, (H - MY - 44) / s.height, (W - MX - 20 - 330 - 20) / s.width)
@@ -825,7 +836,7 @@ export function installVideoPage(): void {
    * 一段文字：放不下就缩字号（最小 minPx），还放不下就折行（最多 maxLines 行）；返回最后一行下面的 y。
    * wrapFirst：先折行、折到 maxLines 行还放不下才缩字号（竖屏开场的大字，D-183：长标题缩成一行小字看不清）
    */
-  function fitLines(s: string, x: number, y: number, px: number, minPx: number, maxW: number, maxLines: number, color: string, opts: { bold?: boolean; align?: CanvasTextAlign; wrapFirst?: boolean } = {}): number {
+  function fitLines(s: string, x: number, y: number, px: number, minPx: number, maxW: number, maxLines: number, color: string, opts: { bold?: boolean; align?: CanvasTextAlign; wrapFirst?: boolean; alpha?: number } = {}): number {
     let size = px
     g.font = font(size, opts.bold)
     const fits = () => (opts.wrapFirst ? wrapBalanced(s, maxW).length <= maxLines : g.measureText(s).width <= maxW)
@@ -847,7 +858,7 @@ export function installVideoPage(): void {
     const rows = Math.ceil(n / cols)
     const top = vert ? 330 : 150
     const ch = vert ? Math.min(400, (VH - top - 190) / rows - 50) : H - top - 92
-    const cw = (VWW - 40) / cols
+    const cw = (VWW - (vert ? 2 * SX : 40)) / cols
     // 立绘慢慢推近一点（Ken Burns），第一帧已经是完整画面
     const z = 1 + 0.04 * Math.min(1, a / Math.max(1, s.frames))
     s.players.forEach((pl: Any, k: number) => {
@@ -881,12 +892,12 @@ export function installVideoPage(): void {
     })
     // 大字压在立绘上面
     const ty = vert ? 150 : 84
-    fitLines(s.title, VWW / 2, ty, vert ? 50 : 46, 24, VWW - 80, 2, C.text, { bold: true, align: "center", wrapFirst: vert })
+    fitLines(s.title, VWW / 2, ty, vert ? 50 : 46, 24, vert ? SW : VWW - 80, 2, C.text, { bold: true, align: "center", wrapFirst: vert })
     text(s.sub, VWW / 2, vert ? 270 : 128, vert ? 24 : 20, C.accent, { bold: true, align: "center" })
     // 平台署名（D-181：不再单独放片头页，用小字放在开场阵容最下面）
     if (vert) {
-      text("RTS Arena · 大模型写 bot 的即时战略竞技平台", VWW / 2, VH - 70, 20, C.muted, { align: "center" })
-      fitLines(REPO, VWW / 2, VH - 38, 18, 12, VWW - 40, 1, C.accent, { align: "center" })
+      fitLines("RTS Arena · 大模型写 bot 的即时战略竞技平台", VWW / 2, VH - 70, 20, 12, SW, 1, C.muted, { align: "center" })
+      fitLines(REPO, VWW / 2, VH - 38, 18, 10, SW, 2, C.accent, { align: "center" })
     } else fitLines(`RTS Arena · 大模型写 bot 的即时战略竞技平台 · ${REPO}`, VWW / 2, H - 16, 15, 11, VWW - 40, 1, C.muted, { align: "center" })
   }
 
@@ -905,17 +916,17 @@ export function installVideoPage(): void {
    */
   function vFrame(s: Any, f: Any, i: number): void {
     const LY = 330
-    const LH = (VW * H) / W
+    const LH = (SW * H) / W
     text("RTS Arena", VW / 2, 64, 26, C.accent, { bold: true, align: "center" })
     if (s.kind === "standings") text("最终排名", VW / 2, 220, 60, C.text, { bold: true, align: "center" })
-    else if (s.kind === "brandClose") fitLines(s.outro ?? "比赛和视频都由平台自动生成", VW / 2, 200, 40, 24, VW - 60, 2, C.text, { bold: true, align: "center" })
-    g.drawImage(landCanvas!, 0, LY, VW, LH)
+    else if (s.kind === "brandClose") fitLines(s.outro ?? "比赛和视频都由平台自动生成", VW / 2, 200, 40, 24, SW, 2, C.text, { bold: true, align: "center" })
+    g.drawImage(landCanvas!, SX, LY, SW, LH)
     const y = LY + LH + 70
     if (s.kind === "standings" && s.rows?.length) {
       const c = s.rows[0]
       avatarCircle(c.portrait, c.name, c.color, VW / 2, y + 120, 120)
       text("冠军", VW / 2, y + 300, 30, C.accent, { bold: true, align: "center" })
-      fitLines(c.name, VW / 2, y + 360, 48, 24, VW - 80, 1, c.color, { bold: true, align: "center" })
+      fitLines(c.name, VW / 2, y + 360, 48, 24, SW, 1, c.color, { bold: true, align: "center" })
       text(c.record, VW / 2, y + 410, 24, C.muted, { align: "center" })
     } else if (s.kind === "brandClose") text("完整版看横屏长视频", VW / 2, y + 60, 30, C.muted, { align: "center" })
     void i
@@ -974,8 +985,8 @@ export function installVideoPage(): void {
         g.strokeRect(ox + m.x * TILE + 1, oy + m.y * TILE + 1, m.w * TILE - 2, m.h * TILE - 2)
         g.setLineDash([])
         g.globalAlpha = 1
-        if (m.label) text(m.label, ox + m.x * TILE + 3, oy + m.y * TILE - 4, 13, col, { bold: true })
-      } else text(m.text, ox + (m.x + 0.5) * TILE, oy + (m.y + 0.5) * TILE, 13, col, { bold: true, align: "center" })
+        if (m.label) text(m.label, ox + m.x * TILE + 3, oy + m.y * TILE - 4, fxPx(13), col, { bold: true })
+      } else text(m.text, ox + (m.x + 0.5) * TILE, oy + (m.y + 0.5) * TILE, fxPx(13), col, { bold: true, align: "center" })
     }
     // 光环范围：曼哈顿距离的菱形（D-186）
     const au = (f.auras ?? []) as number[]
@@ -1059,20 +1070,24 @@ export function installVideoPage(): void {
       g.lineWidth = 1.2
       const cx = px + pw / 2
       const cy = py + ph / 2
-      // 单位几乎占满一格，好放下汉字；工人小一点
-      const r = Math.min(pw, ph) / 2 - (ty.kind === "unit" ? (ty.worker ? 1.8 : 0.8) : 1.5)
+      // 单位比一格大（D-220，用户：手机上看不清兵种；挨着的单位边缘叠在一起没关系），工人小一点；建筑占满自己的格子
+      const r = ty.kind === "unit" ? unitR(ty) : Math.min(pw, ph) / 2 - 1.5
+      const bx = ty.kind === "unit" ? cx - r : px + 1.5
+      const by = ty.kind === "unit" ? cy - r : py + 1.5
+      const bw = ty.kind === "unit" ? 2 * r : pw - 3
+      const bh = ty.kind === "unit" ? 2 * r : ph - 3
       g.beginPath()
-      if (ty.shape === "square") g.roundRect(px + 1.5, py + 1.5, pw - 3, ph - 3, 3)
+      if (ty.shape === "square") g.roundRect(bx, by, bw, bh, 3)
       else if (ty.shape === "triangle") {
-        g.moveTo(cx, py + 0.5)
-        g.lineTo(px + pw - 0.5, py + ph - 0.5)
-        g.lineTo(px + 0.5, py + ph - 0.5)
+        g.moveTo(cx, by)
+        g.lineTo(bx + bw, by + bh)
+        g.lineTo(bx, by + bh)
         g.closePath()
       } else if (ty.shape === "diamond") {
-        g.moveTo(cx, py + 0.3)
-        g.lineTo(px + pw - 0.3, cy)
-        g.lineTo(cx, py + ph - 0.3)
-        g.lineTo(px + 0.3, cy)
+        g.moveTo(cx, by)
+        g.lineTo(bx + bw, cy)
+        g.lineTo(cx, by + bh)
+        g.lineTo(bx, cy)
         g.closePath()
       } else if (ty.shape === "hex") {
         for (let a = 0; a < 6; a++) {
@@ -1090,25 +1105,28 @@ export function installVideoPage(): void {
       // 和回放页面一样标上汉字：建筑大字，单位小字
       if (ty.kind === "building" && ty.label) text(ty.label, cx, cy + TILE / 2, (TILE * 4) / 3, "rgba(255,255,255,0.9)", { bold: true, align: "center" })
       else if (ty.kind === "unit" && ty.label) {
-        // 白字加深色描边：在哪种颜色上都看得清
-        g.font = font(TILE * (ty.worker ? 0.56 : 0.6), true)
+        // 白字加深色描边：在哪种颜色上都看得清；字和一格一样大（D-220）
+        g.font = font(TILE * (ty.worker ? 0.9 : 1), true)
         g.textAlign = "center"
         g.textBaseline = "middle"
-        const ly = cy + (ty.shape === "triangle" ? 3 : 0.5)
-        g.lineWidth = 1.8
-        g.strokeStyle = "rgba(0,0,0,0.5)"
+        const ly = cy + (ty.shape === "triangle" ? r * 0.22 : TILE * 0.04)
+        g.lineWidth = Math.max(2, TILE * 0.16)
+        g.strokeStyle = "rgba(0,0,0,0.6)"
         g.lineJoin = "round"
         g.strokeText(ty.label, cx, ly)
         g.fillStyle = "#ffffff"
         g.fillText(ty.label, cx, ly)
         g.textBaseline = "alphabetic"
       }
-      // 血条：没满血的单位和建筑
+      // 血条：没满血的单位和建筑（单位的画在放大后的图形上面）
       if (ty.kind !== "resource" && hp < 100) {
+        const hx = ty.kind === "unit" ? bx : px + 1
+        const hy = ty.kind === "unit" ? by - 4 : py - 4
+        const hw = ty.kind === "unit" ? bw : pw - 2
         g.fillStyle = "rgba(0,0,0,0.6)"
-        g.fillRect(px + 1, py - 4, pw - 2, 3)
+        g.fillRect(hx, hy, hw, 3)
         g.fillStyle = hp > 50 ? "#5ee08a" : hp > 25 ? "#f5c542" : "#ff5d5d"
-        g.fillRect(px + 1, py - 4, ((pw - 2) * hp) / 100, 3)
+        g.fillRect(hx, hy, (hw * hp) / 100, 3)
       }
     }
     // 身上有增益的单位：外面一圈金色，一呼一吸（D-186、D-190）
@@ -1118,7 +1136,7 @@ export function installVideoPage(): void {
     g.globalAlpha = 0.55 + 0.45 * Math.sin(i / 4)
     for (let k = 0; k < bf.length; k += 2) {
       g.beginPath()
-      g.arc(ox + (bf[k] + 0.5) * TILE, oy + (bf[k + 1] + 0.5) * TILE, TILE / 2 + 1, 0, Math.PI * 2)
+      g.arc(ox + (bf[k] + 0.5) * TILE, oy + (bf[k + 1] + 0.5) * TILE, TILE * UNIT_R + 1.5, 0, Math.PI * 2)
       g.stroke()
     }
     g.globalAlpha = 1
@@ -1140,7 +1158,7 @@ export function installVideoPage(): void {
       const [x, y, ew, eh, frac] = cd.slice(k, k + 5)
       const cx = ox + (x + ew / 2) * TILE
       const cy = oy + (y + eh / 2) * TILE
-      const rr = (Math.max(ew, eh) * TILE) / 2 + 3.5
+      const rr = (ew === 1 && eh === 1 ? TILE * UNIT_R : (Math.max(ew, eh) * TILE) / 2) + 3.5
       g.lineWidth = 1.6
       g.strokeStyle = "rgba(0,0,0,0.45)"
       g.beginPath()
@@ -1161,7 +1179,7 @@ export function installVideoPage(): void {
       g.lineWidth = 1.5
       g.globalAlpha = 0.55 + 0.3 * Math.sin(i / 2)
       g.beginPath()
-      g.arc(ox + (x + ew / 2) * TILE, oy + (y + eh / 2) * TILE, (Math.max(ew, eh) * TILE) / 2 + 6.5, 0, Math.PI * 2)
+      g.arc(ox + (x + ew / 2) * TILE, oy + (y + eh / 2) * TILE, (ew === 1 && eh === 1 ? TILE * UNIT_R : (Math.max(ew, eh) * TILE) / 2) + 6.5, 0, Math.PI * 2)
       g.stroke()
       g.globalAlpha = 1
     }
@@ -1248,7 +1266,7 @@ export function installVideoPage(): void {
         g.fillRect(cx - 1, cy - 3, 2, 6)
       }
       g.globalAlpha = 1
-      text(`+${amount}`, px + TILE * 0.9, py - TILE * (0.8 + fr * 1.4), 15, `rgba(110,227,110,${a})`, { bold: true, align: "left" })
+      text(`+${amount}`, px + TILE * 0.9, py - TILE * (0.8 + fr * 1.4), fxPx(15), `rgba(110,227,110,${a})`, { bold: true, align: "left" })
     }
     // 规则包的画面特效（D-205，比如击退的冲击波）：两圈光往外扩、中间一团亮光、八道放射线，字往上飘
     for (const r of (f.ruleFx ?? []) as NonNullable<ReplayFrame["ruleFx"]>) {
@@ -1285,7 +1303,7 @@ export function installVideoPage(): void {
         g.stroke()
       }
       g.globalAlpha = 1
-      if (r.text) text(r.text, cx, cy - base - TILE * (0.6 + fr * 1.6), 20, `rgba(${rgb},${a})`, { bold: true })
+      if (r.text) text(r.text, cx, cy - base - TILE * (0.6 + fr * 1.6), fxPx(20), `rgba(${rgb},${a})`, { bold: true })
     }
     // 刚死的：一圈扩散的红圈
     const d = f.deaths as number[]
@@ -1399,18 +1417,18 @@ export function installVideoPage(): void {
     // 地图上方：标题、解说、双方（左右两栏）
     text("RTS Arena", VW / 2, 40, 20, C.accent, { bold: true, align: "center" })
     text(s.kicker ?? `精彩对局 ${s.no}`, VW / 2, 80, 22, C.accent, { bold: true, align: "center" })
-    let y = fitLines(s.title, VW / 2, 124, 36, 22, VW - 60, 2, C.text, { bold: true, align: "center" })
-    if (s.commentary) y = fitLines(s.commentary, VW / 2, y, 19, 14, VW - 60, 2, C.muted, { align: "center" })
+    let y = fitLines(s.title, VW / 2, 124, 36, 22, SW, 2, C.text, { bold: true, align: "center" })
+    if (s.commentary) y = fitLines(s.commentary, VW / 2, y, 19, 14, SW, 2, C.muted, { align: "center" })
     const seats = (s.seats as Any[]).slice(0, 2)
-    const colW = (VW - 40) / Math.max(1, seats.length)
+    const colW = SW / Math.max(1, seats.length)
     const sy = y + 6
     seats.forEach((st, k) => {
       const c = f.counts?.[k] ?? { army: 0, workers: 0, buildings: 0, score: 0, alive: true }
-      const cx = 20 + k * colW
+      const cx = SX + k * colW
       avatarCircle(st.avatar, st.name, st.color, cx + 32, sy + 36, 28)
-      fitLines(st.name, cx + 70, sy + 22, 24, 14, colW - 80, 1, st.color, { bold: true })
-      text(c.alive ? `兵 ${c.army}  工人 ${c.workers}` : "已出局", cx + 70, sy + 50, 18, C.text)
-      if (c.alive) text(`建筑 ${c.buildings}  分数 ${c.score}`, cx + 70, sy + 74, 18, C.muted)
+      fitLines(st.name, cx + 70, sy + 22, 24, 14, colW - 76, 1, st.color, { bold: true })
+      fitLines(c.alive ? `兵 ${c.army}  工人 ${c.workers}` : "已出局", cx + 70, sy + 50, 18, 12, colW - 76, 1, C.text)
+      if (c.alive) fitLines(`建筑 ${c.buildings}  分数 ${c.score}`, cx + 70, sy + 74, 18, 12, colW - 76, 1, C.muted)
     })
     const top = sy + 92
     // 地图放在画面正中（D-182，用户要求）；上面的字太多放不下时才往下挪
@@ -1418,24 +1436,24 @@ export function installVideoPage(): void {
     drawField(s, f, ox, oy, i)
     if (f.final) {
       g.globalAlpha = 0.85
-      roundRect(40, oy + mapH / 2 - 60, VW - 80, 120, 16, "#0b1220", C.accent)
+      roundRect(SX, oy + mapH / 2 - 60, SW, 120, 16, "#0b1220", C.accent)
       g.globalAlpha = 1
-      fitLines(s.result, VW / 2, oy + mapH / 2 + 14, 36, 20, VW - 120, 1, C.accent, { bold: true, align: "center" })
+      fitLines(s.result, VW / 2, oy + mapH / 2 + 14, 36, 20, SW - 40, 1, C.accent, { bold: true, align: "center" })
     }
     // 地图下方：进度条和变速、胜率折线、最新的战况
     const by = oy + mapH + 30
-    roundRect(20, by, VW - 40, 8, 4, "rgba(255,255,255,0.1)")
-    roundRect(20, by, Math.max(8, (VW - 40) * (f.progress ?? 0)), 8, 4, C.accent)
-    text(`第 ${f.t ?? 0} tick`, VW - 20, by - 8, 18, C.muted, { align: "right" })
-    if (!f.final) text(f.pace === "quiet" ? "▸▸ 快进" : f.pace === "battle" ? "▶ 大战 2 倍速" : "▶ 交火 4 倍速", 20, by - 8, 18, f.pace === "quiet" ? C.accent : C.text, { bold: true })
+    roundRect(SX, by, SW, 8, 4, "rgba(255,255,255,0.1)")
+    roundRect(SX, by, Math.max(8, SW * (f.progress ?? 0)), 8, 4, C.accent)
+    text(`第 ${f.t ?? 0} tick`, SX + SW, by - 8, 18, C.muted, { align: "right" })
+    if (!f.final) text(f.pace === "quiet" ? "▸▸ 快进" : f.pace === "battle" ? "▶ 大战 2 倍速" : "▶ 交火 4 倍速", SX, by - 8, 18, f.pace === "quiet" ? C.accent : C.text, { bold: true })
     let y2 = by + 46
     if (s.win) {
-      drawWin(s.win, f.t ?? 0, 40, y2, VW - 80, 100, 22)
+      drawWin(s.win, f.t ?? 0, SX, y2, SW, 100, 22)
       y2 += 12 + 100 + 34
     }
     const room = Math.max(0, Math.floor((VH - 16 - y2) / 28) + 1)
     for (const ev of (f.events as string[]).slice(-room)) {
-      fitLines(ev, 40, y2, 19, 14, VW - 80, 1, C.muted)
+      fitLines(ev, SX, y2, 19, 14, SW, 1, C.muted)
       y2 += 28
     }
     void i
