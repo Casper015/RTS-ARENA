@@ -164,8 +164,6 @@ export interface VideoScript {
   highlights?: { index: number; title?: string; commentary?: string }[]
   /** 片尾署名页最上面的一句总结（最多 60 字，可以不写） */
   outro?: string
-  /** 对战胜负页下面的一句克制关系（最多 60 字）；不写由平台从两两对阵的胜负算（D-223） */
-  counterNote?: string
 }
 
 /**
@@ -178,11 +176,11 @@ export const PLAYER_PAGE_MIN = 160
 /** 规则介绍合计最多 130 字（D-183、D-221 规则页时长两次减半，最长 3 秒，字数不变） */
 export const RULES_PAGE_CHARS = 130
 
-export const SCRIPT_LIMITS = { rulesLine: 45, rulesLines: 4, displayName: 28, byline: 40, tagline: 30, introLine: 65, introLines: 5, hlTitle: 24, commentary: 80, outro: 60, highlights: 16, counterNote: 60 }
+export const SCRIPT_LIMITS = { rulesLine: 45, rulesLines: 4, displayName: 28, byline: 40, tagline: 30, introLine: 65, introLines: 5, hlTitle: 24, commentary: 80, outro: 60, highlights: 16 }
 
 /**
  * 平台自带的参考 bot（陪练）：联赛汇总里记的文件在规则包的 bots/ 目录（rulesets/<规则包>/bots/）里。
- * 视频只介绍参赛 bot（D-221，用户：不需要加入陪练程序，只放参赛 bot），陪练只出现在排名页
+ * 视频只介绍参赛 bot（D-221，用户：不需要加入陪练程序，只放参赛 bot），陪练不进视频（D-225 排名页也删了）
  */
 export function isReferenceBot(file: string, rulesetId: string): boolean {
   return file.split("\\").join("/").includes(`rulesets/${rulesetId}/bots/`)
@@ -208,7 +206,6 @@ export function checkScript(s: unknown, series: SeriesFile): string[] {
     else if ([...v].length > max) errs.push(`${name} 最多 ${max} 字（现在 ${[...v].length} 字，标点和空格也算）：${v.slice(0, 20)}…`)
   }
   str(o.outro, "outro", L.outro)
-  str(o.counterNote, "counterNote", L.counterNote)
   if (o.rules !== undefined) {
     if (!Array.isArray(o.rules) || o.rules.length < 1 || o.rules.length > L.rulesLines) errs.push(`rules 要是 1～${L.rulesLines} 句的数组`)
     else o.rules.forEach((line, j) => str(line, `rules[${j}]`, L.rulesLine, true))
@@ -297,7 +294,7 @@ export function highlightPlayerWarnings(s: unknown, series: SeriesFile): string[
 export function scriptWarnings(s: unknown, otherRulesets: string[] = []): string[] {
   if (!s || typeof s !== "object") return []
   const o = s as VideoScript
-  const bold: [string, unknown][] = [["outro", o.outro], ["counterNote", o.counterNote]]
+  const bold: [string, unknown][] = [["outro", o.outro]]
   if (Array.isArray(o.players)) o.players.forEach((p, i) => bold.push([`players[${i}].tagline`, p?.tagline]))
   if (Array.isArray(o.highlights))
     o.highlights.forEach((h, i) => {
@@ -466,7 +463,7 @@ export function videoBrief(seriesFile: string): VideoBrief {
       "文件名常见的写法是 \"模型名-编程工具\"，比如 \"ModelX2.0-ToolY\" 是 ToolY 里的 ModelX 2.0（只是格式的例子）；拆不开、只是外号时就照原样用，不要猜是哪家模型；不知道作者就不写 byline",
       "语气轻松、像赛事解说，但不贬低任何一方；成绩差的写它的特点和输在哪",
       "每个选手 1～5 句介绍（建议 4～5 句，tagline 加 intro 一共 180～260 字），每句不超过 65 字；tagline 不超过 30 字；byline 会出现在片尾的选手名单里",
-      "只介绍参赛选手（players 里不用写平台自带的参考 bot，它们只出现在排名页）；每个参赛选手的介绍后面接着放他的一局高光对局（players[].highlight），这局的标题和解说写在 highlights 里，照这一局写，解说一句话（不超过 80 字）；index 用联赛的局号",
+      "只介绍参赛选手（players 里不用写平台自带的参考 bot，视频里没有它们）；每个参赛选手的介绍后面接着放他的一局高光对局（players[].highlight），这局的标题和解说写在 highlights 里，照这一局写，解说一句话（不超过 80 字）；index 用联赛的局号",
       "平台署名（规则页底部、片尾的 RTS Arena）由渲染器固定加上，不用写进脚本，也去不掉",
     ],
   }

@@ -7,7 +7,7 @@ import { basename, dirname, join, resolve } from "node:path"
 import { after, test } from "node:test"
 import { checkScript, codeFacts, contestantNames, factTags, gameScores, highlightPlayerWarnings, isReferenceBot, readSeries, resolveBotFile, scriptWarnings, videoBrief, type SeriesFile, type VideoScript } from "../src/video/brief.ts"
 import { findBrowser } from "../src/video/browser.ts"
-import { buildScenes, counterSentence, fightWindows, idleHighlightWarnings, pacing, relabelSeats, tidy, timelineOf } from "../src/video/render.ts"
+import { buildScenes, fightWindows, idleHighlightWarnings, pacing, relabelSeats, tidy, timelineOf } from "../src/video/render.ts"
 import { analyzeLeague, baseTypeOf, fitWinModel, twoSides, winCurve } from "../src/video/analysis.ts"
 import { matchPortraits } from "../src/video/workspace.ts"
 import { crc32, deflateSync } from "node:zlib"
@@ -50,46 +50,6 @@ export function onTick(view: View, cmd: Commands): void {
   assert.equal(f.features["实测或调参注释"], 3) // "实测" 两处、"调出来" 一处
   // 只数注释里的感叹号（代码里的 ! 不算）
   assert.equal(f.features["注释里的感叹号"], 1)
-})
-
-test("对战胜负页的克制关系（D-223）：有克制环挑最稳的一个，没有环说谁通吃、名次靠后反赢的", () => {
-  const mk = (rows: number[][][], ranks: number[]) =>
-    ({
-      ruleset: { id: "x", name: "x" },
-      participants: ranks.map((_, i) => ({ name: "ABCD"[i], file: `${"ABCD"[i]}.ts` })),
-      summary: {
-        standings: ranks.map((rank, i) => ({ index: i, name: "ABCD"[i], rank, games: 0, wins: 0, draws: 0, losses: 0, rate: 0, elo: 1500 })),
-        matrix: rows.map((r) => r.map(([w, l]) => ({ w, d: 0, l }))),
-      },
-    }) as unknown as SeriesFile
-  // A 克 B、B 克 C、C 克 A
-  const cyc = mk(
-    [
-      [[0, 0], [30, 10], [15, 25]],
-      [[10, 30], [0, 0], [28, 12]],
-      [[25, 15], [12, 28], [0, 0]],
-    ],
-    [1, 2, 3],
-  )
-  assert.equal(counterSentence(cyc), "克制环：A 克 B（30:10）、B 克 C（28:12）、C 又克 A（25:15）")
-  // 没有环：A 通吃，C 反赢 B
-  const flat = mk(
-    [
-      [[0, 0], [30, 10], [35, 5]],
-      [[10, 30], [0, 0], [15, 25]],
-      [[5, 35], [25, 15], [0, 0]],
-    ],
-    [1, 2, 3],
-  )
-  assert.equal(counterSentence(flat), "没有克制环，A 对所有人都赢多输少；名次靠后反赢的：C 赢 B（25:15）")
-  const clean = mk(
-    [
-      [[0, 0], [30, 10]],
-      [[10, 30], [0, 0]],
-    ],
-    [1, 2],
-  )
-  assert.equal(counterSentence(clean), "没有克制环：名次高的对名次低的全都赢多输少，A 通吃")
 })
 
 test("只介绍参赛 bot（D-221）：规则包 bots/ 里的参考 bot 是陪练，不用写进 players、不出现在视频的选手页；全是参考 bot 时都算参赛", () => {
@@ -222,13 +182,13 @@ test("脚本提醒：粗体字段里的「一」像破折号，常规字重的�
   assert.match(other[0], /rules\[0\] 提到了别的规则包「拓荒」/)
 })
 
-test("场景编排（D-221）：规则介绍 → 排名和对局数据 → 每个参赛选手「介绍 → 他的高光对局」→ 片尾，横竖屏一样", () => {
+test("场景编排（D-221、D-225）：规则介绍 → 每个参赛选手「介绍 → 他的高光对局」→ 片尾，横竖屏一样", () => {
   const series = readSeries(seriesFile)
   assert.deepEqual(checkScript(script, series), [])
   const scenes = buildScenes(series, script, seriesFile, 10)
   const kinds = scenes.map((s) => s.data.kind)
-  // 没有开场阵容、标题卡（D-221，用户：砍掉开头的肖像排列，直接从规则开始放）；规则之后是排名
-  assert.deepEqual(kinds, ["rules", "standings", "matrix", "player", "replay", "player", "replay", "brandClose"])
+  // 没有开场阵容、标题卡（D-221，用户：砍掉开头的肖像排列，直接从规则开始放）；D-225 排名页、对战胜负页也删了，规则之后直接是选手
+  assert.deepEqual(kinds, ["rules", "player", "replay", "player", "replay", "brandClose"])
   // 第一段从第一帧起就是完整画面（不从黑屏淡入），别的段不是
   assert.equal(scenes[0].data.first, true)
   assert.ok(scenes.slice(1).every((x) => !x.data.first))
@@ -237,20 +197,6 @@ test("场景编排（D-221）：规则介绍 → 排名和对局数据 → 每�
   assert.ok(scenes[0].data.frames >= 15 && scenes[0].data.frames <= 30, String(scenes[0].data.frames))
   const pages = scenes.filter((x) => x.data.kind === "player")
   for (const x of pages) assert.ok((x.data as { speed?: number }).speed === 2.6 && x.data.frames >= 11 && x.data.frames <= 33, String(x.data.frames))
-  // 排名页和砍半后的选手页一样长（取平均，用户），列出所有 bot 和每局平均的数据
-  const st = scenes[1].data as { frames: number; rows: { name: string; ref: boolean; cells: string[]; record: string }[]; columns: string[] }
-  assert.equal(st.frames, Math.round(pages.reduce((t, x) => t + x.data.frames, 0) / pages.length))
-  // 对战胜负页（D-223）：和排名页一样长，行列按名次排，对角线空着，下面一句克制关系；脚本写了 counterNote 就用它
-  const mx = scenes[2].data as { frames: number; players: { name: string }[]; cells: ({ text: string; rate: number } | null)[][]; note: string }
-  assert.equal(mx.frames, st.frames)
-  assert.equal(mx.players.length, 2)
-  assert.ok(mx.cells[0][0] === null && mx.cells[1][1] === null && /^\d+-\d+(-\d+)?$/.test(mx.cells[0][1]!.text))
-  assert.ok(mx.note.length > 0)
-  const noted = buildScenes(series, { ...script, counterNote: "两人五五开" }, seriesFile, 10)
-  assert.equal((noted[2].data as { note: string }).note, "两人五五开")
-  assert.equal(st.rows.length, 2)
-  assert.deepEqual(st.columns.slice(0, 6), ["胜局用时", "采集", "造单位", "击杀", "损失", "拆建筑"])
-  assert.ok(st.rows.every((r) => r.cells.length === st.columns.length && /^\d+-\d+-\d+$/.test(r.record)))
   // 选手页按名次倒着出场：最后一名先上
   const order = pages.map((x) => (x.data as { rank: number }).rank)
   assert.deepEqual(order, [...order].sort((a, b) => b - a))
@@ -290,7 +236,7 @@ test("场景编排（D-221）：规则介绍 → 排名和对局数据 → 每�
   const tl = timelineOf(scenes, 10)
   assert.equal(tl[0].label, "规则介绍")
   assert.ok(tl.every((x, k) => x.label && (k === 0 || x.from === tl[k - 1].to)))
-  assert.ok(tl.some((x) => /^选手 基准$/.test(x.label)) && tl.some((x) => /^联赛排名和对局数据$/.test(x.label)))
+  assert.ok(tl.some((x) => /^选手 基准$/.test(x.label)) && !tl.some((x) => /排名|对战胜负/.test(x.label)))
   // 回放场景每帧都能算出局面，最后一帧定格显示结果；往回要的帧从头重算，结果一样
   const rs = scenes.find((s) => s.data.kind === "replay")
   if (rs) {
@@ -331,7 +277,7 @@ test("平台拼的文字：中文名前后的空格去掉，英文名的留着",
   assert.equal(tidy("大肥鱼 获胜"), "大肥鱼获胜")
 })
 
-test("回放变速（D-172、D-174）：tick 随帧单调往前、首尾对齐；大战 2 倍速，其余有单位倒下的小冲突 4 倍速，没动静的快进至少 4 倍", () => {
+test("回放变速（D-172、D-174、D-225）：tick 随帧单调往前、首尾对齐；有单位倒下的交火（大战和小冲突）都 4 倍速，没动静的快进至少 4 倍", () => {
   const series = readSeries(seriesFile)
   const g = [...series.results].sort((a, b) => b.tick - a.tick)[0]
   const replay = JSON.parse(readFileSync(join(TMP, "lg", g.replay), "utf8")) as Replay
@@ -350,11 +296,11 @@ test("回放变速（D-172、D-174）：tick 随帧单调往前、首尾对齐�
   const battleTicks = battles.reduce((a, [x, y]) => a + (y - x), 0)
   let skirmishTicks = 0
   for (const [x, y] of skirmishes) for (let t = x; t < y; t++) if (!inBattle(t)) skirmishTicks++
-  // 大战一共放 battleTicks / (2 × rate) 秒，小冲突 skirmishTicks / (4 × rate) 秒，没动静的最多 10 秒
-  const lo = (battleTicks / (2 * rate) + skirmishTicks / (4 * rate)) * fps
-  const hi = (battleTicks / (2 * rate) + (T - battleTicks) / (4 * rate)) * fps
+  // 大战一共放 battleTicks / (4 × rate) 秒，小冲突 skirmishTicks / (4 × rate) 秒，没动静的最多 10 秒
+  const lo = (battleTicks / (4 * rate) + skirmishTicks / (4 * rate)) * fps
+  const hi = (battleTicks / (4 * rate) + (T - battleTicks) / (4 * rate)) * fps
   assert.ok(n >= lo - 2 && n <= Math.max(hi, lo + 10 * fps) + 2, `${n} 帧（${lo}～${hi}）`)
-  // 段中间的帧：大战一秒正好推进 2 × rate 个 tick，小冲突 4 × rate 个
+  // 段中间的帧：大战、小冲突一秒都正好推进 4 × rate 个 tick
   const check = (wins: [number, number][], mode: string, per: number) => {
     for (const [x, y] of wins) {
       const inside = ticks.map((_, i) => i).filter((i) => ticks[i] > x + 1 && ticks[i + fps] !== undefined && ticks[i + fps] < y - 1 && (mode === "battle" || !battles.some(([bx, by]) => by > ticks[i] && bx < ticks[i + fps])))
@@ -362,7 +308,7 @@ test("回放变速（D-172、D-174）：tick 随帧单调往前、首尾对齐�
       for (const i of inside) assert.equal(p.mode(i), mode)
     }
   }
-  check(battles, "battle", 2)
+  check(battles, "battle", 4)
   check(skirmishes, "skirmish", 4)
   const quiet = ticks.slice(0, -1).map((_, i) => i).filter((i) => p.mode(i) === "quiet")
   if (quiet.length > fps) assert.ok(ticks[quiet[0] + fps] - ticks[quiet[0]] >= rate * 4 - 1)
@@ -457,7 +403,9 @@ test("video-init：视频目录里有说明、选手代码、战报、待填脚�
   // 说明里的例子只用占位，不出现真实的模型名、外号（免得诱导大模型去猜这场的选手是谁写的）
   assert.doesNotMatch(prompt, /DeepSeek|大肥鱼|GPT6\.1sol|Gemini/)
   assert.match(prompt, /1\. \*\*规则介绍\*\*/)
-  assert.match(prompt, /2\. \*\*联赛排名\*\*/)
+  // 规则之后直接是选手（D-225 删了排名页、对战胜负页）
+  assert.match(prompt, /2\. \*\*每个参赛选手/)
+  assert.doesNotMatch(prompt, /\*\*联赛排名\*\*|\*\*对战胜负\*\*|counterNote/)
   assert.doesNotMatch(prompt, /开场阵容（|hook\.text|标题卡看点/)
   assert.match(prompt, /照这个目录里的 `RULES\.md` 写/)
   assert.match(prompt, /\| 看点 \|/)
@@ -515,11 +463,11 @@ test("渲染：在视频目录里不写参数出预览图；本机有浏览器�
   assert.match(lint, /格式没问题/)
   const out = sh(["video", "--preview", "1,6"], dir)
   assert.match(out, /预览图/)
-  assert.match(out, /每段的时间（整段 [\d.]+ 秒）：\n\s+0\.0～[\d.]+\s+秒  规则介绍\n\s+[\d.]+～[\d.]+\s+秒  联赛排名和对局数据\n\s+[\d.]+～[\d.]+\s+秒  对战胜负\n\s+[\d.]+～[\d.]+\s+秒  选手 \S+\n\s+[\d.]+～[\d.]+\s+秒  .+的高光对局 回放（第 \d+ 局）/)
+  assert.match(out, /每段的时间（整段 [\d.]+ 秒）：\n\s+0\.0～[\d.]+\s+秒  规则介绍\n\s+[\d.]+～[\d.]+\s+秒  选手 \S+\n\s+[\d.]+～[\d.]+\s+秒  .+的高光对局 回放（第 \d+ 局）/)
   assert.ok(statSync(join(dir, "preview", "夺点联赛-6s.png")).size > 10_000)
-  // 竖屏（D-179、D-183、D-221）：段落和横屏一样，规则、排名、选手页和回放都按竖屏画，1080×1920
+  // 竖屏（D-179、D-183、D-221）：段落和横屏一样，规则、选手页和回放都按竖屏画，1080×1920
   const vert = sh(["video", "--vertical", "--preview", "1,5", "--out", "竖.mp4"], dir)
-  assert.match(vert, /0\.0～[\d.]+\s+秒  规则介绍\n\s+[\d.]+～[\d.]+\s+秒  联赛排名和对局数据\n\s+[\d.]+～[\d.]+\s+秒  对战胜负\n\s+[\d.]+～[\d.]+\s+秒  选手 \S+\n\s+[\d.]+～[\d.]+\s+秒  .+的高光对局 回放（第 \d+ 局）/)
+  assert.match(vert, /0\.0～[\d.]+\s+秒  规则介绍\n\s+[\d.]+～[\d.]+\s+秒  选手 \S+\n\s+[\d.]+～[\d.]+\s+秒  .+的高光对局 回放（第 \d+ 局）/)
   const vpng = readFileSync(join(dir, "preview", "竖-5s.png"))
   assert.deepEqual([vpng.readUInt32BE(16), vpng.readUInt32BE(20)], [1080, 1920])
   // 两张以上的预览拼一张总览

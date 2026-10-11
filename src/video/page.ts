@@ -49,19 +49,6 @@ export type SceneData = (
       /** 左下角的小字：1 秒 = 多少 tick */
       tickNote: string
     }
-  /**
-   * 排名页（D-221）：所有 bot 的名次、胜-平-负、得分率、等级分，和每局平均的对局数据（columns 是表头，cells 和它一一对应）；
-   * ref 是平台自带的参考 bot（陪练），画得灰一些、名字后面标「陪练」
-   */
-  | {
-      kind: "standings"
-      frames: number
-      speed?: number
-      title: string
-      sub: string
-      columns: string[]
-      rows: { name: string; color: string; rank: number; record: string; rate: number; elo: number; ref: boolean; cells: string[] }[]
-    }
   | {
       kind: "replay"
       frames: number
@@ -82,20 +69,6 @@ export type SceneData = (
       /** 实时胜率：curve 是每 step tick 一个点的、sides[0] 那方赢的概率；不是两方对打或没有模型时 null（D-177） */
       win: { step: number; ticks: number; curve: number[]; sides: { name: string; color: string }[] } | null
     }
-  /**
-   * 对战胜负页（D-223）：行、列都按名次排，cells[行][列] 是行对列的胜负（text 是「胜-负」或「胜-平-负」，rate 是胜率，对角线是 null）；
-   * note 是下面一句克制关系
-   */
-  | {
-      kind: "matrix"
-      frames: number
-      speed?: number
-      title: string
-      sub: string
-      players: { name: string; color: string; rank: number; ref: boolean }[]
-      cells: ({ text: string; rate: number } | null)[][]
-      note: string
-    }
   | { kind: "brandClose"; frames: number; speed?: number; outro: string | null; credits: string[] }
 ) & { first?: boolean }
 
@@ -114,7 +87,7 @@ export interface ReplayFrame {
   progress: number
   /** 最后定格时显示结果 */
   final: boolean
-  /** 这段怎么放：battle 大战 2 倍速、skirmish 小冲突 4 倍速、quiet 没动静快进 */
+  /** 这段怎么放：battle 大战、skirmish 小冲突（D-225 起都是 4 倍速）、quiet 没动静快进 */
   pace: "battle" | "skirmish" | "quiet"
   /** 规则包画在地图上的标记（控制点、台址……），和回放页面一样 */
   markers: ({ kind: "zone"; x: number; y: number; w: number; h: number; owner: number | null; label?: string; color?: string } | { kind: "label"; x: number; y: number; text: string; owner?: number | null })[]
@@ -690,198 +663,6 @@ export function installVideoPage(): void {
     vBullets(s.intro, SX + 22, y, SW - 22, VH - 114 - y, 26, 18, s.color, i - 8)
     // 战绩往上挪一点，给最下面正中的「RTS Arena」留地方（D-224）
     if (s.record?.length) fitLines(s.record.join(" · "), VW / 2, VH - 58, 24, 14, SW, 1, s.color, { bold: true, align: "center" })
-  }
-
-  /** 排名页（D-221，用户：规则之后加排名页，列出所有选手的排名和各种对局数据）：一行一个 bot，陪练灰一些 */
-  function standings(s: Any, i: number): void {
-    background()
-    const p = ease(i / 10)
-    text(s.title, 60, 64, 34, C.text, { bold: true, alpha: p })
-    fitLines(s.sub, 60, 98, 16, 11, W - 120, 1, C.muted, { alpha: p })
-    const n = s.rows.length
-    const top = 128
-    const rh = Math.min(52, (H - top - 30) / Math.max(1, n + 1))
-    const fs = Math.max(11, Math.min(20, Math.round(rh * 0.46)))
-    const left = 60
-    const right = W - 60
-    // 列：名次、名字、胜-平-负、得分率（条 + 百分比）、等级分，后面是数据列（右对齐，平分剩下的宽度）
-    const xName = left + fs * 2.4
-    const xRec = xName + 190
-    const xRate = xRec + fs * 5.8
-    const xElo = xRate + 124
-    const x0 = xElo + fs * 3.4
-    const cw = (right - x0) / Math.max(1, s.columns.length)
-    const hy = top + rh * 0.62
-    const hp = Math.max(10, fs - 3)
-    for (const [label, x, align] of [["名次", left, "left"], ["选手", xName, "left"], ["胜-平-负", xRec, "left"], ["得分率", xRate, "left"], ["等级分", xElo + fs * 2.6, "right"]] as [string, number, CanvasTextAlign][])
-      text(label, x, hy, hp, C.muted, { bold: true, align, alpha: p })
-    s.columns.forEach((c: string, k: number) => fitLines(c, x0 + (k + 1) * cw - 4, hy, hp, 9, cw - 6, 1, C.muted, { bold: true, align: "right", alpha: p }))
-    s.rows.forEach((r: Any, k: number) => {
-      const y = top + (k + 1) * rh
-      const a = ease((i - 4 - k * 1.2) / 8) * (r.ref ? 0.62 : 1)
-      g.globalAlpha = a
-      roundRect(left - 12, y + 2, right - left + 24, rh - 4, 6, k % 2 ? "rgba(255,255,255,0.025)" : "rgba(255,255,255,0.055)")
-      g.fillStyle = r.color
-      g.fillRect(left - 12, y + 2, 4, rh - 4)
-      g.globalAlpha = 1
-      const by = y + rh / 2 + fs * 0.36
-      text(`#${r.rank}`, left, by, fs, r.ref ? C.muted : r.color, { bold: true, alpha: a })
-      g.font = font(Math.max(9, fs - 6))
-      const tagW = r.ref ? g.measureText("陪练").width + 8 : 0
-      fitLines(r.name, xName, by, fs, 9, xRec - xName - 12 - tagW, 1, r.ref ? C.text : r.color, { bold: true, alpha: a })
-      if (r.ref) {
-        g.font = font(fs, true)
-        const nw = Math.min(g.measureText(r.name).width, xRec - xName - 12 - tagW)
-        text("陪练", xName + nw + 6, by - 1, Math.max(9, fs - 6), C.muted, { alpha: a })
-      }
-      text(r.record, xRec, by, fs, C.text, { alpha: a })
-      g.globalAlpha = a
-      roundRect(xRate, y + rh / 2 - 5, 70, 10, 5, "rgba(255,255,255,0.08)")
-      if (r.rate > 0) roundRect(xRate, y + rh / 2 - 5, Math.max(10, 70 * r.rate), 10, 5, r.ref ? "#8fa0bf" : r.color)
-      g.globalAlpha = 1
-      text(`${Math.round(r.rate * 100)}%`, xRate + 78, by, fs, C.text, { bold: true, alpha: a })
-      text(String(r.elo), xElo + fs * 2.6, by, fs, C.text, { align: "right", alpha: a })
-      r.cells.forEach((c: string, j: number) => text(c, x0 + (j + 1) * cw - 4, by, fs, C.text, { align: "right", alpha: a }))
-    })
-    watermark()
-  }
-
-  /** 竖屏的排名页（D-221）：一行一个 bot，只有名次、名字、胜-平-负和得分率（D-223 试过人少时加详细数据，超出框，D-224 去掉，数据只在横屏版里） */
-  function vStandings(s: Any, i: number): void {
-    const p = ease(i / 10)
-    text("RTS Arena", VW / 2, 56, 22, C.accent, { bold: true, align: "center", alpha: p })
-    text(s.title, VW / 2, 122, 48, C.text, { bold: true, align: "center", alpha: p })
-    const top = 150 + (s.rows.some((r: Any) => r.ref) ? fitLines("灰色的是平台自带的陪练", VW / 2, 182, 18, 12, SW, 1, C.muted, { align: "center", alpha: p }) - 150 : 20)
-    const n = s.rows.length
-    const rh = Math.min(96, (VH - 60 - top) / Math.max(1, n))
-    const f1 = Math.max(13, Math.min(30, Math.round(rh * 0.44)))
-    s.rows.forEach((r: Any, k: number) => {
-      const y = top + k * rh
-      const a = ease((i - 4 - k * 1.2) / 8) * (r.ref ? 0.62 : 1)
-      g.globalAlpha = a
-      roundRect(SX, y + 3, SW, rh - 6, 8, k % 2 ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.06)")
-      g.fillStyle = r.color
-      g.fillRect(SX, y + 3, 5, rh - 6)
-      g.globalAlpha = 1
-      const by = y + rh / 2 + f1 * 0.36
-      const xName = SX + 16 + f1 * 2.5
-      text(`#${r.rank}`, SX + 16, by, f1, r.ref ? C.muted : r.color, { bold: true, alpha: a })
-      // 右边：得分率（条 + 百分比），左边是胜-平-负
-      const xPct = SX + SW - 12
-      text(`${Math.round(r.rate * 100)}%`, xPct, by, f1, C.text, { bold: true, align: "right", alpha: a })
-      g.font = font(f1, true)
-      const barR = xPct - g.measureText("100%").width - 10
-      g.globalAlpha = a
-      roundRect(barR - 70, y + rh / 2 - 5, 70, 10, 5, "rgba(255,255,255,0.08)")
-      if (r.rate > 0) roundRect(barR - 70, y + rh / 2 - 5, Math.max(10, 70 * r.rate), 10, 5, r.ref ? "#8fa0bf" : r.color)
-      g.globalAlpha = 1
-      g.font = font(f1 - 4)
-      const recW = g.measureText(r.record).width
-      text(r.record, barR - 82, by, f1 - 4, C.text, { align: "right", alpha: a })
-      const nameW = barR - 82 - recW - 12 - xName
-      const tagPx = Math.max(10, Math.round(f1 * 0.6))
-      g.font = font(tagPx)
-      const tagW = r.ref ? g.measureText("陪练").width + 8 : 0
-      fitLines(r.name, xName, by, f1, 10, nameW - tagW, 1, r.ref ? C.text : r.color, { bold: true, alpha: a })
-      if (r.ref) {
-        g.font = font(f1, true)
-        const nw = Math.min(g.measureText(r.name).width, nameW - tagW)
-        text("陪练", xName + nw + 6, by - 1, tagPx, C.muted, { alpha: a })
-      }
-    })
-  }
-
-  /**
-   * 一段话按标点（：、，；）断行、居中写，字号从 px 往下试到 minPx，放进 maxLines 行；返回最后一行下面的 y。
-   * 克制关系那句里有「（25:15）」这样的比分，按字折行会把括号拆到两行（D-223）
-   */
-  function noteLines(s: string, x: number, y: number, px: number, minPx: number, maxW: number, maxLines: number, color: string, alpha: number): number {
-    const segs = s.split(/(?<=[：、，；])/)
-    for (let size = px; size >= minPx; size--) {
-      g.font = font(size, true)
-      const lines: string[] = []
-      for (const seg of segs) {
-        const last = lines.length ? lines[lines.length - 1] : null
-        if (last !== null && g.measureText(last + seg).width <= maxW) lines[lines.length - 1] = last + seg
-        else lines.push(seg)
-      }
-      if (lines.length <= maxLines && lines.every((l) => g.measureText(l).width <= maxW)) {
-        lines.forEach((l, k) => text(l, x, y + k * size * 1.35, size, color, { bold: true, align: "center", alpha }))
-        return y + lines.length * size * 1.35
-      }
-    }
-    return fitLines(s, x, y, minPx, minPx, maxW, maxLines, color, { bold: true, align: "center", alpha, wrapFirst: true })
-  }
-
-  /** 对战胜负页的格子底色：赢多输少偏绿、输多赢少偏红，越悬殊越深 */
-  const cellColor = (rate: number) => {
-    const t = rate - 0.5
-    return t >= 0 ? `rgba(94,224,138,${(0.1 + t * 1.1).toFixed(3)})` : `rgba(255,93,93,${(0.1 - t * 1.1).toFixed(3)})`
-  }
-
-  /** 对战胜负页（D-223）：两两对阵的胜负表，下面一句克制关系 */
-  function matrix(s: Any, i: number): void {
-    background()
-    const p = ease(i / 10)
-    text(s.title, 60, 64, 34, C.text, { bold: true, alpha: p })
-    fitLines(s.sub, 60, 98, 16, 11, W - 120, 1, C.muted, { alpha: p })
-    const n = s.players.length
-    const left = 60
-    const nameW = 210
-    const top = 118
-    const cw = (W - 60 - left - nameW) / Math.max(1, n)
-    const ch = Math.min(60, (H - top - 110) / Math.max(1, n + 1))
-    const fs = Math.max(10, Math.min(22, Math.round(Math.min(cw * 0.24, ch * 0.42))))
-    s.players.forEach((pl: Any, j: number) =>
-      fitLines(pl.name, left + nameW + (j + 0.5) * cw, top + ch * 0.62, fs, 9, cw - 8, 1, pl.ref ? C.muted : pl.color, { bold: true, align: "center", alpha: p }),
-    )
-    s.players.forEach((pl: Any, r: number) => {
-      const y = top + (r + 1) * ch
-      const a = ease((i - 4 - r * 1.2) / 8)
-      const by = y + ch * 0.5 + fs * 0.36
-      text(`#${pl.rank}`, left, by, fs, pl.ref ? C.muted : pl.color, { bold: true, alpha: a })
-      fitLines(pl.name, left + fs * 2.6, by, fs, 9, nameW - fs * 2.6 - 10, 1, pl.ref ? C.muted : pl.color, { bold: true, alpha: a })
-      s.cells[r].forEach((c: Any, j: number) => {
-        const x = left + nameW + j * cw
-        g.globalAlpha = a
-        roundRect(x + 2, y + 2, cw - 4, ch - 4, 6, c ? cellColor(c.rate) : "rgba(255,255,255,0.03)")
-        g.globalAlpha = 1
-        if (c) fitLines(c.text, x + cw / 2, by, fs, 9, cw - 8, 1, C.text, { bold: true, align: "center", alpha: a })
-        else text("—", x + cw / 2, by, fs, C.muted, { align: "center", alpha: a })
-      })
-    })
-    if (s.note) noteLines(s.note, W / 2, top + (n + 1) * ch + 52, 26, 14, W - 160, 2, C.accent, ease((i - 6) / 10))
-    watermark()
-  }
-
-  /** 竖屏的对战胜负页（D-223）：列头是名次（颜色和行头的名字一样），下面一句克制关系 */
-  function vMatrix(s: Any, i: number): void {
-    const p = ease(i / 10)
-    text("RTS Arena", VW / 2, 56, 22, C.accent, { bold: true, align: "center", alpha: p })
-    text(s.title, VW / 2, 122, 48, C.text, { bold: true, align: "center", alpha: p })
-    const top = fitLines(s.sub, VW / 2, 176, 18, 12, SW, 2, C.muted, { align: "center", alpha: p, wrapFirst: true }) + 6
-    const n = s.players.length
-    const nameW = Math.round(SW * 0.27)
-    const cw = (SW - nameW) / Math.max(1, n)
-    const ch = Math.min(96, (VH - top - 230) / Math.max(1, n + 1))
-    const fs = Math.max(11, Math.min(24, Math.round(Math.min(cw * 0.3, ch * 0.34))))
-    s.players.forEach((pl: Any, j: number) => text(`#${pl.rank}`, SX + nameW + (j + 0.5) * cw, top + ch * 0.6, fs + 2, pl.ref ? C.muted : pl.color, { bold: true, align: "center", alpha: p }))
-    s.players.forEach((pl: Any, r: number) => {
-      const y = top + (r + 1) * ch
-      const a = ease((i - 4 - r * 1.2) / 8)
-      const by = y + ch * 0.5 + fs * 0.36
-      text(`#${pl.rank}`, SX + 4, by, fs, pl.ref ? C.muted : pl.color, { bold: true, alpha: a })
-      fitLines(pl.name, SX + 4 + fs * 2.3, by, fs, 10, nameW - fs * 2.3 - 10, 1, pl.ref ? C.muted : pl.color, { bold: true, alpha: a })
-      s.cells[r].forEach((c: Any, j: number) => {
-        const x = SX + nameW + j * cw
-        g.globalAlpha = a
-        roundRect(x + 2, y + 2, cw - 4, ch - 4, 6, c ? cellColor(c.rate) : "rgba(255,255,255,0.03)")
-        g.globalAlpha = 1
-        if (c) fitLines(c.text, x + cw / 2, by, fs, 9, cw - 6, 1, C.text, { bold: true, align: "center", alpha: a })
-        else text("—", x + cw / 2, by, fs, C.muted, { align: "center", alpha: a })
-      })
-    })
-    if (s.note) noteLines(s.note, VW / 2, top + (n + 1) * ch + 64, 28, 16, SW, 4, C.accent, ease((i - 6) / 10))
   }
 
   /** 单位图形的半径是几格（D-220：直径 1.4 格，比一格大，挨着的单位边缘叠在一起）；工人还是原来的大小（不到一格，D-221 用户） */
@@ -1500,10 +1281,10 @@ export function installVideoPage(): void {
     roundRect(MX, by, s.width * TILE, 8, 4, "rgba(255,255,255,0.1)")
     roundRect(MX, by, Math.max(8, s.width * TILE * f.progress), 8, 4, C.accent)
     text(`第 ${f.t} tick`, MX + s.width * TILE, by - 6, 15, C.muted, { align: "right" })
-    // 大战 2 倍速、小冲突 4 倍速、没动静快进（D-172、D-174）
+    // 大战、小冲突都 4 倍速（D-225），没动静快进（D-172、D-174）
     if (!f.final) {
       if (f.pace === "quiet") text("▸▸ 快进", MX, by - 6, 15, C.accent, { bold: true })
-      else text(f.pace === "battle" ? "▶ 大战 2 倍速" : "▶ 交火 4 倍速", MX, by - 6, 15, C.text, { bold: true })
+      else text(f.pace === "battle" ? "▶ 大战 4 倍速" : "▶ 交火 4 倍速", MX, by - 6, 15, C.text, { bold: true })
     }
     if (f.final) {
       g.globalAlpha = 0.85
@@ -1563,7 +1344,7 @@ export function installVideoPage(): void {
     roundRect(SX, by, SW, 8, 4, "rgba(255,255,255,0.1)")
     roundRect(SX, by, Math.max(8, SW * (f.progress ?? 0)), 8, 4, C.accent)
     text(`第 ${f.t ?? 0} tick`, SX + SW, by - 8, 18, C.muted, { align: "right" })
-    if (!f.final) text(f.pace === "quiet" ? "▸▸ 快进" : f.pace === "battle" ? "▶ 大战 2 倍速" : "▶ 交火 4 倍速", SX, by - 8, 18, f.pace === "quiet" ? C.accent : C.text, { bold: true })
+    if (!f.final) text(f.pace === "quiet" ? "▸▸ 快进" : f.pace === "battle" ? "▶ 大战 4 倍速" : "▶ 交火 4 倍速", SX, by - 8, 18, f.pace === "quiet" ? C.accent : C.text, { bold: true })
     let y2 = by + 46
     if (s.win) {
       drawWin(s.win, f.t ?? 0, SX, y2, SW, 100, 22)
@@ -1600,8 +1381,6 @@ export function installVideoPage(): void {
   function drawScene(s: Any, f: Any | null, i: number, a: number): void {
     if (s.kind === "rules") rules(s, a)
     else if (s.kind === "player") player(s, a)
-    else if (s.kind === "standings") standings(s, a)
-    else if (s.kind === "matrix") matrix(s, a)
     else if (s.kind === "replay") replay(s, f ?? {}, i)
     else if (s.kind === "brandClose") brandClose(s, a)
   }
@@ -1618,8 +1397,8 @@ export function installVideoPage(): void {
       g.setTransform(1, 0, 0, 1, 0, 0)
       return
     }
-    // 竖屏：规则、排名、选手和回放直接按竖屏画（D-183、D-221）；片尾先按横屏画到 landCanvas，再拼到竖屏画布上
-    const direct = s.kind === "replay" || s.kind === "rules" || s.kind === "player" || s.kind === "standings" || s.kind === "matrix"
+    // 竖屏：规则、选手和回放直接按竖屏画（D-183、D-221）；片尾先按横屏画到 landCanvas，再拼到竖屏画布上
+    const direct = s.kind === "replay" || s.kind === "rules" || s.kind === "player"
     if (!direct) {
       g = landG!
       g.setTransform(SCALE, 0, 0, SCALE, 0, 0)
@@ -1633,8 +1412,6 @@ export function installVideoPage(): void {
     g.save()
     vBackground()
     if (s.kind === "replay") vReplay(s, f ?? {}, i)
-    else if (s.kind === "standings") vStandings(s, a)
-    else if (s.kind === "matrix") vMatrix(s, a)
     else if (s.kind === "rules") vRules(s, a)
     else if (s.kind === "player") vPlayer(s, a)
     else vFrame(s, f ?? {}, i)

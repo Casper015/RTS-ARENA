@@ -143,7 +143,7 @@ export function buildScenes(
     const seatOf = mapGame.names.map((n) => names.indexOf(n))
     scenes.push({ label: "规则介绍", data: rulesScene(replay, series.ruleset.name, rulesLines, `第 ${mapGame.index} 局的开局地图`, seatOf.map((i) => color(i)), fps, specs) })
   }
-  // 只介绍参赛 bot，平台自带的参考 bot（陪练）只出现在排名页（D-221，用户）
+  // 只介绍参赛 bot，平台自带的参考 bot（陪练）不进视频（D-221 只出现在排名页，D-225 排名页也删了）
   const own = new Set(contestantNames(series))
   // 选手按联赛名次倒着出场，最后一名先上、冠军压轴（D-181，用户要求）；名次一样的按脚本里的顺序
   const rankOf = (name: string) => sum.standings.find((x) => x.index === names.indexOf(name))?.rank ?? names.length
@@ -190,56 +190,6 @@ export function buildScenes(
     }
   }
   const players = byRank.map(({ p }) => playerScene(p))
-  // 排名页（D-221，用户：规则之后加排名页，列出所有选手的排名和各种对局数据；时长和砍半后的选手介绍一样）：
-  // 每局平均的数据，加上规则包自己记的统计（最多 2 项）；参考 bot 标「陪练」
-  const bots = sum.stats?.bots ?? []
-  const customKeys = [...new Set(bots.flatMap((b) => Object.keys(b.custom ?? {})))].slice(0, 2)
-  const num = (x: number) => (x >= 100 ? String(Math.round(x)) : x.toFixed(1))
-  const columns = ["胜局用时", "采集", "造单位", "击杀", "损失", "拆建筑", ...customKeys]
-  const standingFrames = players.length ? Math.round(players.reduce((t, x) => t + x.data.frames, 0) / players.length) : sec(fps, 3)
-  scenes.push({
-    label: "联赛排名和对局数据",
-    data: {
-      kind: "standings",
-      frames: standingFrames,
-      speed: HALF,
-      title: "联赛排名",
-      sub: `${names.length} 个 bot · ${series.results.length} 局 · 数据是每局平均，胜局用时是赢的局平均打了几 tick${own.size < names.length ? " · 灰色的是平台自带的陪练" : ""}`,
-      columns,
-      rows: sum.standings.map((st) => {
-        const b = bots.find((x) => x.name === st.name)
-        const g = b?.games || 1
-        const cells = b
-          ? [b.winGames ? String(Math.round(b.winTicks / b.winGames)) : "—", num(b.income / g), num(b.produced / g), num(b.killedUnits / g), num(b.lostUnits / g), num(b.killedBuildings / g), ...customKeys.map((k) => num((b.custom?.[k] ?? 0) / g))]
-          : columns.map(() => "—")
-        return { name: display(st.name), color: color(st.index), rank: st.rank, record: `${st.wins}-${st.draws}-${st.losses}`, rate: st.rate, elo: st.elo, ref: !own.has(st.name), cells }
-      }),
-    },
-  })
-  // 对战胜负页（D-223，用户：排名页后面插一页联赛输出的那种两两对战的胜负场次，时长和排名页一样，下面一句克制关系）：
-  // 行、列都按名次排，格子是行对列的 胜-负（有平局时 胜-平-负）
-  const m = sum.matrix
-  const order = [...sum.standings].sort((a, b) => a.rank - b.rank)
-  const hasDraw = order.some((a) => order.some((b) => (m[a.index]?.[b.index]?.d ?? 0) > 0))
-  const perPair = Math.max(0, ...order.flatMap((a) => order.map((b) => (a === b || !m[a.index]?.[b.index] ? 0 : m[a.index][b.index].w + m[a.index][b.index].d + m[a.index][b.index].l))))
-  scenes.push({
-    label: "对战胜负",
-    data: {
-      kind: "matrix",
-      frames: standingFrames,
-      speed: HALF,
-      title: "对战胜负",
-      sub: `行对列的 ${hasDraw ? "胜-平-负" : "胜-负"}${perPair ? `（每对 ${perPair} 局）` : ""}，绿色是赢多输少`,
-      players: order.map((st) => ({ name: display(st.name), color: color(st.index), rank: st.rank, ref: !own.has(st.name) })),
-      cells: order.map((a) =>
-        order.map((b) => {
-          const c = a === b ? null : m[a.index]?.[b.index]
-          return c ? { text: hasDraw ? `${c.w}-${c.d}-${c.l}` : `${c.w}-${c.l}`, rate: c.w + c.l ? c.w / (c.w + c.l) : 0.5 } : null
-        }),
-      ),
-      note: script.counterNote || counterSentence(series, display),
-    },
-  })
   // 每个参赛选手：介绍，紧接着整局放他的高光对局（D-183 竖屏这样排，D-221 横屏也一样，没有标题卡；回放顶上写「<选手>的高光对局」、标题和解说）
   const games = playerGames(series, byRank.map(({ p }) => p), picks.map((x) => x.index))
   byRank.forEach(({ p }, k) => {
@@ -257,48 +207,6 @@ export function buildScenes(
   // 第一段（规则介绍）的第一帧就是完整画面，不从黑屏淡入（原来开场阵容的做法，D-179）
   if (scenes[0]) scenes[0] = { ...scenes[0], data: { ...scenes[0].data, first: true } }
   return scenes
-}
-
-/**
- * 对战胜负页下面的一句克制关系（D-223）：两两对阵赢多输少连成一圈的（克制环）挑最稳的一个（三条边里赢得最少的那条也赢得最多，D-224 不再说一共几个环）；
- * 没有环就说名次最高的是不是通吃、名次低的赢了名次高的（爆冷）有哪几对
- */
-export function counterSentence(series: SeriesFile, display: (name: string) => string = (x) => x): string {
-  const sum = series.summary!
-  const m = sum.matrix
-  const st = [...sum.standings].sort((a, b) => a.rank - b.rank)
-  const name = (i: number) => display(series.participants[i].name)
-  const edge = (i: number, j: number) => m[i]?.[j]
-  const beats = (i: number, j: number) => {
-    const c = edge(i, j)
-    return !!c && c.w > c.l
-  }
-  const margin = (i: number, j: number) => {
-    const c = edge(i, j)!
-    return (c.w - c.l) / Math.max(1, c.w + c.d + c.l)
-  }
-  const h = (i: number, j: number) => `${edge(i, j)!.w}:${edge(i, j)!.l}`
-  const ids = st.map((x) => x.index)
-  let best: { cyc: number[]; score: number } | null = null
-  for (const a of ids)
-    for (const b of ids)
-      for (const c of ids) {
-        if (a === b || b === c || a === c || !(beats(a, b) && beats(b, c) && beats(c, a))) continue
-        // 同一个环只数一次（从三个人里编号最小的开始）
-        if (a > b || a > c) continue
-        const score = Math.min(margin(a, b), margin(b, c), margin(c, a))
-        if (!best || score > best.score) best = { cyc: [a, b, c], score }
-      }
-  if (best) {
-    const [a, b, c] = best.cyc
-    return tidy(`克制环：${name(a)} 克 ${name(b)}（${h(a, b)}）、${name(b)} 克 ${name(c)}（${h(b, c)}）、${name(c)} 又克 ${name(a)}（${h(c, a)}）`)
-  }
-  const top = st[0].index
-  const allTop = ids.every((j) => j === top || beats(top, j))
-  const upsets = st.flatMap((x, i) => st.slice(0, i).filter((y) => beats(x.index, y.index)).map((y) => [x.index, y.index] as const))
-  const ups = upsets.slice(0, 2).map(([x, y]) => `${name(x)} 赢 ${name(y)}（${h(x, y)}）`)
-  if (allTop && !upsets.length) return tidy(`没有克制环：名次高的对名次低的全都赢多输少，${name(top)} 通吃`)
-  return tidy(`没有克制环${allTop ? `，${name(top)} 对所有人都赢多输少` : ""}${ups.length ? `；名次靠后反赢的：${ups.join("、")}` : ""}`)
 }
 
 /** 单位、建筑的一句话数值（图例用）：造价、生命、攻击 */
@@ -369,8 +277,8 @@ const BATTLE_TAIL = 20
 /** 没动静的地方一共最多放几秒（快进至少 4 倍速） */
 const QUIET_SECONDS = 10
 const QUIET_MIN_SPEED = 4
-/** 大战按几倍速放（D-172，用户看了一倍速说太慢） */
-const BATTLE_SPEED = 2
+/** 大战按几倍速放（D-172 用户看了一倍速说太慢，改成 2；D-225 用户嫌节奏慢，和小冲突一样 4 倍速） */
+const BATTLE_SPEED = 4
 /** 其余有单位倒下的小冲突按几倍速放（D-174，用户：快进太快不知道发生了什么） */
 const SKIRMISH_SPEED = 4
 /** 两段交火中间只空了这么几 tick 就不快进了，免得快进一闪而过 */
@@ -418,7 +326,7 @@ export function idleHighlightWarnings(script: VideoScript, seriesFile: string): 
   return out
 }
 
-/** 回放这一段怎么放：大战 2 倍速、小冲突 4 倍速、没动静快进 */
+/** 回放这一段怎么放：大战、小冲突（D-225 起都是 4 倍速，进度条旁标的字不一样）、没动静快进 */
 export type PaceMode = "battle" | "skirmish" | "quiet"
 
 /**
@@ -513,7 +421,7 @@ export function pacing(replay: Replay, fps: number): { playFrames: number; tickO
   }
 }
 
-/** 回放场景：大战按 2 倍速放、小冲突 4 倍速、没动静快进（D-172、D-174），最后定格 1.5 秒显示结果 */
+/** 回放场景：交火（大战、小冲突）都按 4 倍速放、没动静快进（D-172、D-174、D-225），最后定格 1.5 秒显示结果 */
 function replayScene(
   replay: Replay,
   no: number,
@@ -835,7 +743,7 @@ export function lintScript(seriesFile: string, script: VideoScript, fps = 30, ot
   // 参考 bot（陪练）写进 players 也不会出现在视频里（D-221 只介绍参赛 bot）
   const own = new Set(contestantNames(series))
   if (Array.isArray(script.players))
-    for (const p of script.players) if (p && typeof p.name === "string" && series.participants.some((x) => x.name === p.name) && !own.has(p.name)) warnings.push(`players 里的 ${p.name} 是平台自带的参考 bot（陪练），视频里不介绍它（只出现在排名页），删掉就行`)
+    for (const p of script.players) if (p && typeof p.name === "string" && series.participants.some((x) => x.name === p.name) && !own.has(p.name)) warnings.push(`players 里的 ${p.name} 是平台自带的参考 bot（陪练），视频里没有它，删掉就行`)
   const L = SCRIPT_LIMITS
   const n = (s?: string) => [...(s ?? "")].length
   const counts: string[] = []
