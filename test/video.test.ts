@@ -7,7 +7,7 @@ import { basename, dirname, join, resolve } from "node:path"
 import { after, test } from "node:test"
 import { checkScript, codeFacts, contestantNames, factTags, gameScores, highlightPlayerWarnings, isReferenceBot, readSeries, resolveBotFile, scriptWarnings, videoBrief, type SeriesFile, type VideoScript } from "../src/video/brief.ts"
 import { findBrowser } from "../src/video/browser.ts"
-import { buildScenes, fightWindows, idleHighlightWarnings, pacing, relabelSeats, tidy, timelineOf } from "../src/video/render.ts"
+import { buildScenes, counterSentence, fightWindows, idleHighlightWarnings, pacing, relabelSeats, tidy, timelineOf } from "../src/video/render.ts"
 import { analyzeLeague, baseTypeOf, fitWinModel, twoSides, winCurve } from "../src/video/analysis.ts"
 import { matchPortraits } from "../src/video/workspace.ts"
 import { crc32, deflateSync } from "node:zlib"
@@ -50,6 +50,46 @@ export function onTick(view: View, cmd: Commands): void {
   assert.equal(f.features["实测或调参注释"], 3) // "实测" 两处、"调出来" 一处
   // 只数注释里的感叹号（代码里的 ! 不算）
   assert.equal(f.features["注释里的感叹号"], 1)
+})
+
+test("对战胜负页的克制关系（D-223）：有克制环挑最稳的一个，没有环说谁通吃、名次靠后反赢的", () => {
+  const mk = (rows: number[][][], ranks: number[]) =>
+    ({
+      ruleset: { id: "x", name: "x" },
+      participants: ranks.map((_, i) => ({ name: "ABCD"[i], file: `${"ABCD"[i]}.ts` })),
+      summary: {
+        standings: ranks.map((rank, i) => ({ index: i, name: "ABCD"[i], rank, games: 0, wins: 0, draws: 0, losses: 0, rate: 0, elo: 1500 })),
+        matrix: rows.map((r) => r.map(([w, l]) => ({ w, d: 0, l }))),
+      },
+    }) as unknown as SeriesFile
+  // A 克 B、B 克 C、C 克 A
+  const cyc = mk(
+    [
+      [[0, 0], [30, 10], [15, 25]],
+      [[10, 30], [0, 0], [28, 12]],
+      [[25, 15], [12, 28], [0, 0]],
+    ],
+    [1, 2, 3],
+  )
+  assert.equal(counterSentence(cyc), "克制环：A 克 B（30:10）、B 克 C（28:12）、C 又克 A（25:15）")
+  // 没有环：A 通吃，C 反赢 B
+  const flat = mk(
+    [
+      [[0, 0], [30, 10], [35, 5]],
+      [[10, 30], [0, 0], [15, 25]],
+      [[5, 35], [25, 15], [0, 0]],
+    ],
+    [1, 2, 3],
+  )
+  assert.equal(counterSentence(flat), "没有克制环，A 对所有人都赢多输少；名次靠后反赢的：C 赢 B（25:15）")
+  const clean = mk(
+    [
+      [[0, 0], [30, 10]],
+      [[10, 30], [0, 0]],
+    ],
+    [1, 2],
+  )
+  assert.equal(counterSentence(clean), "没有克制环：名次高的对名次低的全都赢多输少，A 通吃")
 })
 
 test("只介绍参赛 bot（D-221）：规则包 bots/ 里的参考 bot 是陪练，不用写进 players、不出现在视频的选手页；全是参考 bot 时都算参赛", () => {
@@ -188,7 +228,7 @@ test("场景编排（D-221）：规则介绍 → 排名和对局数据 → 每�
   const scenes = buildScenes(series, script, seriesFile, 10)
   const kinds = scenes.map((s) => s.data.kind)
   // 没有开场阵容、标题卡（D-221，用户：砍掉开头的肖像排列，直接从规则开始放）；规则之后是排名
-  assert.deepEqual(kinds, ["rules", "standings", "player", "replay", "player", "replay", "brandClose"])
+  assert.deepEqual(kinds, ["rules", "standings", "matrix", "player", "replay", "player", "replay", "brandClose"])
   // 第一段从第一帧起就是完整画面（不从黑屏淡入），别的段不是
   assert.equal(scenes[0].data.first, true)
   assert.ok(scenes.slice(1).every((x) => !x.data.first))
@@ -200,6 +240,14 @@ test("场景编排（D-221）：规则介绍 → 排名和对局数据 → 每�
   // 排名页和砍半后的选手页一样长（取平均，用户），列出所有 bot 和每局平均的数据
   const st = scenes[1].data as { frames: number; rows: { name: string; ref: boolean; cells: string[]; record: string }[]; columns: string[] }
   assert.equal(st.frames, Math.round(pages.reduce((t, x) => t + x.data.frames, 0) / pages.length))
+  // 对战胜负页（D-223）：和排名页一样长，行列按名次排，对角线空着，下面一句克制关系；脚本写了 counterNote 就用它
+  const mx = scenes[2].data as { frames: number; players: { name: string }[]; cells: ({ text: string; rate: number } | null)[][]; note: string }
+  assert.equal(mx.frames, st.frames)
+  assert.equal(mx.players.length, 2)
+  assert.ok(mx.cells[0][0] === null && mx.cells[1][1] === null && /^\d+-\d+(-\d+)?$/.test(mx.cells[0][1]!.text))
+  assert.ok(mx.note.length > 0)
+  const noted = buildScenes(series, { ...script, counterNote: "两人五五开" }, seriesFile, 10)
+  assert.equal((noted[2].data as { note: string }).note, "两人五五开")
   assert.equal(st.rows.length, 2)
   assert.deepEqual(st.columns.slice(0, 6), ["胜局用时", "采集", "造单位", "击杀", "损失", "拆建筑"])
   assert.ok(st.rows.every((r) => r.cells.length === st.columns.length && /^\d+-\d+-\d+$/.test(r.record)))
@@ -467,11 +515,11 @@ test("渲染：在视频目录里不写参数出预览图；本机有浏览器�
   assert.match(lint, /格式没问题/)
   const out = sh(["video", "--preview", "1,6"], dir)
   assert.match(out, /预览图/)
-  assert.match(out, /每段的时间（整段 [\d.]+ 秒）：\n\s+0\.0～[\d.]+\s+秒  规则介绍\n\s+[\d.]+～[\d.]+\s+秒  联赛排名和对局数据\n\s+[\d.]+～[\d.]+\s+秒  选手 \S+\n\s+[\d.]+～[\d.]+\s+秒  .+的高光对局 回放（第 \d+ 局）/)
+  assert.match(out, /每段的时间（整段 [\d.]+ 秒）：\n\s+0\.0～[\d.]+\s+秒  规则介绍\n\s+[\d.]+～[\d.]+\s+秒  联赛排名和对局数据\n\s+[\d.]+～[\d.]+\s+秒  对战胜负\n\s+[\d.]+～[\d.]+\s+秒  选手 \S+\n\s+[\d.]+～[\d.]+\s+秒  .+的高光对局 回放（第 \d+ 局）/)
   assert.ok(statSync(join(dir, "preview", "夺点联赛-6s.png")).size > 10_000)
   // 竖屏（D-179、D-183、D-221）：段落和横屏一样，规则、排名、选手页和回放都按竖屏画，1080×1920
   const vert = sh(["video", "--vertical", "--preview", "1,5", "--out", "竖.mp4"], dir)
-  assert.match(vert, /0\.0～[\d.]+\s+秒  规则介绍\n\s+[\d.]+～[\d.]+\s+秒  联赛排名和对局数据\n\s+[\d.]+～[\d.]+\s+秒  选手 \S+\n\s+[\d.]+～[\d.]+\s+秒  .+的高光对局 回放（第 \d+ 局）/)
+  assert.match(vert, /0\.0～[\d.]+\s+秒  规则介绍\n\s+[\d.]+～[\d.]+\s+秒  联赛排名和对局数据\n\s+[\d.]+～[\d.]+\s+秒  对战胜负\n\s+[\d.]+～[\d.]+\s+秒  选手 \S+\n\s+[\d.]+～[\d.]+\s+秒  .+的高光对局 回放（第 \d+ 局）/)
   const vpng = readFileSync(join(dir, "preview", "竖-5s.png"))
   assert.deepEqual([vpng.readUInt32BE(16), vpng.readUInt32BE(20)], [1080, 1920])
   // 两张以上的预览拼一张总览

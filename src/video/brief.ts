@@ -164,6 +164,8 @@ export interface VideoScript {
   highlights?: { index: number; title?: string; commentary?: string }[]
   /** 片尾署名页最上面的一句总结（最多 60 字，可以不写） */
   outro?: string
+  /** 对战胜负页下面的一句克制关系（最多 60 字）；不写由平台从两两对阵的胜负算（D-223） */
+  counterNote?: string
 }
 
 /**
@@ -176,7 +178,7 @@ export const PLAYER_PAGE_MIN = 160
 /** 规则介绍合计最多 130 字（D-183、D-221 规则页时长两次减半，最长 3 秒，字数不变） */
 export const RULES_PAGE_CHARS = 130
 
-export const SCRIPT_LIMITS = { rulesLine: 45, rulesLines: 4, displayName: 28, byline: 40, tagline: 30, introLine: 65, introLines: 5, hlTitle: 24, commentary: 80, outro: 60, highlights: 16 }
+export const SCRIPT_LIMITS = { rulesLine: 45, rulesLines: 4, displayName: 28, byline: 40, tagline: 30, introLine: 65, introLines: 5, hlTitle: 24, commentary: 80, outro: 60, highlights: 16, counterNote: 60 }
 
 /**
  * 平台自带的参考 bot（陪练）：联赛汇总里记的文件在规则包的 bots/ 目录（rulesets/<规则包>/bots/）里。
@@ -206,6 +208,7 @@ export function checkScript(s: unknown, series: SeriesFile): string[] {
     else if ([...v].length > max) errs.push(`${name} 最多 ${max} 字（现在 ${[...v].length} 字，标点和空格也算）：${v.slice(0, 20)}…`)
   }
   str(o.outro, "outro", L.outro)
+  str(o.counterNote, "counterNote", L.counterNote)
   if (o.rules !== undefined) {
     if (!Array.isArray(o.rules) || o.rules.length < 1 || o.rules.length > L.rulesLines) errs.push(`rules 要是 1～${L.rulesLines} 句的数组`)
     else o.rules.forEach((line, j) => str(line, `rules[${j}]`, L.rulesLine, true))
@@ -294,7 +297,7 @@ export function highlightPlayerWarnings(s: unknown, series: SeriesFile): string[
 export function scriptWarnings(s: unknown, otherRulesets: string[] = []): string[] {
   if (!s || typeof s !== "object") return []
   const o = s as VideoScript
-  const bold: [string, unknown][] = [["outro", o.outro]]
+  const bold: [string, unknown][] = [["outro", o.outro], ["counterNote", o.counterNote]]
   if (Array.isArray(o.players)) o.players.forEach((p, i) => bold.push([`players[${i}].tagline`, p?.tagline]))
   if (Array.isArray(o.highlights))
     o.highlights.forEach((h, i) => {

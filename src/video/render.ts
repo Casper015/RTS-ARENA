@@ -216,6 +216,30 @@ export function buildScenes(
       }),
     },
   })
+  // 对战胜负页（D-223，用户：排名页后面插一页联赛输出的那种两两对战的胜负场次，时长和排名页一样，下面一句克制关系）：
+  // 行、列都按名次排，格子是行对列的 胜-负（有平局时 胜-平-负）
+  const m = sum.matrix
+  const order = [...sum.standings].sort((a, b) => a.rank - b.rank)
+  const hasDraw = order.some((a) => order.some((b) => (m[a.index]?.[b.index]?.d ?? 0) > 0))
+  const perPair = Math.max(0, ...order.flatMap((a) => order.map((b) => (a === b || !m[a.index]?.[b.index] ? 0 : m[a.index][b.index].w + m[a.index][b.index].d + m[a.index][b.index].l))))
+  scenes.push({
+    label: "对战胜负",
+    data: {
+      kind: "matrix",
+      frames: standingFrames,
+      speed: HALF,
+      title: "对战胜负",
+      sub: `行对列的 ${hasDraw ? "胜-平-负" : "胜-负"}${perPair ? `（每对 ${perPair} 局）` : ""}，绿色是赢多输少`,
+      players: order.map((st) => ({ name: display(st.name), color: color(st.index), rank: st.rank, ref: !own.has(st.name) })),
+      cells: order.map((a) =>
+        order.map((b) => {
+          const c = a === b ? null : m[a.index]?.[b.index]
+          return c ? { text: hasDraw ? `${c.w}-${c.d}-${c.l}` : `${c.w}-${c.l}`, rate: c.w + c.l ? c.w / (c.w + c.l) : 0.5 } : null
+        }),
+      ),
+      note: script.counterNote || counterSentence(series, display),
+    },
+  })
   // 每个参赛选手：介绍，紧接着整局放他的高光对局（D-183 竖屏这样排，D-221 横屏也一样，没有标题卡；回放顶上写「<选手>的高光对局」、标题和解说）
   const games = playerGames(series, byRank.map(({ p }) => p), picks.map((x) => x.index))
   byRank.forEach(({ p }, k) => {
@@ -233,6 +257,50 @@ export function buildScenes(
   // 第一段（规则介绍）的第一帧就是完整画面，不从黑屏淡入（原来开场阵容的做法，D-179）
   if (scenes[0]) scenes[0] = { ...scenes[0], data: { ...scenes[0].data, first: true } }
   return scenes
+}
+
+/**
+ * 对战胜负页下面的一句克制关系（D-223）：两两对阵赢多输少连成一圈的（克制环）挑最稳的一个（三条边里赢得最少的那条也赢得最多）；
+ * 没有环就说名次最高的是不是通吃、名次低的赢了名次高的（爆冷）有哪几对
+ */
+export function counterSentence(series: SeriesFile, display: (name: string) => string = (x) => x): string {
+  const sum = series.summary!
+  const m = sum.matrix
+  const st = [...sum.standings].sort((a, b) => a.rank - b.rank)
+  const name = (i: number) => display(series.participants[i].name)
+  const edge = (i: number, j: number) => m[i]?.[j]
+  const beats = (i: number, j: number) => {
+    const c = edge(i, j)
+    return !!c && c.w > c.l
+  }
+  const margin = (i: number, j: number) => {
+    const c = edge(i, j)!
+    return (c.w - c.l) / Math.max(1, c.w + c.d + c.l)
+  }
+  const h = (i: number, j: number) => `${edge(i, j)!.w}:${edge(i, j)!.l}`
+  const ids = st.map((x) => x.index)
+  let best: { cyc: number[]; score: number } | null = null
+  let count = 0
+  for (const a of ids)
+    for (const b of ids)
+      for (const c of ids) {
+        if (a === b || b === c || a === c || !(beats(a, b) && beats(b, c) && beats(c, a))) continue
+        // 同一个环只数一次（从三个人里编号最小的开始）
+        if (a > b || a > c) continue
+        count++
+        const score = Math.min(margin(a, b), margin(b, c), margin(c, a))
+        if (!best || score > best.score) best = { cyc: [a, b, c], score }
+      }
+  if (best) {
+    const [a, b, c] = best.cyc
+    return tidy(`克制环：${name(a)} 克 ${name(b)}（${h(a, b)}）、${name(b)} 克 ${name(c)}（${h(b, c)}）、${name(c)} 又克 ${name(a)}（${h(c, a)}）${count > 1 ? `，这样的环共有 ${count} 个` : ""}`)
+  }
+  const top = st[0].index
+  const allTop = ids.every((j) => j === top || beats(top, j))
+  const upsets = st.flatMap((x, i) => st.slice(0, i).filter((y) => beats(x.index, y.index)).map((y) => [x.index, y.index] as const))
+  const ups = upsets.slice(0, 2).map(([x, y]) => `${name(x)} 赢 ${name(y)}（${h(x, y)}）`)
+  if (allTop && !upsets.length) return tidy(`没有克制环：名次高的对名次低的全都赢多输少，${name(top)} 通吃`)
+  return tidy(`没有克制环${allTop ? `，${name(top)} 对所有人都赢多输少` : ""}${ups.length ? `；名次靠后反赢的：${ups.join("、")}` : ""}`)
 }
 
 /** 单位、建筑的一句话数值（图例用）：造价、生命、攻击 */
