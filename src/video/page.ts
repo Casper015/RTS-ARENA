@@ -687,8 +687,9 @@ export function installVideoPage(): void {
       g.restore()
       y += 414
     }
-    vBullets(s.intro, SX + 22, y, SW - 22, VH - 96 - y, 26, 18, s.color, i - 8)
-    if (s.record?.length) fitLines(s.record.join(" · "), VW / 2, VH - 40, 24, 14, SW, 1, s.color, { bold: true, align: "center" })
+    vBullets(s.intro, SX + 22, y, SW - 22, VH - 114 - y, 26, 18, s.color, i - 8)
+    // 战绩往上挪一点，给最下面正中的「RTS Arena」留地方（D-224）
+    if (s.record?.length) fitLines(s.record.join(" · "), VW / 2, VH - 58, 24, 14, SW, 1, s.color, { bold: true, align: "center" })
   }
 
   /** 排名页（D-221，用户：规则之后加排名页，列出所有选手的排名和各种对局数据）：一行一个 bot，陪练灰一些 */
@@ -985,6 +986,14 @@ export function installVideoPage(): void {
     g.beginPath()
     g.arc(cx, cy, r, 0, Math.PI * 2)
     g.stroke()
+  }
+
+  /** 排一段文字（不画）：先折行，折到 maxLines 行还放不下才缩字号，最小 minPx；返回字号和每行 */
+  function layoutLines(s: string, px: number, minPx: number, maxW: number, maxLines: number, bold: boolean): { size: number; lines: string[] } {
+    let size = px
+    g.font = font(size, bold)
+    while (size > minPx && wrapBalanced(s, maxW).length > maxLines) g.font = font(--size, bold)
+    return { size, lines: wrapBalanced(s, maxW).slice(0, maxLines) }
   }
 
   /**
@@ -1515,14 +1524,12 @@ export function installVideoPage(): void {
     const mapW = s.width * TILE
     const mapH = s.height * TILE
     const ox = (VW - mapW) / 2
-    // 地图上方：标题、解说、双方（左右两栏）
+    // 地图上方：「<选手>的高光对局」、双方（左右两栏），再往下是这局的标题和解说（D-224，用户：放进双方和地图之间的空地，字放大）
     text("RTS Arena", VW / 2, 40, 20, C.accent, { bold: true, align: "center" })
-    text(s.kicker ?? `精彩对局 ${s.no}`, VW / 2, 80, 22, C.accent, { bold: true, align: "center" })
-    let y = fitLines(s.title, VW / 2, 124, 36, 22, SW, 2, C.text, { bold: true, align: "center" })
-    if (s.commentary) y = fitLines(s.commentary, VW / 2, y, 19, 14, SW, 2, C.muted, { align: "center" })
+    text(s.kicker ?? `精彩对局 ${s.no}`, VW / 2, 80, 24, C.accent, { bold: true, align: "center" })
     const seats = (s.seats as Any[]).slice(0, 2)
     const colW = SW / Math.max(1, seats.length)
-    const sy = y + 6
+    const sy = 100
     seats.forEach((st, k) => {
       const c = f.counts?.[k] ?? { army: 0, workers: 0, buildings: 0, score: 0, alive: true }
       const cx = SX + k * colW
@@ -1532,8 +1539,18 @@ export function installVideoPage(): void {
       if (c.alive) fitLines(`建筑 ${c.buildings}  分数 ${c.score}`, cx + 70, sy + 74, 18, 12, colW - 76, 1, C.muted)
     })
     const top = sy + 92
+    // 标题（最多两行）和解说（最多三行）：先排好算出高度，放在双方和地图之间的空地正中
+    const title = layoutLines(s.title, 40, 26, SW, 2, true)
+    const note = s.commentary ? layoutLines(s.commentary, 26, 18, SW, 3, false) : null
+    const blockH = title.lines.length * title.size * 1.25 + (note ? 14 + note.lines.length * note.size * 1.35 : 0)
     // 地图放在画面正中（D-182，用户要求）；上面的字太多放不下时才往下挪
-    const oy = Math.max((VH - mapH) / 2, top)
+    const oy = Math.max((VH - mapH) / 2, top + blockH + 30)
+    const y0 = top + (oy - top - blockH) / 2
+    title.lines.forEach((l, k) => text(l, VW / 2, y0 + title.size * 0.95 + k * title.size * 1.25, title.size, C.text, { bold: true, align: "center" }))
+    if (note) {
+      const n0 = y0 + title.lines.length * title.size * 1.25 + 14
+      note.lines.forEach((l, k) => text(l, VW / 2, n0 + note.size * 0.95 + k * note.size * 1.35, note.size, C.muted, { align: "center" }))
+    }
     drawField(s, f, ox, oy, i)
     if (f.final) {
       g.globalAlpha = 0.85
