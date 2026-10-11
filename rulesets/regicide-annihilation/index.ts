@@ -41,9 +41,9 @@ const ruleset: Ruleset = {
   types,
 
   setup(ctx) {
-    // D-210（第十轮试写：进攻不划算，只清野守家、从不推家的打法最优）：兵营 (9, 6) → (10, 7)，离主基地 7 格，出了主基地的射程，
-    // 给出门骚扰一个不用吃主基地炮火的目标（从兵营的东边、南边打挨不到，西边、北边还挨得到）
-    annihilationSetup(ctx, types, { mineAmount: MINE_AMOUNT, barracks: { x: 10, y: 7 } })
+    // D-214（用户：兵营放到基地后面，加大兵营被拆的难度）：兵营放在主基地正西边、隔一格（对手主要从东边来），
+    // 要拆它得先绕过主基地、顶着主基地的炮（D-210 曾挪到 (10, 7)、主基地射程外，给骚扰一个目标）
+    annihilationSetup(ctx, types, { mineAmount: MINE_AMOUNT, barracks: { x: 0, y: 3 } })
     spawnLords(ctx, ANNIHILATION_W, ANNIHILATION_H, types)
     // 野怪营地（D-189）：内圈、外圈各一对，都在离两家主基地一样远的斜线上
     // D-193（用户）：赏金 150，死了的野怪每 900 tick 定时补满（拓荒是 100、营地清空后才刷新）

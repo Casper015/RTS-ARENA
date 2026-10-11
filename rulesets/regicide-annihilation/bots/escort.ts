@@ -18,9 +18,6 @@ let lordHome: Pos | null = null
 /** 正在清的营地（"x,y"）和开始去清它的 tick */
 let farmCamp = ""
 let farmSince = 0
-/** 对方兵营的位置（和自己兵营中心对称）、是不是已经拆掉了（D-212） */
-let enemyBarracksSpot: Pos | null = null
-let enemyBarracksDead = false
 
 const isCombat = (e: Entity) => e.type === "soldier" || e.type === "archer"
 
@@ -247,13 +244,8 @@ function mainTick(view: View, cmd: Commands): void {
     return
   }
 
-  // D-212：先拆对方的兵营（D-210 起在对方主基地射程外，拆它不吃炮），没看见就去它的位置；拆掉了再去拆主基地
-  if (barracks) enemyBarracksSpot ??= { x: game.width - barracks.x - barracks.w, y: game.height - barracks.y - barracks.h }
-  for (const ev of view.events) if (ev.kind === "died" && ev.type === "barracks" && ev.owner >= 0 && ev.owner !== view.me) enemyBarracksDead = true
-  const seenBarracks = enemyBuildings.find((e) => e.type === "barracks")
-  if (!seenBarracks && enemyBarracksSpot && army.some((u) => dist(u, enemyBarracksSpot!) <= 3)) enemyBarracksDead = true
-  const goal = seenBarracks ?? enemyBuildings.find((e) => e.type === "base")
-  const march = !enemyBarracksDead && enemyBarracksSpot ? enemyBarracksSpot : enemyBaseCenter
+  // D-214：兵营在对方主基地背后，拆它也要顶着主基地的炮：直接打主基地（拆掉就赢），看不见主基地时才打兵营
+  const goal = enemyBuildings.find((e) => e.type === "base") ?? enemyBuildings.find((e) => e.type === "barracks")
   const sendHome = home.length >= REINFORCE_AT || out.length === 0
   for (const u of army) {
     if (out.indexOf(u) < 0 && !sendHome) {
@@ -263,7 +255,7 @@ function mainTick(view: View, cmd: Commands): void {
     const fighters = enemyUnits.filter((e) => dist(e, u) <= 8 || (e.type === "lord" && dist(e, u) <= 10))
     if (fighters.length > 0) attack(cmd, u, pickTarget(u, fighters)!)
     else if (goal && dist(u, goal) <= 12) attack(cmd, u, goal)
-    else attackMove(cmd, u, march)
+    else attackMove(cmd, u, enemyBaseCenter)
   }
 }
 
