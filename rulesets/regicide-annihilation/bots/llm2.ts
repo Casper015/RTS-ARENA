@@ -1,7 +1,8 @@
-// 大模型试写（Sonnet 测试员第八、九轮各 60 分钟写的 v8，困难陪练）：一整团兵带着领主轮流清野、抢宝箱，记着看到的敌兵、明显打不过才退回家门口；兵够 22 个（或者 16 个且击杀价值领先 600）先在对方家外聚齐再推。
+// 大模型试写（Sonnet 测试员第八、九轮各 60 分钟写的 v8，困难陪练）：一整团兵带着领主轮流清野，记着看到的敌兵、明显打不过才退回家门口；兵够 22 个（或者 16 个且击杀价值领先 600）先在对方家外聚齐再推。
 // 外部大模型试写的 bot（2026-10-10，D-207 收录第八轮的 v4，D-208 换成第九轮的 v8）：子代理只读了 PROMPT.md、看不到平台源码和参考 bot 的源码。
 // v8 在 v4 上改了座位镜像（v4 坐右下角时弱很多，同版本互打左上角赢 62%～65%）、眩晕中的敌兵不算战力、更敢打；
-// 当时对 baseline、assassin、llm 各 20 局全胜，escort、turtle 19-1，对 v4 共 88-52。原样收录，只改了开头的说明。
+// 当时对 baseline、assassin、llm 各 20 局全胜，escort、turtle 19-1，对 v4 共 88-52。原样收录，只改了开头的说明；
+// D-209 规则包删了中央宝箱，去掉了抢宝箱那一支任务（下面第 3 条）。
 //
 // 打法：
 // 1. 经济：10 个工人采家门口的矿（每矿最多 4 人），家门口矿快采完（<40）后改去离我家近、不贴着发怒营地的中间矿
@@ -9,8 +10,7 @@
 // 2. 兵不单独行动：兵凑到 6 个就带着领主出门清最近的野怪营地：先在营地外 4～5 格聚齐（前面的兵等后面的），
 //    再一起 attackMove(neutral) 进营地；一个营地开打后不打完不换事。后造出的兵 4 个一批去和领主会合。
 //    领主站在团里靠家的一侧；离活着的营地 3 格内会挪开；被野怪咬或敌人贴脸会躲开并叫兵回头。
-// 3. 宝箱（每方每轮最多直接捡一个）：刷新前 150 tick 全团到正中，刷新前 45 tick 让离两个格子最近的两个兵 move 上去站着，
-//    其余的守在旁边；站着的第一个直接捡，另一个格子要等我方的兵走开才刷出宝箱，刷出来全团一起打。
+// 3. （原来是抢宝箱：刷新前全团到正中、派两个兵站上宝箱的格子。D-209 规则包删了宝箱，这一支任务去掉了）
 // 4. 对手兵力记忆（seen）：看到的敌兵记 80 tick，眩晕中的不算战力。折算后（带领主光环算 1.5 倍）对手比我强 40% 以上
 //    才退回集合点打（v6 是 15%，放宽后对 llm2 从 63% 升到 72%），弱到 110% 以下再出来；发现我方兵被击退眩晕过，150 tick 内对手放不了第二次，按 0.8 折算。
 // 5. 推家：兵 >= 22（或 >= 16 且击杀价值领先 600）才推，先在对方家 11～13 格外集合；看到对方领主、周围没有能动的守兵，
@@ -160,7 +160,6 @@ export function onTick(view: View, cmd: Commands): void {
   const neutrals = E.filter((e) => e.owner === -1 && game.types[e.type].kind !== "resource")
   const mines = E.filter((e) => game.types[e.type].kind === "resource" && (e.amount ?? 0) > 0)
   const camps = view.objectives.creepCamps
-  const tre = view.objectives.treasure
   let gold = view.resources.gold
 
   // ---------------- 记账：谁出门了、对手兵力记忆 ----------------
@@ -312,8 +311,6 @@ export function onTick(view: View, cmd: Commands): void {
   let goal: Pos = rally
   let stage: Pos | null = null
   let neutral = false
-  const nearChest = tre.chests.length > 0
-  const inTreasureWindow = tick >= tre.nextAt - 150 && tick < tre.nextAt + 100
   let m = "rally"
 
   // 选营地：活着的、走路近、没有对手兵力的
@@ -348,7 +345,7 @@ export function onTick(view: View, cmd: Commands): void {
   } else if (retreating) {
     m = "retreat"
     goal = rally
-  } else if (commitCamp >= 0 && camps[commitCamp].alive > 0 && n >= 3 && !(tick >= tre.nextAt - 50 && tick < tre.nextAt + 100)) {
+  } else if (commitCamp >= 0 && camps[commitCamp].alive > 0 && n >= 3) {
     m = "camp"
     stage = campStaging[commitCamp]
     const c = camps[commitCamp]
@@ -357,13 +354,6 @@ export function onTick(view: View, cmd: Commands): void {
       y: Math.round(c.cells.reduce((s, p) => s + p.y, 0) / c.cells.length),
     }
     neutral = true
-  } else if (n >= 4 && (inTreasureWindow || (nearChest && n >= 5))) {
-    m = "treasure"
-    goal = {
-      x: Math.round(tre.spots.reduce((s, p) => s + p.x, 0) / tre.spots.length),
-      y: Math.round(tre.spots.reduce((s, p) => s + p.y, 0) / tre.spots.length),
-    }
-    // 集合点：离正中 4 格、离我家走路最近的格子（先聚齐再进去）
   } else if (n >= PUSH_MIN || (n >= 16 && kvLead >= 600)) {
     m = "push"
     goal = enemyBase
@@ -390,9 +380,9 @@ export function onTick(view: View, cmd: Commands): void {
   }
 
   // ---------------- 出门/归队 ----------------
-  const outMission = m === "camp" || m === "treasure" || m === "push"
+  const outMission = m === "camp" || m === "push"
   if (outMission) {
-    if (body.length === 0 && reserveU.length >= (m === "treasure" ? 4 : CAMP_GO_MIN)) {
+    if (body.length === 0 && reserveU.length >= CAMP_GO_MIN) {
       for (const u of reserveU) deployed.add(u.id)
       body = reserveU
       reserveU = []
@@ -417,30 +407,7 @@ export function onTick(view: View, cmd: Commands): void {
 
   // ---------------- 指挥军队 ----------------
   const moveGroup = body.length > 0 ? body : reserveU
-  if (m === "treasure") {
-    const spots = tre.spots
-    const sitters = new Set<number>()
-    if (tick >= tre.nextAt - 45 && tick < tre.nextAt + 20) {
-      const free = moveGroup.slice()
-      for (const sp of spots) {
-        free.sort((a, b) => d2(a, sp) - d2(b, sp))
-        const u = free.find((x) => !sitters.has(x.id))
-        if (u) {
-          sitters.add(u.id)
-          cmd.move(u, sp.x, sp.y)
-        }
-      }
-    }
-    for (const u of moveGroup) {
-      if (sitters.has(u.id)) continue
-      if (tre.chests.length > 0) {
-        const ch = tre.chests.reduce((a, b) => (d2(u, a) <= d2(u, b) ? a : b))
-        cmd.attackMove(u, ch.x, ch.y, { neutral: true })
-      } else {
-        cmd.attackMove(u, goal.x, goal.y, { neutral: true })
-      }
-    }
-  } else if (m === "camp" || m === "push") {
+  if (m === "camp" || m === "push") {
     const sp = stage!
     if (!latched) {
       const near = moveGroup.filter((u) => d2(u, sp) <= 6).length

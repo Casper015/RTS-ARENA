@@ -1,4 +1,4 @@
-// 基准（均衡）：领主待在家里，身边 6 格内来了 3 个以上敌兵就放击退；兵战士弓手交替出，6～9 个兵时家里没事就去清最近的野怪营地（先在营地外聚齐，再集火血最少的那只），凑够 10 个兵出击，家里或领主附近来敌人全军回防；家里没事、兵够 10 个先去抢中央宝箱（快刷新时各派一个兵站到两个宝箱的格子上占位、其余的跟过去护着，刷出来了就在旁边聚齐再点名打），野怪咬过来附近的兵一起集火还手。
+// 基准（均衡）：领主待在家里，身边 6 格内来了 3 个以上敌兵就放击退；兵战士弓手交替出，6～9 个兵时家里没事就去清最近的野怪营地（先在营地外聚齐，再集火血最少的那只），凑够 10 个兵出击，家里或领主附近来敌人全军回防；野怪咬过来附近的兵一起集火还手。
 // 用来衡量新 bot 的标准对手。
 // - 领主：平时站在开局的角落，回防时跟着守军；6 格内有 3 个以上敌兵、击退冷却好了就放；
 //   7 格内出现敌方的兵就跑回开局的角落，等敌人走了再回去。出击时领主不跟。
@@ -218,43 +218,6 @@ function mainTick(view: View, cmd: Commands): void {
 
   if (mode === "defend") {
     // 清野（D-189）：兵够 6 个、家里没事时去打离家最近的野怪营地，一只 150 金赏金
-    // 中央宝箱（D-202）：兵够 10 个、家里没事就先去打离家近的那个宝箱，打掉一个得 300 金（D-206：两个 1×1）
-    const chest = army.length >= 10 ? [...view.objectives.treasure.chests].sort((a, b) => dist(a, base) - dist(b, base))[0] : undefined
-    // 宝箱快刷新了（D-205）：兵够 10 个、家里没事就先开到宝箱的位置上等着，刷新那一刻占着格子就直接捡到。
-    // D-206：宝箱是两个 1×1，各派离得最近的一个兵 move 站上去（attackMove 会被敌兵引走），其余的 attackMove 到旁边护着
-    const tr = view.objectives.treasure
-    if (!chest && army.length >= 10 && tr.nextAt - view.tick <= 150 && tr.spots.length) {
-      const rest = [...army]
-      for (const s of tr.spots) {
-        const u = rest.sort((a, b) => dist(a, s) - dist(b, s)).shift()
-        if (u) moveTo(cmd, u, s)
-      }
-      const guard = [...tr.spots].sort((a, b) => dist(a, base) - dist(b, base))[0]
-      for (const u of rest) attackMove(cmd, u, guard)
-      return
-    }
-    if (chest) {
-      // D-203：和清野一样先在宝箱外 6 步聚齐（八成到了，或者等了 250 tick），再一起点名打宝箱。
-      // 不用 attackMove 加 neutral：它会去追视野里的野怪，宝箱 5～7 格外就是营地，整个营地被惹出来；野怪咬过来由 retaliate 集火还手
-      const key = `宝箱${chest.x},${chest.y}`
-      if (farmCamp !== key) {
-        farmCamp = key
-        farmSince = view.tick
-      }
-      const spot = { x: chest.x, y: chest.y }
-      const stage = pointToward(spot, base, 6)
-      const near = army.some((u) => dist(u, spot) <= 4)
-      const ready = army.filter((u) => dist(u, stage) <= 3).length >= army.length * 0.8
-      if (!near && !ready && view.tick - farmSince < 250) for (const u of army) attackMove(cmd, u, stage)
-      else {
-        const box = view.entities.find((e) => e.type === "treasure" && e.x === chest.x && e.y === chest.y)
-        for (const u of army) {
-          if (box) attack(cmd, u, box)
-          else attackMove(cmd, u, spot)
-        }
-      }
-      return
-    }
     const camp = army.length >= 6 ? view.objectives.creepCamps.filter((c) => c.alive > 0).sort((a, b) => dist(a, base) - dist(b, base) || campSide(a, base) - campSide(b, base))[0] : undefined
     if (camp) {
       // D-194（第四轮试写：一个个跑过去会被野怪逐个吃掉）：先在营地外 5 步聚齐（八成到了，或者等了 250 tick），
@@ -318,7 +281,7 @@ function repel(view: View, cmd: Commands): void {
 
 /**
  * 野怪咬过来就还手（D-203 改成集火）：贴着我方兵（3 格内）的野怪里，每个兵挑自己 8 格内血最少的那只打，
- * 附近的兵就会一起打同一只（原来各打离自己最近的，打宝箱、清野时零零散散被野怪吃掉）
+ * 附近的兵就会一起打同一只（原来各打离自己最近的，清野时零零散散被野怪吃掉）
  */
 function retaliate(view: View, cmd: Commands): void {
   const creeps = view.entities.filter((e) => e.type === "creep")

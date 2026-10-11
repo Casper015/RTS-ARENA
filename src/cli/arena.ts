@@ -7,6 +7,8 @@ import { runMatch, type MatchBot } from "../core/match.ts"
 import { mixSeed } from "../core/rng.ts"
 import type { Replay, Ruleset } from "../core/types.ts"
 import { compileBot, createBot } from "../sandbox/quickjs.ts"
+import { botName, displayFile, makeBots } from "./play.ts"
+import { defaultJobs, runGames, type GameJob } from "./game-pool.ts"
 import { botTsconfig, buildDts, buildPrompt, lineups, mapSection, setupWorld, typecheck, typecheckRuleset } from "./docgen.ts"
 import { serveViewer } from "./serve.ts"
 import {
@@ -110,6 +112,7 @@ league 的选项：
 compare 的选项：
         --per-pair N  每个对手打几组（默认 10：5 个种子 × 换边）；一组是两个版本各一局，所以一共打 2 × 对手数 × N 局
         --seed、--out、--no-check 同 run；回放只存两个版本胜负不一样的组，--all-replays 每组都存（想自己统计别的数据时用），--no-replays 一局都不存
+        --jobs N      几个线程一起打（默认 CPU 逻辑核数减 2，最多 6；结果和一个线程按顺序打完全一样，--jobs 1 就是一局一局打）
 `
 
 /** HELP 里某个命令的那几行（命令行和续行、"xx 的选项"那一段）；没有这个命令返回 null */
@@ -160,7 +163,7 @@ const OPTIONS: Record<string, Record<string, boolean>> = {
   run: { seed: false, games: false, out: false, teams: false, "no-check": true, json: true, quiet: true, ticks: false, "no-replays": true },
   league: { seed: false, size: false, teams: false, partners: false, "per-table": false, "per-pair": false, tables: false, out: false, "no-check": true, json: true, focus: true, "no-replays": true, quiet: true },
   check: { ticks: false },
-  compare: { seed: false, "per-pair": false, out: false, "no-check": true, "no-replays": true, "all-replays": true },
+  compare: { seed: false, "per-pair": false, out: false, jobs: false, "no-check": true, "no-replays": true, "all-replays": true },
   view: { port: false, open: true },
   report: { player: false, every: false, full: true, at: false },
   map: { seed: false },
@@ -239,12 +242,6 @@ function writeDocs(rules: Ruleset, rulesDir: string, out: string): void {
   writeFileSync(join(out, "PROMPT.md"), buildPrompt(rules, rulesDir, dts))
 }
 
-/** 显示名：文件名去掉 .ts；init 建出来的都叫 bot.ts，改用所在目录名 */
-function botName(file: string): string {
-  const name = basename(file).replace(/\.ts$/, "")
-  return name === "bot" ? basename(dirname(resolve(file))) : name
-}
-
 /** 一组 bot 的显示名；不同文件同名时带上所在目录（如 koth/baseline 和 annihilation/baseline） */
 function botNames(files: string[]): Map<string, string> {
   const out = new Map<string, string>()
@@ -271,23 +268,6 @@ function stamp(): string {
   const d = new Date()
   const p = (n: number) => String(n).padStart(2, "0")
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
-}
-
-/** 回放和日志里显示的 bot 文件：平台自带的写成"平台自带 bots/xxx.ts"，不写一长串相对路径 */
-function displayFile(file: string): string {
-  const abs = resolve(file)
-  return abs.startsWith(PKG_ROOT + sep) ? `平台自带 ${relative(PKG_ROOT, abs).split(sep).join("/")}` : file
-}
-
-async function makeBots(rules: Ruleset, files: string[], seed: number, names: Map<string, string>): Promise<MatchBot[]> {
-  const bots: MatchBot[] = []
-  for (const [p, file] of files.entries()) {
-    const name = names.get(file) ?? botName(file)
-    const compiled = compileBot(readFileSync(file, "utf8"))
-    if ("error" in compiled) bots.push({ name, file: displayFile(file), runner: null, loadError: compiled.error })
-    else bots.push({ name, file: displayFile(file), runner: await createBot(compiled.code, mixSeed(seed, "bot", p), { fuel: rules.fuel }) })
-  }
-  return bots
 }
 
 function printResult(replay: Replay): void {
@@ -875,11 +855,14 @@ async function cmdCompare(rules: Ruleset, src: RulesetRef, a: string, b: string,
   const allReplays = opt["all-replays"] === true
   const total = foes.length * perPair * 2
   if (total > 5000) fail(`一共要打 ${total} 局，太多了；少带几个对手或者减小 --per-pair`)
+  // D-209（用户：compare 并行；试写反馈一轮里能做的实验有限）：默认开 CPU 逻辑核数一半的线程一起打
+  const threads = opt.jobs === undefined ? defaultJobs() : Number(opt.jobs)
+  if (!Number.isInteger(threads) || threads < 1 || threads > 32) fail("--jobs 要是 1～32 的整数")
   const runId = randomBytes(3).toString("hex")
   const startStamp = stamp()
   say(
     `对比：${la} → ${lb}，对手 ${foes.length} 个（${foes.map(label).join("、")}），每个对手 ${perPair} 组（${Math.ceil(perPair / 2)} 个种子 × 换边），` +
-      `一组是两个版本用同一个种子、坐同一个位置各打一局；共 ${total} 局，种子从 ${baseSeed} 起`,
+      `一组是两个版本用同一个种子、坐同一个位置各打一局；共 ${total} 局，种子从 ${baseSeed} 起；${Math.min(threads, total)} 个线程一起打（--jobs 调）`,
   )
   // D-195（第五轮试写：不写 --seed 时每次换一批种子，两次 compare 的同一个版本成绩差很多，误把噪声当成差距）
   if (typeof opt.seed !== "string") say(`（这次的种子是随机的。和别的 compare 结果对着比，要加 --seed ${baseSeed} 用同一批种子，不然同一个版本两次的成绩也会差很多）`)
@@ -891,54 +874,83 @@ async function cmdCompare(rules: Ruleset, src: RulesetRef, a: string, b: string,
   type Wdl = { w: number; d: number; l: number }
   const tally = (r: Wdl, s: number) => (s === 1 ? r.w++ : s === 0 ? r.l++ : r.d++)
   const wdl = (r: Wdl) => `${r.w}-${r.d}-${r.l}`
-  const rows: { name: string; a: Wdl; b: Wdl; better: number; worse: number }[] = []
-  const diffs: number[] = []
-  const saved: { foe: string; seed: number; seat: number; sa: number; sb: number; files: string[] }[] = []
+  const rows = foes.map((foe) => ({ name: label(foe), a: { w: 0, d: 0, l: 0 } as Wdl, b: { w: 0, d: 0, l: 0 } as Wdl, better: 0, worse: 0, done: 0 }))
+  /** 每组版本 B 减版本 A 的得分，按对手、组的顺序 */
+  const diffs: number[] = new Array(foes.length * perPair).fill(0)
+  const saved: { k: number; g: number; foe: string; seed: number; seat: number; sa: number; sb: number; files: string[] }[] = []
   const outcome = (s: number) => (s === 1 ? "赢" : s === 0 ? "输" : "平")
-  let index = 0
-  for (const [k, foe] of foes.entries()) {
-    const row = { name: label(foe), a: { w: 0, d: 0, l: 0 }, b: { w: 0, d: 0, l: 0 }, better: 0, worse: 0 }
-    const t0 = performance.now()
+  // 每组两局（两个版本各一局），所有局一起分给几个线程打；完成的先后不定，同一组两局都打完了再算
+  type CmpJob = GameJob & { k: number; g: number; v: number }
+  const jobs: CmpJob[] = []
+  for (const [k, foe] of foes.entries())
     for (let g = 0; g < perPair; g++) {
       const seed = baseSeed + k * 10000 + Math.floor(g / 2) * 100
       // 偶数组版本坐 P0，奇数组换边
       const seat = g % 2
-      const orderOf = (v: string) => (seat === 0 ? [v, foe] : [foe, v])
-      const ra = (await playAndSave(rules, orderOf(fa), names, seed, undefined, null, ++index)).replay
-      const rb = (await playAndSave(rules, orderOf(fb), names, seed, undefined, null, ++index)).replay
+      for (const [v, f] of [fa, fb].entries()) jobs.push({ id: jobs.length + 1, order: seat === 0 ? [f, foe] : [foe, f], seed, k, g, v })
+    }
+  const half = new Map<number, Replay>()
+  const groups = foes.length * perPair
+  let groupsDone = 0
+  let printed = 0
+  const t0 = performance.now()
+  const secs = () => ((performance.now() - t0) / 1000).toFixed(0)
+  try {
+    await runGames(rules, src, names, jobs, threads, (job, replay) => {
+      for (const w of checkLimits(rules, replay)) warn(w)
+      const { k, g, v, seed } = job as CmpJob
+      const key = k * perPair + g
+      const mate = half.get(key)
+      if (!mate) {
+        half.set(key, replay)
+        return
+      }
+      half.delete(key)
+      const [ra, rb] = v === 0 ? [replay, mate] : [mate, replay]
+      const seat = g % 2
+      const row = rows[k]
       const sa = scoreOf(ra, seat)
       const sb = scoreOf(rb, seat)
       tally(row.a, sa)
       tally(row.b, sb)
-      diffs.push(sb - sa)
+      diffs[key] = sb - sa
       if (sb > sa) row.better++
       if (sb < sa) row.worse++
-      // 进度：一个对手要打好几分钟，每 5 组报一次（D-195）
-      if ((g + 1) % 5 === 0 && g + 1 < perPair) say(`  对 ${row.name}：已打 ${g + 1}/${perPair} 组（${la} ${wdl(row.a)}，${lb} ${wdl(row.b)}）`)
+      row.done++
+      groupsDone++
       // --all-replays（D-194，试写反馈：只存胜负不同的组，没法汇总塔这类全局统计）：每组都存
       if ((sa !== sb || allReplays) && !noReplays) {
+        const foe = foes[k]
+        const orderOf = (f: string) => (seat === 0 ? [f, foe] : [foe, f])
         const stem = join(outDir, `${rules.id}-${startStamp}-${runId}-cmp-s${seed}-P${seat}-${safeName(row.name)}`)
         const fileA = `${stem}-${safeName(la)}.json`
         const fileB = `${stem}-${safeName(lb)}.json`
-        saveGame(ra, orderOf(fa), names, fileA, index - 1)
-        saveGame(rb, orderOf(fb), names, fileB, index)
-        saved.push({ foe: row.name, seed, seat, sa, sb, files: [fileA, fileB] })
+        saveGame(ra, orderOf(fa), names, fileA, key * 2 + 1)
+        saveGame(rb, orderOf(fb), names, fileB, key * 2 + 2)
+        saved.push({ k, g, foe: row.name, seed, seat, sa, sb, files: [fileA, fileB] })
       }
-    }
-    rows.push(row)
-    const same = perPair - row.better - row.worse
-    say(
-      `对 ${row.name}（${perPair} 组）：${la} ${wdl(row.a)}，${lb} ${wdl(row.b)}；` +
-        (same === perPair ? "每组胜负都一样" : `胜负不同的 ${perPair - same} 组里 ${lb} 好 ${row.better}、${la} 好 ${row.worse}`) +
-        `  用时 ${((performance.now() - t0) / 1000).toFixed(0)} 秒`,
-    )
+      // 进度：每打完一成报一次（D-195：一个对手要打好几分钟）
+      if (groupsDone < groups && groupsDone % Math.max(1, Math.ceil(groups / 10)) === 0) say(`  已打 ${groupsDone}/${groups} 组（${secs()} 秒）`)
+      // 对手按参赛顺序报：前面的都打完了才报
+      while (printed < rows.length && rows[printed].done === perPair) {
+        const r = rows[printed++]
+        const same = perPair - r.better - r.worse
+        say(
+          `对 ${r.name}（${perPair} 组）：${la} ${wdl(r.a)}，${lb} ${wdl(r.b)}；` +
+            (same === perPair ? "每组胜负都一样" : `胜负不同的 ${perPair - same} 组里 ${lb} 好 ${r.better}、${la} 好 ${r.worse}`),
+        )
+      }
+    })
+  } catch (e) {
+    fail((e as Error).message)
   }
+  say(`全部打完，用时 ${secs()} 秒`)
+  saved.sort((x, y) => x.k - y.k || x.g - y.g)
   if (jsonMode) return
   // ---------- 汇总 ----------
   const sum = (key: "a" | "b") => rows.reduce((r, x) => ({ w: r.w + x[key].w, d: r.d + x[key].d, l: r.l + x[key].l }), { w: 0, d: 0, l: 0 })
   const ta = sum("a")
   const tb = sum("b")
-  const groups = diffs.length
   const rateOf = (r: Wdl) => (r.w + r.d / 2) / groups
   const mean = diffs.reduce((x, y) => x + y, 0) / groups
   const sd = Math.sqrt(diffs.reduce((x, y) => x + (y - mean) ** 2, 0) / Math.max(1, groups - 1))

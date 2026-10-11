@@ -139,6 +139,12 @@ test("命令行：--no-replays 不存回放和日志；compare 两个版本按�
     // 每个结果不一样的组存两局（两个版本各一局）
     assert.equal(saved.length, 2 * (better + worse))
     assert.ok(saved.every((f) => f.includes("-cmp-s")))
+    // D-209：几个线程一起打（--jobs），对比表和一局一局打的完全一样
+    const table = (s: string) => s.slice(s.indexOf("## 对比"), s.indexOf("得分率（"))
+    const serial = sh(["compare", "koth", "baseline", "hold", "boom", "idle", "--per-pair", "4", "--seed", "9", "--no-check", "--no-replays", "--jobs", "1"])
+    const parallel = sh(["compare", "koth", "baseline", "hold", "boom", "idle", "--per-pair", "4", "--seed", "9", "--no-check", "--no-replays", "--jobs", "3"])
+    assert.match(parallel, /3 个线程一起打/)
+    assert.equal(table(parallel), table(serial))
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

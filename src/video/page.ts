@@ -1250,7 +1250,7 @@ export function installVideoPage(): void {
       g.globalAlpha = 1
       text(`+${amount}`, px + TILE * 0.9, py - TILE * (0.8 + fr * 1.4), 15, `rgba(110,227,110,${a})`, { bold: true, align: "left" })
     }
-    // 规则包的画面特效（D-205，比如捡到宝箱）：两圈光往外扩、中间一团亮光、八道放射线，字往上飘
+    // 规则包的画面特效（D-205，比如击退的冲击波）：两圈光往外扩、中间一团亮光、八道放射线，字往上飘
     for (const r of (f.ruleFx ?? []) as NonNullable<ReplayFrame["ruleFx"]>) {
       const fr = r.age / 24
       const a = 1 - fr

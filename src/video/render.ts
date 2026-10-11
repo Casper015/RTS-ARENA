@@ -519,7 +519,7 @@ function replayScene(
   // 特效（D-190）：最近放的技能（释放者、目标）、最近的回血、每个实体放技能和出现的 tick（算冷却环）、最近一次回血的 tick
   let casts: { x: number; y: number; targets: { x: number; y: number }[]; frame: number }[] = []
   let heals: { x: number; y: number; amount: number; frame: number }[] = []
-  // 规则包放的画面特效（D-205，比如捡到宝箱）
+  // 规则包放的画面特效（D-205，比如击退的冲击波）
   let ruleFxs: { x: number; y: number; w: number; h: number; text?: string; color?: string; radius?: number; frame: number }[] = []
   let castAt = new Map<string, number>()
   let bornAt = new Map<number, number>()

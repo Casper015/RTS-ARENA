@@ -294,7 +294,7 @@ export class Renderer {
       this.healFx.push({ id: d.heals[i], amount: d.heals[i + 1], tick: t })
       this.float(`+${d.heals[i + 1]}`, d.heals[i], t, 0x6ee36e, 10)
     }
-    // 规则包的画面特效（D-205，比如捡到宝箱）：区域中心爆开一圈光，飘字
+    // 规则包的画面特效（D-205，比如击退的冲击波）：区域中心爆开一圈光，飘字
     for (const fx of d.fx) {
       const color = fx.color && /^#[0-9a-fA-F]{6}$/.test(fx.color) ? cssColor(fx.color) : 0xf2c14e
       this.ruleFx.push({ x: fx.x, y: fx.y, w: fx.w, h: fx.h, color, radius: fx.radius ?? 2.6, tick: t })
