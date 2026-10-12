@@ -155,7 +155,7 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
   let g = canvas.getContext("2d")!
   /** 输出画布的画笔（横屏时就是 g） */
   let outG = g
-  /** 竖屏（D-179）：逻辑尺寸 720×1280，场景先按横屏画到 landCanvas 再拼进来 */
+  /** 竖屏（D-179）：逻辑尺寸 720×1280，每种场景都按竖屏单独排版（片尾 D-239 起也是） */
   const VW = 720
   const VH = 1280
   let VERT = false
@@ -168,8 +168,6 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
   const SW = VW - 2 * SX
   /** 地图上的字（规则包标记、特效飘字）：竖屏的格子小，字放大一些 */
   const fxPx = (px: number) => (VERT ? Math.round(px * 1.4) : px)
-  let landCanvas: OffscreenCanvas | null = null
-  let landG: OffscreenCanvasRenderingContext2D | null = null
   type Any = Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
   const w = globalThis as unknown as Any
   let scene: Any | null = null
@@ -849,20 +847,6 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     g.strokeStyle="rgba(205,178,122,.20)";g.beginPath();g.moveTo(SX,56);g.lineTo(VW-SX,56);g.stroke();g.restore()
   }
 
-  /**
-   * 竖屏版里排名和片尾的一帧（D-179）：横屏的画面缩到中间，上面是大标题，下面放冠军头像或总结（回放另有 vReplay）。
-   * 最上面一直留着平台署名
-   */
-  function vFrame(s: Any, f: Any, i: number): void {
-    const LY = 330
-    const LH = (SW * H) / W
-    drawBrand(VW/2-98,9,196)
-    if (s.kind === "brandClose") fitLines(s.outro ?? "比赛和视频都由平台自动生成", VW / 2, 200, 40, 24, SW, 2, C.text, { bold: true, align: "center" })
-    g.drawImage(landCanvas!, SX, LY, SW, LH)
-    const y = LY + LH + 70
-    if (s.kind === "brandClose") text("完整版看横屏长视频", VW / 2, y + 60, 30, C.muted, { align: "center" })
-    void i
-  }
   /** 地图（D-181 抽出来，横屏回放和竖屏回放共用）：地形（按输出像素画一次缓存）、规则包标记、单位和建筑（主基地画成头像）、攻击线、刚死的红圈；(ox, oy) 是左上角 */
   function drawField(s: Any, f: Any, ox: number, oy: number, i = 0): void {
     // 光环菱形、特效画在地图范围里，不压到旁边的面板上（D-190）
@@ -1493,7 +1477,61 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     s.credits.forEach((c: string, k: number) => text(c, W / 2, y + 258 + k * 30, 20, k === s.credits.length - 1 ? C.muted : C.text, { align: "center", alpha: ease((i - 25 - k * 5) / 20) }))
   }
 
-  /** 一个场景的画面（横屏的画法；竖屏时先画到 landCanvas 上再拼） */
+  /**
+   * 按标点（，；。！？、：）断行：整句一句一句往行里装，字号从 px 往下试到 minPx，行数尽量少（字号不小于 px 的 85% 时选行少的）；
+   * 断不开（一句就超宽）再按字折行（竖屏片尾的总结，D-239：按字折行会把「战局」拆到两行）
+   */
+  function clauseLines(s: string, px: number, minPx: number, maxW: number, maxLines: number, bold: boolean): { size: number; lines: string[] } {
+    const segs = s.split(/(?<=[，；。！？、：,;!?])/)
+    let best: { size: number; lines: string[] } | null = null
+    for (let size = px; size >= minPx; size--) {
+      g.font = font(size, bold)
+      const lines: string[] = []
+      for (const seg of segs) {
+        const last = lines.length ? lines[lines.length - 1] : null
+        if (last !== null && g.measureText(last + seg).width <= maxW) lines[lines.length - 1] = last + seg
+        else lines.push(seg)
+      }
+      if (lines.length > maxLines || lines.some((l) => g.measureText(l).width > maxW)) continue
+      if (!best || (lines.length < best.lines.length && size >= px * 0.85)) best = { size, lines }
+    }
+    return best ?? layoutLines(s, px, minPx, maxW, maxLines, bold)
+  }
+
+  /**
+   * 竖屏的片尾（D-239）：原来是把横屏片尾缩小贴进来、上面再写一遍总结、下面写「完整版看横屏长视频」，现在按竖屏重新排：
+   * 总结大字、平台标志、署名、两个仓库地址各一行、选手名单，整块竖直居中
+   */
+  function vBrandClose(s: Any, i: number): void {
+    const p = ease(i / 20)
+    const outro = s.outro ? clauseLines(s.outro, 40, 26, SW - 20, 3, true) : null
+    const logoW = 400, logoH = brandImage ? (logoW * brandImage.naturalHeight) / brandImage.naturalWidth : 100
+    const credits = s.credits as string[]
+    const repos = REPO.split(/\s+·\s+/)
+    const lh = Math.min(44, (VH - 520 - (outro ? outro.lines.length * outro.size * 1.4 + 60 : 0) - logoH) / Math.max(1, credits.length))
+    const total = (outro ? outro.lines.length * outro.size * 1.4 + 60 : 0) + logoH + 56 + 46 + repos.length * 38 + 50 + credits.length * lh
+    let y = Math.max(90, (VH - total) / 2)
+    if (outro) {
+      for (const l of outro.lines) {
+        y += outro.size * 1.4
+        text(l, VW / 2, y - outro.size * 0.3, outro.size, C.accent, { bold: true, align: "center", alpha: p })
+      }
+      y += 60
+    }
+    g.save(); g.globalAlpha = p; drawBrand(VW / 2 - logoW / 2, y, logoW); g.restore()
+    y += logoH + 56
+    text("本视频由 RTS Arena 联赛视频接口自动生成", VW / 2, y, 26, C.text, { align: "center", alpha: ease((i - 10) / 20) })
+    y += 46
+    repos.forEach((r, k) => text(r, VW / 2, y + k * 38, 24, C.accent, { align: "center", alpha: ease((i - 15) / 20) }))
+    y += repos.length * 38 + 22
+    text("选手", VW / 2, y, 20, C.muted, { bold: true, align: "center", alpha: ease((i - 20) / 20) })
+    credits.forEach((c, k) => {
+      const last = k === credits.length - 1
+      fitLines(c, VW / 2, y + (k + 1) * lh, last ? 20 : 26, 14, SW, 1, last ? C.muted : C.text, { align: "center", alpha: ease((i - 25 - k * 5) / 20) })
+    })
+  }
+
+  /** 一个场景的画面（横屏） */
   function drawScene(s: Any, f: Any | null, i: number, a: number): void {
     if (s.kind === "lineup") lineup(s, a, false)
     else if (s.kind === "rules") rules(s, a)
@@ -1516,17 +1554,7 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
       g.setTransform(1, 0, 0, 1, 0, 0)
       return
     }
-    // 竖屏：开场阵容、规则、选手和回放直接按竖屏画（D-183、D-221、D-230）；片尾先按横屏画到 landCanvas，再拼到竖屏画布上
-    const direct = s.kind === "lineup" || s.kind === "replay" || s.kind === "rules" || s.kind === "player" || s.kind === "standings"
-    if (!direct) {
-      g = landG!
-      g.setTransform(SCALE, 0, 0, SCALE, 0, 0)
-      g.save()
-      drawScene(s, f, i, a)
-      g.restore()
-      g.setTransform(1, 0, 0, 1, 0, 0)
-    }
-    g = outG
+    // 竖屏：每种场景都直接按竖屏画（D-183、D-221、D-230、D-237；片尾 D-239）
     g.setTransform(VS, 0, 0, VS, 0, 0)
     g.save()
     vBackground()
@@ -1535,11 +1563,10 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     else if (s.kind === "rules") vRules(s, a)
     else if (s.kind === "player") vPlayer(s, a)
     else if (s.kind === "standings") vStandings(s, a)
-    else vFrame(s, f ?? {}, i)
+    else if (s.kind === "brandClose") vBrandClose(s, a)
     g.restore()
     fade(i, s.frames)
     g.setTransform(1, 0, 0, 1, 0, 0)
-    g = landG!
   }
 
   // ---------- 和 Node 那边的接口 ----------
@@ -1549,20 +1576,11 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     outG = canvas.getContext("2d")!
     terrainLayer = null
     images.forEach((im) => (im.bust = null))
-    // 竖屏（高比宽大，D-179）：场景按横屏画在 landCanvas 上，再拼进竖屏画布
+    // 竖屏：高比宽大（D-179）
     VERT = height > width
-    if (VERT) {
-      VS = width / VW
-      SCALE = width / W
-      landCanvas = new OffscreenCanvas(width, Math.round((width * H) / W))
-      landG = landCanvas.getContext("2d")!
-      g = landG
-    } else {
-      SCALE = width / W
-      landCanvas = null
-      landG = null
-      g = outG
-    }
+    VS = width / VW
+    SCALE = width / W
+    g = outG
     return true
   }
   w.__init = (opts: { fps: number; bitrate: number }) => {
