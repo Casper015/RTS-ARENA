@@ -3,8 +3,11 @@ import type { Replay } from "../core/types.ts"
 
 export interface BattleCamera { x: number; y: number; zoom: number }
 
-/** Precompute once so scrubbing, preview stills and sequential export use exactly the same camera. */
-export function portraitCameraTrack(replay: Replay, ticks: number[], fps: number, combat?: boolean[]): BattleCamera[] {
+/**
+ * Precompute once so scrubbing, preview stills and sequential export use exactly the same camera.
+ * 横屏、竖屏共用（竖屏 D-182 起，横屏 D-236）；combat[i] 为 false 的帧不放大（不是交战、或者这段交战死的单位不到 2 个）
+ */
+export function battleCameraTrack(replay: Replay, ticks: number[], fps: number, combat?: boolean[]): BattleCamera[] {
   const state: State = { tick: 0, ents: new Map(replay.initial.entities.map(e => [e.id, { ...e }])), players: replay.initial.players, markers: replay.initial.markers, status: replay.initial.status }
   let points: { x: number; y: number; frame: number }[] = []
   const center = { x: replay.map.width / 2, y: replay.map.height / 2 }

@@ -865,7 +865,8 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     const rs = VERT ? VS : SCALE
     if (!terrainLayer) {
       // A fixed, sufficiently detailed terrain cache survives smooth camera zoom without reallocating.
-      const rasterTile = VERT ? Math.min(Math.max(32, TILE), 4096 / (Math.max(s.width, s.height) * rs)) : TILE
+      // 横屏、竖屏交战时都会放大（D-236），按两倍格子大小（至少 32）存一份
+      const rasterTile = Math.min(Math.max(32, TILE * 2), 4096 / (Math.max(s.width, s.height) * rs))
       terrainLayer = new OffscreenCanvas(Math.ceil(s.width * rasterTile * rs), Math.ceil(s.height * rasterTile * rs))
       const t = terrainLayer.getContext("2d")!
       t.scale(rs, rs)
@@ -1224,6 +1225,19 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
       }
     }
   }
+  /** 小地图：地形、每个单位和建筑一个色块，金框是放大的画面拍到的范围 [左, 上, 右, 下]（格） */
+  function miniMap(s:Any,f:Any,x0:number,y0:number,mt:number,view:number[]):void {
+    if(terrainLayer)g.drawImage(terrainLayer,x0,y0,s.width*mt,s.height*mt)
+    const entities=f.ents??[]
+    for(let k=0;k<entities.length;k+=8) {
+      const [x,y,w,h,owner,ti]=entities.slice(k,k+6),type=s.types[ti]
+      if(type.kind==="resource")continue
+      g.fillStyle=owner>=0?(s.seats[owner]?.color??"#ccc"):"#ada48a"
+      g.fillRect(x0+x*mt,y0+y*mt,Math.max(2,w*mt),Math.max(2,h*mt))
+    }
+    const left=Math.max(0,view[0]),right=Math.min(s.width,view[2]),upper=Math.max(0,view[1]),lower=Math.min(s.height,view[3])
+    g.strokeStyle=C.accent;g.lineWidth=1.5;g.strokeRect(x0+left*mt,y0+upper*mt,(right-left)*mt,(lower-upper)*mt)
+  }
   function fieldFrame(x:number,y:number,width:number,height:number):void {
     g.save();g.strokeStyle="#4a625e";g.lineWidth=1;g.strokeRect(x-.5,y-.5,width+1,height+1)
     g.strokeStyle=C.accent;g.lineWidth=2;g.globalAlpha=.72
@@ -1237,9 +1251,26 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     fitLines(s.kicker??"精彩对局 "+s.no,190,24,12,10,W-220,1,C.accent,{bold:true})
     fitLines(s.title,190,49,23,16,W-220,1,C.text,{bold:true})
     if(s.commentary)fitLines(s.commentary,190,71,14,11,W-220,1,C.muted)
-    const mapW=s.width*TILE,mapH=s.height*TILE
+    const baseTile=TILE,mapW=s.width*TILE,mapH=s.height*TILE
     broadcastCard(MX-7,MY-7,mapW+14,mapH+14)
-    drawField(s,f,MX,MY,i);fieldFrame(MX,MY,mapW,mapH)
+    // 交战时放大主要战团（D-236，和竖屏同一条镜头轨迹）：右上角小地图标出拍到的范围
+    const camera=(!f.final&&f.camera)||{x:s.width/2,y:s.height/2,zoom:1}
+    TILE=baseTile*camera.zoom
+    const viewW=mapW/TILE,viewH=mapH/TILE
+    const cx=viewW>=s.width?s.width/2:Math.max(viewW/2,Math.min(s.width-viewW/2,camera.x))
+    const cy=viewH>=s.height?s.height/2:Math.max(viewH/2,Math.min(s.height-viewH/2,camera.y))
+    g.save();g.beginPath();g.rect(MX,MY,mapW,mapH);g.clip()
+    drawField(s,f,MX+mapW/2-cx*TILE,MY+mapH/2-cy*TILE,i)
+    g.restore()
+    TILE=baseTile
+    if(camera.zoom>1.02) {
+      const iw=Math.min(190,mapW*.24),mt=iw/s.width,ih=s.height*mt,ix=MX+mapW-iw-10,iy=MY+10
+      g.save();g.globalAlpha=Math.min(1,(camera.zoom-1)/.4)
+      roundRect(ix-5,iy-5,iw+10,ih+10,6,"rgba(11,18,25,.86)",C.line)
+      miniMap(s,f,ix,iy,mt,[cx-viewW/2,cy-viewH/2,cx+viewW/2,cy+viewH/2])
+      g.restore()
+    }
+    fieldFrame(MX,MY,mapW,mapH)
     const x0=MX+mapW+24,pw=W-x0-24,bottom=Math.max(MY+mapH,H-68)
     const ch=Math.max(40,Math.min(112,(bottom-MY-126)/Math.max(1,s.seats.length)-10))
     let y=MY
@@ -1262,7 +1293,7 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     const by=MY+mapH+23
     roundRect(MX,by,mapW,5,3,"#35464a")
     roundRect(MX,by,Math.max(5,mapW*f.progress),5,3,C.accent)
-    const mode=f.final?"对局结束":f.pace==="quiet"?"全图 · 快进 "+f.speed+"x":"交战 · "+f.speed+"x"
+    const mode=f.final?"对局结束":f.pace==="quiet"?"全图 · 快进 "+f.speed+"x":"交战 · "+f.speed+"x"+(camera.zoom>1.15?" · 主战场 "+camera.zoom.toFixed(1)+"×":"")
     text(mode,MX,by-8,12,C.accent,{bold:true})
     text("第 "+f.t+" tick",MX+mapW,by-8,12,C.muted,{align:"right",mono:true})
     if(f.final) {
@@ -1321,17 +1352,7 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     const cardH=Math.max(190,mh+57)
     broadcastCard(SX,my,panelW,cardH)
     text("全局位置",SX+14,my+25,14,C.muted,{bold:true})
-    if(terrainLayer)g.drawImage(terrainLayer,mapX,mapY,mw,mh)
-    const entities=f.ents??[]
-    for(let k=0;k<entities.length;k+=8) {
-      const [x,y,w,h,owner,ti]=entities.slice(k,k+6),type=s.types[ti]
-      if(type.kind==="resource")continue
-      g.fillStyle=owner>=0?(s.seats[owner]?.color??"#ccc"):"#ada48a"
-      g.fillRect(mapX+x*mt,mapY+y*mt,Math.max(2,w*mt),Math.max(2,h*mt))
-    }
-    const left=Math.max(0,cx-viewW/2),right=Math.min(s.width,cx+viewW/2)
-    const upper=Math.max(0,cy-viewTilesH/2),lower=Math.min(s.height,cy+viewTilesH/2)
-    g.strokeStyle=C.accent;g.lineWidth=1.5;g.strokeRect(mapX+left*mt,mapY+upper*mt,(right-left)*mt,(lower-upper)*mt)
+    miniMap(s,f,mapX,mapY,mt,[cx-viewW/2,cy-viewTilesH/2,cx+viewW/2,cy+viewTilesH/2])
     const tx=SX+panelW+14,tw=SW-panelW-14
     broadcastCard(tx,my,tw,cardH)
     text("战况速递",tx+16,my+25,14,C.muted,{bold:true})

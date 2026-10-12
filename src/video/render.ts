@@ -10,7 +10,7 @@ import { checkScript, codeFacts, contestantNames, highlightPlayerWarnings, playe
 import { installVideoPage, type ReplayFrame, type SceneData } from "./page.ts"
 import { createBattleArt, type BattleAttack } from "./battle-art.ts"
 import { faceToward, farmWorkers, homeFacing, legacySplashEffects, trainingQueue, workerPose } from "./visual-state.ts"
-import { portraitCameraTrack } from "./battle-camera.ts"
+import { battleCameraTrack } from "./battle-camera.ts"
 import { excitement, gameFacts } from "../cli/highlights.ts"
 import { fighterTest, groupBattles, isRout } from "../cli/battles.ts"
 import { importRuleset, listRulesets } from "../cli/catalog.ts"
@@ -399,16 +399,16 @@ export type PaceMode = "fight" | "quiet"
  * BATTLE_TAIL tick，挨着的合并；小冲突和大战重叠的部分算大战
  */
 /** 回放里每个单位、建筑的死亡（不算资源和规则包移除的），和战报「战斗」一节同一套 */
-function deathsOf(replay: Replay): { t: number; x: number; y: number; owner: number; fighter: boolean }[] {
+function deathsOf(replay: Replay): { t: number; x: number; y: number; owner: number; fighter: boolean; unit: boolean }[] {
   const s = new ReplayModel(replay).initialState()
   const fighter = fighterTest(replay.types)
-  const deaths: { t: number; x: number; y: number; owner: number; fighter: boolean }[] = []
+  const deaths: { t: number; x: number; y: number; owner: number; fighter: boolean; unit: boolean }[] = []
   for (const f of replay.frames) {
     const removed = new Set(f.removed ?? [])
     for (const id of f.die ?? []) {
       const e = s.ents.get(id)
       if (!e || removed.has(id) || replay.types[e.type]?.kind === "resource") continue
-      deaths.push({ t: f.t, x: e.x, y: e.y, owner: e.owner, fighter: fighter(e.type) })
+      deaths.push({ t: f.t, x: e.x, y: e.y, owner: e.owner, fighter: fighter(e.type), unit: replay.types[e.type]?.kind === "unit" })
     }
     applyFrame(s, f)
   }
@@ -439,6 +439,25 @@ export function fightWindows(replay: Replay): { battles: [number, number][]; ski
  * （1 秒 = FIGHT_SPEED × 规则包的 tickRate 个 tick），没动静的时间快进，加起来最多 QUIET_SECONDS 秒、至少 QUIET_MIN_SPEED 倍速。
  * 返回一共放多少帧
  */
+/**
+ * 哪些帧放大交战（横屏 D-236、竖屏 D-182）：交战段里死的单位（不算建筑）有 2 个以上才放大，
+ * 只死 0～1 个的那段照旧看全图（用户：如果死亡单位小于等于 1 则不进行缩放）
+ */
+export function zoomFrames(replay: Replay, pace: { mode: (i: number) => PaceMode; tickOf: (i: number) => number }, playFrames: number): boolean[] {
+  const died = deathsOf(replay).filter((d) => d.unit).map((d) => d.t)
+  const zoom = new Array<boolean>(playFrames).fill(false)
+  for (let a = 0; a < playFrames; ) {
+    let b = a
+    while (b < playFrames && pace.mode(b) === pace.mode(a)) b++
+    if (pace.mode(a) === "fight") {
+      const t0 = pace.tickOf(a), t1 = pace.tickOf(b - 1)
+      if (died.filter((t) => t >= t0 && t <= t1).length >= 2) zoom.fill(true, a, b)
+    }
+    a = b
+  }
+  return zoom
+}
+
 export function pacing(replay: Replay, fps: number): { playFrames: number; tickOf: (i: number) => number; mode: (i: number) => PaceMode; speed: (i: number) => number } {
   const T = Math.max(1, replay.result.tick)
   const rate = Math.max(1, replay.tickRate || 10)
@@ -527,7 +546,7 @@ export function replayScene(
   const model = new ReplayModel(replay)
   let state: State = model.initialState()
   const tickOf = (i: number) => (i >= playFrames ? T : pace.tickOf(i))
-  const portraitCameras = portraitCameraTrack(replay, Array.from({ length: playFrames }, (_, i) => tickOf(i)), fps, Array.from({ length: playFrames }, (_, i) => pace.mode(i) === "fight"))
+  const cameras = battleCameraTrack(replay, Array.from({ length: playFrames }, (_, i) => tickOf(i)), fps, zoomFrames(replay, pace, playFrames))
   const art = createBattleArt()
   // Canonical output-frame timestamps make effects deterministic when seeking or rendering previews.
   const displayedAt = new Int32Array(T + 1)
@@ -753,7 +772,7 @@ export function replayScene(
       poses,
       workers,
       production,
-      camera: portraitCameras[Math.min(i, playFrames - 1)],
+      camera: cameras[Math.min(i, playFrames - 1)],
       fallen: fallen.map(({ frame, ...d }) => ({ ...d, age: i - frame })),
       deaths: recent,
       counts,

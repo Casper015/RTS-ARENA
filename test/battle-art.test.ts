@@ -2,9 +2,9 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { EntSnap, Replay } from "../src/core/types.ts"
 import { createBattleArt } from "../src/video/battle-art.ts"
-import { replayScene } from "../src/video/render.ts"
+import { pacing, replayScene, zoomFrames } from "../src/video/render.ts"
 import { faceToward, farmWorkers, homeFacing, legacySplashEffects, trainingQueue, workerPose } from "../src/video/visual-state.ts"
-import { portraitCameraTrack } from "../src/video/battle-camera.ts"
+import { battleCameraTrack } from "../src/video/battle-camera.ts"
 
 function fixture(): Replay {
   const unit = (range: number) => ({ kind: "unit" as const, w: 1, h: 1, maxHp: 100, moveTicks: 4, look: { shape: "circle" as const }, attack: { damage: 10, range, cooldown: 8 } })
@@ -172,7 +172,7 @@ test("portrait camera follows the busiest battle smoothly, then returns to the o
   replay.initial.entities.push({id:31,type:"soldier",owner:0,x:50,y:34,hp:100,ord:"idle"},{id:32,type:"soldier",owner:1,x:51,y:34,hp:100,ord:"idle"})
   replay.frames=Array.from({length:120},(_,i)=>({t:i+1,...(i<40&&i%2===0?{shots:[1,2,1,2,1,2,1,2,31,32]}:{})}))
   const ticks=Array.from({length:360},(_,i)=>Math.floor(i/3))
-  const path=portraitCameraTrack(replay,ticks,30)
+  const path=battleCameraTrack(replay,ticks,30)
   assert.equal(path[0].zoom,1)
   assert.ok(path[110].zoom>2.6,"readable battle close-up")
   assert.ok(path[110].x<12&&path[110].y<12,"secondary skirmish does not pull camera to an empty midpoint")
@@ -182,7 +182,7 @@ test("portrait camera follows the busiest battle smoothly, then returns to the o
     assert.ok(Math.abs(path[i].zoom-path[i-1].zoom)<.15)
     assert.ok(path[i].x>=0&&path[i].x<=56&&path[i].y>=0&&path[i].y<=40)
   }
-  assert.deepEqual(portraitCameraTrack(replay,ticks,30),path,"reproducible camera track")
+  assert.deepEqual(battleCameraTrack(replay,ticks,30),path,"reproducible camera track")
 })
 
 test("quiet video segments show the exact complete map after a bounded return even with recent attacks", () => {
@@ -190,7 +190,7 @@ test("quiet video segments show the exact complete map after a bounded return ev
   replay.map={...replay.map,width:56,height:40,terrain:Array(40).fill(".".repeat(56))}
   replay.frames=Array.from({length:120},(_,i)=>({t:i+1,shots:[1,2]}))
   const ticks=Array.from({length:250},(_,i)=>Math.floor(i/3))
-  const path=portraitCameraTrack(replay,ticks,30,ticks.map((_,i)=>i<100))
+  const path=battleCameraTrack(replay,ticks,30,ticks.map((_,i)=>i<100))
   assert.ok(path[99].zoom>2.7)
   for(let i=122;i<path.length;i++)assert.deepEqual(path[i],{x:28,y:20,zoom:1},"no retained crop during quiet segments")
 })
@@ -257,4 +257,17 @@ test("击退拖尾只认真正的击退（D-235）：让路时一 tick 挪 3 格
   if (sc.frame!(i).t === 50) assert.ok(kf && kf[0] === 6 && kf[2] <= 9, JSON.stringify(kf))
   while (sc.frame!(i).t < 51) i++
   assert.equal(sc.frame!(i).knockFx, undefined)
+})
+
+test("交战缩放（D-236）：一段交战里死的单位不到 2 个就不放大，2 个以上才放大；横屏竖屏用同一条镜头轨迹", () => {
+  const one = fixture()
+  let pace = pacing(one, 30)
+  assert.ok(pace.mode(0) === "fight" || [...Array(pace.playFrames).keys()].some((i) => pace.mode(i) === "fight"))
+  assert.ok(!zoomFrames(one, pace, pace.playFrames).some(Boolean))
+  const two = fixture()
+  two.frames[9] = { ...two.frames[9], die: [2, 3], hp: [2, 0, 3, 0] }
+  pace = pacing(two, 30)
+  const zoom = zoomFrames(two, pace, pace.playFrames)
+  assert.ok(zoom.some(Boolean))
+  assert.ok(zoom.every((z, i) => !z || pace.mode(i) === "fight"))
 })
