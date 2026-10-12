@@ -255,7 +255,11 @@ test("精彩对局：落后又反超算逆转，主基地差点被拆算险胜�
   assert.equal(f.winnerBaseMin, 0.2)
   const names = ["甲", "乙"]
   const ex = excitement(f, { level: 1, text: "爆冷：……" }, (s) => names[s])
-  assert.match(ex.reasons.join("；"), /逆转：t\d+ 时 甲 的兵力和建筑只有 乙 的 20%/)
+  assert.match(ex.reasons.join("；"), /逆转：t\d+ 时 甲 的兵力只有 乙 的 20%/)
+  // 兵力只算兵（D-231）：主基地值多少钱都不影响
+  const costly = JSON.parse(JSON.stringify(replay)) as Replay
+  costly.types.base.cost = { gold: 5000 }
+  assert.ok(Math.abs(gameFacts(costly).materialLow!.ratio - 0.2) < 1e-9)
   assert.match(ex.reasons.join("；"), /险胜：甲 的主基地一度只剩 20% 血/)
   assert.ok(ex.score > 60 && ex.score <= 100, String(ex.score))
   // 两边都伤得重才算看点：一方被打光、另一方几乎没损失的不算

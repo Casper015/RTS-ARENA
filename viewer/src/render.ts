@@ -425,6 +425,7 @@ export class Renderer {
 
   /** 每个画面帧调用；now 是带小数的 tick */
   draw(now: number): void {
+    if (!this.replay || !this.state) return
     // 光环波纹、金环呼吸、冷却环发光按真实时间动（暂停时也在动）；放技能、回血的特效按 tick 走
     const wall = performance.now() / 1000
     const farms = farmWorkers(this.replay,this.state.ents)

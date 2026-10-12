@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import type { Replay } from "../src/core/types.ts"
+import type { EntSnap, Replay } from "../src/core/types.ts"
 import { createBattleArt } from "../src/video/battle-art.ts"
 import { replayScene } from "../src/video/render.ts"
 import { farmWorkers, legacySplashEffects, trainingQueue, workerPose } from "../src/video/visual-state.ts"
@@ -36,7 +36,7 @@ test("idle farmers use the ruleset assignment, excluding diagonals, unfinished/e
   r.types.farm={...r.types.base,w:2,h:2}
   const farm={id:100,type:"farm",owner:0,x:4,y:4,hp:300,ord:"idle"}
   const a={id:50,type:"worker",owner:0,x:3,y:4,hp:40,ord:"idle"},b={...a,id:51,y:5}
-  const entities=new Map([b,farm,a].map(e=>[e.id,e]))
+  const entities=new Map<number,EntSnap>([b,farm,a].map(e=>[e.id,e]))
   assert.deepEqual([...farmWorkers(r,entities).keys()],[50])
   const pose=workerPose(r,entities,a,1,false)!
   assert.equal(pose.job,"farm");assert.ok(pose.work!>=0)

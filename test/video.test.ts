@@ -7,7 +7,7 @@ import { basename, dirname, join, resolve } from "node:path"
 import { after, test } from "node:test"
 import { checkScript, codeFacts, contestantNames, factTags, gameScores, highlightPlayerWarnings, isReferenceBot, readSeries, resolveBotFile, scriptWarnings, videoBrief, type SeriesFile, type VideoScript } from "../src/video/brief.ts"
 import { findBrowser } from "../src/video/browser.ts"
-import { buildScenes, fightWindows, idleHighlightWarnings, pacing, relabelSeats, tidy, timelineOf } from "../src/video/render.ts"
+import { buildScenes, colorGap, contrastColors, fightWindows, idleHighlightWarnings, PALETTE, pacing, relabelSeats, tidy, timelineOf } from "../src/video/render.ts"
 import { analyzeLeague, baseTypeOf, fitWinModel, twoSides, winCurve } from "../src/video/analysis.ts"
 import { matchPortraits } from "../src/video/workspace.ts"
 import { crc32, deflateSync } from "node:zlib"
@@ -72,9 +72,9 @@ test("素材包：每个选手的文件名、成绩、代码指标，脚本模�
   )
   assert.ok(b.players.every((p) => p.code && p.code.lines > 10 && p.standing))
   const series = readSeries(seriesFile)
-  // 模板本身还没填，检查不过；没有开场大字了，每个选手挑好一局高光对局，highlights 里同一局待填标题和解说（D-221）
+  // 模板本身还没填，检查不过；开场大字待填（D-230 加回来），每个选手挑好一局高光对局，highlights 里同一局待填标题和解说（D-221）
   assert.ok(checkScript(b.scriptTemplate, series).some((e) => e.includes("待填")))
-  assert.equal((b.scriptTemplate as unknown as Record<string, unknown>).hook, undefined)
+  assert.match(b.scriptTemplate.hook?.text ?? "", /待填/)
   assert.ok(b.scriptTemplate.players.every((p) => typeof p.highlight === "number"))
   assert.deepEqual(new Set(b.scriptTemplate.highlights!.map((h) => h.index)), new Set(b.scriptTemplate.players.map((p) => p.highlight)))
   const bad = checkScript({ players: [{ name: "nobody", tagline: "x", intro: [] }], highlights: [{ index: 99 }] }, series)
@@ -169,8 +169,9 @@ test("脚本提醒：粗体字段里的「一」像破折号，常规字重的�
   assert.ok(w[0].startsWith("outro 是粗体") && w[1].startsWith("highlights[0].commentary 是粗体"))
   // 不再有标题页（D-177）：老脚本的 title、userText、theme 提醒删掉
   assert.ok(scriptWarnings({ title: "x", userText: "y", players: [] }).some((x) => /title、userText 不再使用/.test(x)))
-  // 开场阵容删掉了（D-221）：老脚本的 hook 提醒删掉
-  assert.ok(scriptWarnings({ hook: { text: "x" }, players: [] }).some((x) => /hook 不再使用/.test(x)))
+  // 开场阵容（D-230 加回来）：hook.text 是粗体；冷开场的 hook.index 不再使用（D-181）
+  assert.ok(scriptWarnings({ hook: { text: "唯一一个" }, players: [] }).some((x) => x.startsWith("hook.text 是粗体")))
+  assert.ok(scriptWarnings({ hook: { text: "x", index: 3 }, players: [] }).some((x) => /hook\.index 不再使用/.test(x)))
   assert.deepEqual(scriptWarnings(null), [])
   // 选手页：tagline 加 intro 超过 260 字太挤，少于 160 字页面显得空，都提醒（4～5 句、180～260 字；D-183 只减半时长、字数不变）
   const long = scriptWarnings({ players: [{ name: "a", tagline: "定位", intro: ["很长".repeat(70), "很长".repeat(70)] }] })
@@ -184,19 +185,25 @@ test("脚本提醒：粗体字段里的「一」像破折号，常规字重的�
   assert.match(other[0], /rules\[0\] 提到了别的规则包「拓荒」/)
 })
 
-test("场景编排（D-221、D-225）：规则介绍 → 每个参赛选手「介绍 → 他的高光对局」→ 片尾，横竖屏一样", () => {
+test("场景编排（D-221、D-225、D-230）：开场阵容 → 规则介绍 → 每个参赛选手「介绍 → 他的高光对局」→ 片尾，横竖屏一样", () => {
   const series = readSeries(seriesFile)
   assert.deepEqual(checkScript(script, series), [])
   const scenes = buildScenes(series, script, seriesFile, 10)
   const kinds = scenes.map((s) => s.data.kind)
-  // 没有开场阵容、标题卡（D-221，用户：砍掉开头的肖像排列，直接从规则开始放）；D-225 排名页、对战胜负页也删了，规则之后直接是选手
-  assert.deepEqual(kinds, ["rules", "player", "replay", "player", "replay", "brandClose"])
-  // 第一段从第一帧起就是完整画面（不从黑屏淡入），别的段不是
+  // 开场阵容（D-221 删掉、D-230 用户要求加回来）→ 规则 → 选手；没有标题卡；D-225 排名页、对战胜负页删了
+  assert.deepEqual(kinds, ["lineup", "rules", "player", "replay", "player", "replay", "brandClose"])
+  // 第一段（开场阵容）从第一帧起就是完整画面（不从黑屏淡入，也当封面），别的段不是
   assert.equal(scenes[0].data.first, true)
   assert.ok(scenes.slice(1).every((x) => !x.data.first))
+  const lineup = scenes[0].data as { frames: number; title: string; players: { name: string }[] }
+  assert.equal(lineup.frames, 25)
+  assert.equal(lineup.title, "2 位选手的夺点联赛，谁能夺冠？")
+  assert.equal(lineup.players.length, 2)
+  assert.equal((buildScenes(series, { ...script, hook: { text: "谁先占住正中？" } }, seriesFile, 10)[0].data as { title: string }).title, "谁先占住正中？")
+  assert.match(checkScript({ ...script, hook: { text: "长".repeat(31) } }, series).join("\n"), /hook\.text 最多 30 字/)
   // 规则页、选手页时长再砍一半、页内动画快一倍（D-221）：规则 1.5～3 秒，选手 1.15～3.25 秒
-  assert.equal((scenes[0].data as { speed?: number }).speed, 2)
-  assert.ok(scenes[0].data.frames >= 15 && scenes[0].data.frames <= 30, String(scenes[0].data.frames))
+  assert.equal((scenes[1].data as { speed?: number }).speed, 2)
+  assert.ok(scenes[1].data.frames >= 15 && scenes[1].data.frames <= 30, String(scenes[1].data.frames))
   const pages = scenes.filter((x) => x.data.kind === "player")
   for (const x of pages) assert.ok((x.data as { speed?: number }).speed === 2.6 && x.data.frames >= 11 && x.data.frames <= 33, String(x.data.frames))
   // 选手页按名次倒着出场：最后一名先上
@@ -206,7 +213,7 @@ test("场景编排（D-221、D-225）：规则介绍 → 每个参赛选手「�
   const close = scenes.at(-1)!.data as { credits: string[] }
   assert.deepEqual(close.credits.slice(0, 2), ["基准 · 平台自带", "rush"])
   // 规则介绍：没写 rules 就用规则包的一句话简介；配一局的开局地图（有控制点标记）和单位图例（带近战 / 射程）
-  const rules = scenes[0].data as { lines: string[]; ents: number[]; markers: { kind: string }[]; legend: { name: string; detail: string }[]; tickNote: string }
+  const rules = scenes[1].data as { lines: string[]; ents: number[]; markers: { kind: string }[]; legend: { name: string; detail: string }[]; tickNote: string }
   assert.match(rules.tickNote, /1 秒 = 10 tick，一局最多 \d+ tick/)
   assert.equal(rules.lines.length, 1)
   assert.ok(rules.ents.length > 0 && rules.markers.some((m) => m.kind === "zone"))
@@ -236,7 +243,13 @@ test("场景编排（D-221、D-225）：规则介绍 → 每个参赛选手「�
   assert.match(checkScript({ ...script, players: [{ ...script.players[0], highlight: 9999 }, script.players[1]] }, series).join("\n"), /players\[0\]\.highlight 要是联赛里的局号/)
   // 时间表：每段都有名字，首尾相接
   const tl = timelineOf(scenes, 10)
-  assert.equal(tl[0].label, "规则介绍")
+  assert.equal(tl[0].label, "开场阵容")
+  assert.equal(tl[1].label, "规则介绍")
+  const shown = contrastColors([2, 7], 7)
+  assert.equal(shown.get(7), PALETTE[7])
+  assert.ok(shown.get(2) !== PALETTE[2] && colorGap(shown.get(2)!, PALETTE[7]) >= 50, String(shown.get(2)))
+  // 本来就分得清的不换
+  assert.deepEqual([...contrastColors([0, 1], 0).values()], [PALETTE[0], PALETTE[1]])
   assert.ok(tl.every((x, k) => x.label && (k === 0 || x.from === tl[k - 1].to)))
   assert.ok(tl.some((x) => /^选手 基准$/.test(x.label)) && !tl.some((x) => /排名|对战胜负/.test(x.label)))
   // 回放场景每帧都能算出局面，最后一帧定格显示结果；往回要的帧从头重算，结果一样
@@ -441,11 +454,12 @@ test("video-init：视频目录里有说明、选手代码、战报、待填脚�
   assert.ok(existsSync(join(dir, "RULES.md")))
   // 说明里的例子只用占位，不出现真实的模型名、外号（免得诱导大模型去猜这场的选手是谁写的）
   assert.doesNotMatch(prompt, /DeepSeek|大肥鱼|GPT6\.1sol|Gemini/)
-  assert.match(prompt, /1\. \*\*规则介绍\*\*/)
+  assert.match(prompt, /1\. \*\*开场阵容\*\*/)
+  assert.match(prompt, /2\. \*\*规则介绍\*\*/)
   // 规则之后直接是选手（D-225 删了排名页、对战胜负页）
-  assert.match(prompt, /2\. \*\*每个参赛选手/)
+  assert.match(prompt, /3\. \*\*每个参赛选手/)
   assert.doesNotMatch(prompt, /\*\*联赛排名\*\*|\*\*对战胜负\*\*|counterNote/)
-  assert.doesNotMatch(prompt, /开场阵容（|hook\.text|标题卡看点/)
+  assert.doesNotMatch(prompt, /标题卡看点/)
   assert.match(prompt, /照这个目录里的 `RULES\.md` 写/)
   assert.match(prompt, /\| 看点 \|/)
   assert.match(prompt, /全联赛结束得最快的胜局（\d+ tick）/)
@@ -502,11 +516,11 @@ test("渲染：在视频目录里不写参数出预览图；本机有浏览器�
   assert.match(lint, /格式没问题/)
   const out = sh(["video", "--preview", "1,6"], dir)
   assert.match(out, /预览图/)
-  assert.match(out, /每段的时间（整段 [\d.]+ 秒）：\n\s+0\.0～[\d.]+\s+秒  规则介绍\n\s+[\d.]+～[\d.]+\s+秒  选手 \S+\n\s+[\d.]+～[\d.]+\s+秒  .+的高光对局 回放（第 \d+ 局）/)
+  assert.match(out, /每段的时间（整段 [\d.]+ 秒）：\n\s+0\.0～[\d.]+\s+秒  开场阵容\n\s+[\d.]+～[\d.]+\s+秒  规则介绍\n\s+[\d.]+～[\d.]+\s+秒  选手 \S+\n\s+[\d.]+～[\d.]+\s+秒  .+的高光对局 回放（第 \d+ 局）/)
   assert.ok(statSync(join(dir, "preview", "夺点联赛-6s.png")).size > 10_000)
   // 竖屏（D-179、D-183、D-221）：段落和横屏一样，规则、选手页和回放都按竖屏画，1080×1920
   const vert = sh(["video", "--vertical", "--preview", "1,5", "--out", "竖.mp4"], dir)
-  assert.match(vert, /0\.0～[\d.]+\s+秒  规则介绍\n\s+[\d.]+～[\d.]+\s+秒  选手 \S+\n\s+[\d.]+～[\d.]+\s+秒  .+的高光对局 回放（第 \d+ 局）/)
+  assert.match(vert, /0\.0～[\d.]+\s+秒  开场阵容\n\s+[\d.]+～[\d.]+\s+秒  规则介绍\n\s+[\d.]+～[\d.]+\s+秒  选手 \S+\n\s+[\d.]+～[\d.]+\s+秒  .+的高光对局 回放（第 \d+ 局）/)
   const vpng = readFileSync(join(dir, "preview", "竖-5s.png"))
   assert.deepEqual([vpng.readUInt32BE(16), vpng.readUInt32BE(20)], [1080, 1920])
   // 两张以上的预览拼一张总览

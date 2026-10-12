@@ -74,9 +74,10 @@ export function gameFacts(replay: Replay): GameFacts {
   const deaths: { t: number; x: number; y: number; owner: number; fighter: boolean }[] = []
   const samples: { t: number; mat: number[]; score: number[] }[] = []
   const sample = (t: number) => {
+    // 兵力只算兵（按造价）：建筑、工人不算（D-231，用户：这统计不要统计建筑，兵力也不要统计工人）
     const mat = sides.map(() => 0)
     for (const e of s.ents.values()) {
-      if (e.owner < 0 || e.owner >= n || kind(e.type) === "resource") continue
+      if (e.owner < 0 || e.owner >= n || kind(e.type) !== "unit" || replay.types[e.type]?.worker) continue
       mat[sides.indexOf(side(e.owner))] += costOf(replay, e.type)
     }
     const score = sides.map(() => 0)
@@ -185,7 +186,7 @@ export function excitement(f: GameFacts, upset: { level: number; text: string } 
         ? null
         : scoreBack >= matBack
           ? `逆转：t${f.scoreLow!.t} 时 ${W} 比分落后 ${Math.round(f.scoreLow!.mine)} : ${Math.round(f.scoreLow!.theirs)}`
-          : `逆转：t${f.materialLow!.t} 时 ${W} 的兵力和建筑只有 ${name(f.materialLow!.foe)} 的 ${Math.round(f.materialLow!.ratio * 100)}%`,
+          : `逆转：t${f.materialLow!.t} 时 ${W} 的兵力只有 ${name(f.materialLow!.foe)} 的 ${Math.round(f.materialLow!.ratio * 100)}%`,
   })
   parts.push({ v: 15 * (Math.min(f.leadChanges, 4) / 4), text: f.leadChanges >= 2 ? `优势换手 ${f.leadChanges} 次` : null })
   // 两边都伤得重：看损失少的那一方（各自为战时是损失第二多的一方）损失了自己造过的多少；一方被打光、另一方几乎没损失的是一边倒，不加分（D-164）
@@ -226,7 +227,7 @@ export function excitement(f: GameFacts, upset: { level: number; text: string } 
   if (!reasons.length) {
     score -= 10
     const soft = [
-      back <= 0 ? null : scoreBack >= matBack ? `t${f.scoreLow!.t} 时 ${W} 比分落后 ${Math.round(f.scoreLow!.mine)} : ${Math.round(f.scoreLow!.theirs)}` : `t${f.materialLow!.t} 时 ${W} 的兵力和建筑只有 ${name(f.materialLow!.foe)} 的 ${Math.round(f.materialLow!.ratio * 100)}%`,
+      back <= 0 ? null : scoreBack >= matBack ? `t${f.scoreLow!.t} 时 ${W} 比分落后 ${Math.round(f.scoreLow!.mine)} : ${Math.round(f.scoreLow!.theirs)}` : `t${f.materialLow!.t} 时 ${W} 的兵力只有 ${name(f.materialLow!.foe)} 的 ${Math.round(f.materialLow!.ratio * 100)}%`,
       f.leadChanges > 0 ? `优势换手 ${f.leadChanges} 次` : null,
       both > 0 ? hurtText : null,
       f.battles > 0 ? `${f.battles} 场大战（最大一场死了 ${f.biggestBattle} 个）` : null,
