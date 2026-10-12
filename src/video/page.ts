@@ -75,6 +75,18 @@ export type SceneData = (
     }
   /** 开场阵容（D-179，D-221 删掉、D-230 加回来）：全体参赛选手的立绘和一句大字，第一帧就是完整画面（也当封面） */
   | { kind: "lineup"; frames: number; title: string; sub: string; players: { name: string; color: string; portrait: string | null }[] }
+  /** 联赛排名（D-237）：联赛命令行那样的排行榜，每行后面接这个 bot 对每个对手的胜负（行、列都按名次排） */
+  | {
+      kind: "standings"
+      frames: number
+      speed?: number
+      title: string
+      sub: string
+      /** ref：平台自带的参考 bot（陪练），画灰一点 */
+      rows: { name: string; color: string; rank: number; record: string; rate: number; ref: boolean }[]
+      /** 行对列：text 是「胜-负」（有平局时「胜-平-负」），rate 是分出胜负的局里赢的比例；自己对自己、没打过是 null */
+      cells: ({ text: string; rate: number } | null)[][]
+    }
   | { kind: "brandClose"; frames: number; speed?: number; outro: string | null; credits: string[] }
 ) & { first?: boolean }
 
@@ -1366,6 +1378,102 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
 
   }
 
+  /** 对阵格子的底色：赢多输少偏绿、输多赢少偏红，越悬殊越深（D-223） */
+  const cellColor = (rate: number) => {
+    const t = rate - 0.5
+    return t >= 0 ? `rgba(94,224,138,${(0.1 + t * 1.1).toFixed(3)})` : `rgba(255,93,93,${(0.1 - t * 1.1).toFixed(3)})`
+  }
+  /** 一个对阵格子：底色 + 居中的胜负 */
+  function cell(c: Any, x: number, y: number, cw: number, ch: number, by: number, fs: number, a: number): void {
+    g.globalAlpha = a
+    roundRect(x + 2, y + 2, cw - 4, ch - 4, 6, c ? cellColor(c.rate) : "rgba(255,255,255,0.03)")
+    g.globalAlpha = 1
+    if (c) fitLines(c.text, x + cw / 2, by, fs, 8, cw - 6, 1, C.text, { bold: true, align: "center", alpha: a })
+    else text("—", x + cw / 2, by, fs, C.muted, { align: "center", alpha: a })
+  }
+
+  /**
+   * 联赛排名（D-237，片尾之前）：一行一个 bot（按名次），左边名次、名字、胜-平-负、得分率，右边是它对每个对手的胜负
+   * （列也按名次，列头是名字），和联赛命令行的排行榜、对阵表一样
+   */
+  function standings(s: Any, i: number): void {
+    background()
+    const p = ease(i / 10)
+    text(s.title, 60, 64, 34, C.text, { bold: true, alpha: p })
+    fitLines(s.sub, 60, 98, 16, 11, W - 120, 1, C.muted, { alpha: p })
+    const n = s.rows.length, left = 60, right = W - 60, top = 118
+    const ch = Math.min(56, (H - top - 36) / Math.max(1, n + 1))
+    const fs = Math.max(10, Math.min(20, Math.round(ch * 0.42)))
+    const xName = left + fs * 2.4, xRec = xName + 170, xRate = xRec + fs * 4.6, x0 = xRate + 124
+    const cw = (right - x0) / Math.max(1, n)
+    const cfs = Math.max(9, Math.min(fs, Math.round(cw * 0.24)))
+    const hy = top + ch * 0.62, hp = Math.max(10, fs - 3)
+    for (const [label, x] of [["名次", left], ["选手", xName], ["胜-平-负", xRec], ["得分率", xRate]] as [string, number][]) text(label, x, hy, hp, C.muted, { bold: true, alpha: p })
+    // 列头的名字统一一个字号：最长的名字放得下为止
+    let np = hp
+    while (np > 8 && s.rows.some((r: Any) => ((g.font = font(np, true)), g.measureText(r.name).width > cw - 6))) np--
+    s.rows.forEach((r: Any, j: number) => fitLines(r.name, x0 + (j + 0.5) * cw, hy, np, 8, cw - 6, 1, r.ref ? C.muted : r.color, { bold: true, align: "center", alpha: p }))
+    s.rows.forEach((r: Any, k: number) => {
+      const y = top + (k + 1) * ch
+      const a = ease((i - 4 - k * 1.2) / 8)
+      const ra = a * (r.ref ? 0.62 : 1)
+      g.globalAlpha = ra
+      roundRect(left - 12, y + 2, x0 - left + 8, ch - 4, 6, k % 2 ? "rgba(255,255,255,0.025)" : "rgba(255,255,255,0.055)")
+      g.fillStyle = r.color
+      g.fillRect(left - 12, y + 2, 4, ch - 4)
+      g.globalAlpha = 1
+      const by = y + ch / 2 + fs * 0.36
+      text(`#${r.rank}`, left, by, fs, r.ref ? C.muted : r.color, { bold: true, alpha: ra })
+      g.font = font(Math.max(9, fs - 6))
+      const tagW = r.ref ? g.measureText("陪练").width + 8 : 0
+      fitLines(r.name, xName, by, fs, 9, xRec - xName - 12 - tagW, 1, r.ref ? C.text : r.color, { bold: true, alpha: ra })
+      if (r.ref) {
+        g.font = font(fs, true)
+        const nw = Math.min(g.measureText(r.name).width, xRec - xName - 12 - tagW)
+        text("陪练", xName + nw + 6, by - 1, Math.max(9, fs - 6), C.muted, { alpha: ra })
+      }
+      text(r.record, xRec, by, fs, C.text, { alpha: ra })
+      g.globalAlpha = ra
+      roundRect(xRate, y + ch / 2 - 5, 60, 10, 5, "rgba(255,255,255,0.08)")
+      if (r.rate > 0) roundRect(xRate, y + ch / 2 - 5, Math.max(10, 60 * r.rate), 10, 5, r.ref ? "#8fa0bf" : r.color)
+      g.globalAlpha = 1
+      text(`${Math.round(r.rate * 100)}%`, xRate + 68, by, fs, C.text, { bold: true, alpha: ra })
+      s.cells[k].forEach((c: Any, j: number) => cell(c, x0 + j * cw, y, cw, ch, y + ch / 2 + cfs * 0.36, cfs, a))
+    })
+    watermark()
+  }
+
+  /** 竖屏的联赛排名（D-237）：每行左边名次和名字、下面一行小字胜-平-负和得分率，右边对每个对手的胜负，列头是名次 */
+  function vStandings(s: Any, i: number): void {
+    const p = ease(i / 10)
+    text(s.title, VW / 2, 110, 48, C.text, { bold: true, align: "center", alpha: p })
+    const top = fitLines(s.sub, VW / 2, 158, 18, 12, SW, 3, C.muted, { align: "center", alpha: p, wrapFirst: true }) + 10
+    const n = s.rows.length
+    const nameW = Math.round(SW * 0.36)
+    const cw = (SW - nameW) / Math.max(1, n)
+    const ch = Math.min(96, (VH - top - 80) / Math.max(1, n + 1))
+    const fs = Math.max(12, Math.min(26, Math.round(ch * 0.3)))
+    const cfs = Math.max(10, Math.min(22, Math.round(Math.min(cw * 0.38, ch * 0.3))))
+    s.rows.forEach((r: Any, j: number) => text(`#${r.rank}`, SX + nameW + (j + 0.5) * cw, top + ch * 0.62, cfs + 2, r.ref ? C.muted : r.color, { bold: true, align: "center", alpha: p }))
+    s.rows.forEach((r: Any, k: number) => {
+      const y = top + (k + 1) * ch
+      const a = ease((i - 4 - k * 1.2) / 8)
+      const ra = a * (r.ref ? 0.62 : 1)
+      g.globalAlpha = ra
+      roundRect(SX, y + 2, nameW - 4, ch - 4, 8, k % 2 ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.06)")
+      g.fillStyle = r.color
+      g.fillRect(SX, y + 2, 5, ch - 4)
+      g.globalAlpha = 1
+      const x = SX + 14
+      text(`#${r.rank}`, x, y + ch * 0.44, fs, r.ref ? C.muted : r.color, { bold: true, alpha: ra })
+      g.font = font(fs, true)
+      const xn = x + g.measureText(`#${r.rank}`).width + 8
+      fitLines(r.name, xn, y + ch * 0.44, fs, 10, nameW - (xn - SX) - 10, 1, r.ref ? C.text : r.color, { bold: true, alpha: ra })
+      fitLines(`${r.record} · ${Math.round(r.rate * 100)}%${r.ref ? " · 陪练" : ""}`, x, y + ch * 0.44 + fs * 1.1, Math.round(fs * 0.72), 10, nameW - 28, 1, C.muted, { alpha: ra })
+      s.cells[k].forEach((c: Any, j: number) => cell(c, SX + nameW + j * cw, y, cw, ch, y + ch / 2 + cfs * 0.36, cfs, a))
+    })
+  }
+
   function brandClose(s: Any, i: number): void {
     background()
     const p = ease(i / 20)
@@ -1391,6 +1499,7 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     else if (s.kind === "rules") rules(s, a)
     else if (s.kind === "player") player(s, a)
     else if (s.kind === "replay") replay(s, f ?? {}, i)
+    else if (s.kind === "standings") standings(s, a)
     else if (s.kind === "brandClose") brandClose(s, a)
   }
   function draw(f: Any | null, i: number): void {
@@ -1408,7 +1517,7 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
       return
     }
     // 竖屏：开场阵容、规则、选手和回放直接按竖屏画（D-183、D-221、D-230）；片尾先按横屏画到 landCanvas，再拼到竖屏画布上
-    const direct = s.kind === "lineup" || s.kind === "replay" || s.kind === "rules" || s.kind === "player"
+    const direct = s.kind === "lineup" || s.kind === "replay" || s.kind === "rules" || s.kind === "player" || s.kind === "standings"
     if (!direct) {
       g = landG!
       g.setTransform(SCALE, 0, 0, SCALE, 0, 0)
@@ -1425,6 +1534,7 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     else if (s.kind === "replay") vReplay(s, f ?? {}, i)
     else if (s.kind === "rules") vRules(s, a)
     else if (s.kind === "player") vPlayer(s, a)
+    else if (s.kind === "standings") vStandings(s, a)
     else vFrame(s, f ?? {}, i)
     g.restore()
     fade(i, s.frames)

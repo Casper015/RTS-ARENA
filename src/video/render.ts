@@ -1,4 +1,4 @@
-// 联赛视频：把联赛汇总 + 大模型写的脚本排成一串场景（规则介绍（带平台署名）→ 排名和对局数据 → 每个参赛选手「介绍 → 他的高光对局」→ 片尾署名，横竖屏一样，D-221），
+// 联赛视频：把联赛汇总 + 大模型写的脚本排成一串场景（开场阵容 → 规则介绍（带平台署名）→ 每个参赛选手「介绍 → 他的高光对局」→ 联赛排名 → 片尾署名，横竖屏一样，D-221、D-237），
 // 用本机的 Chrome / Edge 无头模式逐帧画出来、编成 MP4。回放场景每帧的局面在这边从回放算好再送进页面
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import { createRequire } from "node:module"
@@ -254,12 +254,42 @@ export function buildScenes(
     const rs = replayScene(replay, k + 1, title, commentary, seats, result, fps, analysis?.weights ?? null)
     scenes.push({ label: `${label} 回放（第 ${g.index} 局）`, ...rs, data: { ...rs.data, kicker: label } as SceneData })
   })
+  // 联赛排名（D-237，片尾之前）
+  scenes.push({ label: "联赛排名和对阵胜负", data: standingsScene(series, display, own, fps) })
   // 片尾名单：参赛选手，按脚本里的顺序
   const credits = script.players.filter((s) => own.has(s.name)).map((s) => `${s.displayName || s.name}${s.byline ? ` · ${s.byline}` : ""}`)
   scenes.push({ label: "总结、片尾署名和选手名单", data: { kind: "brandClose", frames: sec(fps, 6.5 / BRISK), speed: BRISK, outro: script.outro || null, credits: [...credits, "比赛、回放、精彩对局和这段视频都由平台自动生成"] } })
   // 第一段（开场阵容，D-230 加回来）的第一帧就是完整画面，不从黑屏淡入（也当封面，D-179）
   if (scenes[0]) scenes[0] = { ...scenes[0], data: { ...scenes[0].data, first: true } }
   return scenes
+}
+
+/**
+ * 联赛排名页（D-237，用户：结尾仓库介绍之前再把联赛同款的互相胜败的排名加回去）：和联赛命令行一样的排行榜（名次、胜-平-负、得分率），
+ * 每行后面接这个 bot 对每个对手的胜负（D-223 的对战胜负表，行、列都按名次）；平台自带的参考 bot 也列上、标「陪练」。时长按人数算，3.5～6 秒
+ */
+function standingsScene(series: SeriesFile, display: (name: string) => string, own: Set<string>, fps: number): SceneData {
+  const sum = series.summary!
+  const m = sum.matrix
+  const order = [...sum.standings].sort((a, b) => a.rank - b.rank)
+  const multi = (series.size ?? 2) > 2 || !!series.teams
+  const hasDraw = order.some((a) => order.some((b) => (m[a.index]?.[b.index]?.d ?? 0) > 0))
+  const perPair = Math.max(0, ...order.flatMap((a) => order.map((b) => (a === b || !m[a.index]?.[b.index] ? 0 : m[a.index][b.index].w + m[a.index][b.index].d + m[a.index][b.index].l))))
+  const what = multi ? `同一局里行排在列前面-${hasDraw ? "并列-" : ""}后面的次数` : `行对列的${hasDraw ? "胜-平-负" : "胜-负"}${perPair ? `（每对 ${perPair} 局）` : ""}`
+  return {
+    kind: "standings",
+    frames: sec(fps, Math.min(6, Math.max(3.5, 2 + order.length * 0.3))),
+    speed: HALF,
+    title: "联赛排名",
+    sub: tidy(`${order.length} 个 bot · ${series.results.length} 局 · 右边是${what}，绿色是赢多输少${order.some((x) => !own.has(x.name)) ? " · 灰色的是平台自带的陪练" : ""}`),
+    rows: order.map((st) => ({ name: display(st.name), color: PALETTE[st.index % PALETTE.length], rank: st.rank, record: `${st.wins}-${st.draws}-${st.losses}`, rate: st.rate, ref: !own.has(st.name) })),
+    cells: order.map((a) =>
+      order.map((b) => {
+        const c = a === b ? null : m[a.index]?.[b.index]
+        return c && c.w + c.d + c.l ? { text: hasDraw ? `${c.w}-${c.d}-${c.l}` : `${c.w}-${c.l}`, rate: c.w + c.l ? c.w / (c.w + c.l) : 0.5 } : null
+      }),
+    ),
+  }
 }
 
 /** 单位、建筑的一句话数值（图例用）：造价、生命、攻击 */

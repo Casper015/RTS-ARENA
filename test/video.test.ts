@@ -185,13 +185,22 @@ test("脚本提醒：粗体字段里的「一」像破折号，常规字重的�
   assert.match(other[0], /rules\[0\] 提到了别的规则包「拓荒」/)
 })
 
-test("场景编排（D-221、D-225、D-230）：开场阵容 → 规则介绍 → 每个参赛选手「介绍 → 他的高光对局」→ 片尾，横竖屏一样", () => {
+test("场景编排（D-221、D-225、D-230、D-237）：开场阵容 → 规则介绍 → 每个参赛选手「介绍 → 他的高光对局」→ 联赛排名 → 片尾，横竖屏一样", () => {
   const series = readSeries(seriesFile)
   assert.deepEqual(checkScript(script, series), [])
   const scenes = buildScenes(series, script, seriesFile, 10)
   const kinds = scenes.map((s) => s.data.kind)
-  // 开场阵容（D-221 删掉、D-230 用户要求加回来）→ 规则 → 选手；没有标题卡；D-225 排名页、对战胜负页删了
-  assert.deepEqual(kinds, ["lineup", "rules", "player", "replay", "player", "replay", "brandClose"])
+  // 开场阵容（D-221 删掉、D-230 用户要求加回来）→ 规则 → 选手；没有标题卡；D-225 删掉的排名、对战胜负合成一页放在片尾前（D-237）
+  assert.deepEqual(kinds, ["lineup", "rules", "player", "replay", "player", "replay", "standings", "brandClose"])
+  // 排名页：按名次一行一个 bot，每行接它对每个对手的胜负（自己对自己是空的），和联赛汇总的对阵表一致
+  const st = scenes.at(-2)!.data as { rows: { name: string; rank: number; record: string }[]; cells: ({ text: string; rate: number } | null)[][]; sub: string }
+  const sum = series.summary!
+  assert.deepEqual(st.rows.map((r) => r.rank), [...sum.standings].sort((a, b) => a.rank - b.rank).map((x) => x.rank))
+  const top = [...sum.standings].sort((a, b) => a.rank - b.rank)
+  assert.equal(st.rows[0].record, `${top[0].wins}-${top[0].draws}-${top[0].losses}`)
+  assert.equal(st.cells[0][0], null)
+  const c01 = sum.matrix[top[0].index][top[1].index]
+  assert.equal(st.cells[0][1]!.text, st.sub.includes("胜-平-负") ? `${c01.w}-${c01.d}-${c01.l}` : `${c01.w}-${c01.l}`)
   // 第一段（开场阵容）从第一帧起就是完整画面（不从黑屏淡入，也当封面），别的段不是
   assert.equal(scenes[0].data.first, true)
   assert.ok(scenes.slice(1).every((x) => !x.data.first))
@@ -251,7 +260,9 @@ test("场景编排（D-221、D-225、D-230）：开场阵容 → 规则介绍 �
   // 本来就分得清的不换
   assert.deepEqual([...contrastColors([0, 1], 0).values()], [PALETTE[0], PALETTE[1]])
   assert.ok(tl.every((x, k) => x.label && (k === 0 || x.from === tl[k - 1].to)))
-  assert.ok(tl.some((x) => /^选手 基准$/.test(x.label)) && !tl.some((x) => /排名|对战胜负/.test(x.label)))
+  assert.ok(tl.some((x) => /^选手 基准$/.test(x.label)))
+  // 联赛排名在片尾前面（D-237）
+  assert.deepEqual(tl.slice(-2).map((x) => x.label), ["联赛排名和对阵胜负", "总结、片尾署名和选手名单"])
   // 回放场景每帧都能算出局面，最后一帧定格显示结果；往回要的帧从头重算，结果一样
   const rs = scenes.find((s) => s.data.kind === "replay")
   if (rs) {
@@ -458,7 +469,9 @@ test("video-init：视频目录里有说明、选手代码、战报、待填脚�
   assert.match(prompt, /2\. \*\*规则介绍\*\*/)
   // 规则之后直接是选手（D-225 删了排名页、对战胜负页）
   assert.match(prompt, /3\. \*\*每个参赛选手/)
-  assert.doesNotMatch(prompt, /\*\*联赛排名\*\*|\*\*对战胜负\*\*|counterNote/)
+  // 联赛排名在片尾前面，平台自动做（D-237）；对战胜负那句克制关系（counterNote）没有加回来
+  assert.match(prompt, /4\. \*\*联赛排名\*\*.*脚本不用写/)
+  assert.doesNotMatch(prompt, /\*\*对战胜负\*\*|counterNote/)
   assert.doesNotMatch(prompt, /标题卡看点/)
   assert.match(prompt, /照这个目录里的 `RULES\.md` 写/)
   assert.match(prompt, /\| 看点 \|/)
