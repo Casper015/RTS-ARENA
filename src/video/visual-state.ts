@@ -27,6 +27,33 @@ export function trainingQueue(replay: Replay, e: EntSnap) {
   })
 }
 
+/**
+ * 侧视的单位只分朝右（0）和朝左（π）（D-234）。还没动过的单位背对自己的主基地：主基地在地图左半边就朝右、右半边就朝左；
+ * 主基地是开局每家都有的建筑里生命最多的那种（没有就是自己开局生命最多的建筑）。中立的、开局没有建筑的、主基地正在中线上的，按自己在哪半边朝地图中间
+ */
+export function homeFacing(replay: Replay): (e: EntSnap) => number {
+  const mid = replay.map.width / 2
+  const buildings = replay.initial.entities.filter((e) => e.owner >= 0 && replay.types[e.type]?.kind === "building")
+  const owners = new Set(buildings.map((e) => e.owner))
+  const everyone = (type: string) => replay.players.every((_, p) => !owners.has(p) || buildings.some((e) => e.owner === p && e.type === type))
+  const rank = (e: EntSnap) => (everyone(e.type) ? 1e9 : 0) + (replay.types[e.type].maxHp ?? 0)
+  const home = new Map<number, { x: number; rank: number }>()
+  for (const e of buildings) {
+    const r = rank(e), cur = home.get(e.owner)
+    if (!cur || r > cur.rank) home.set(e.owner, { x: e.x + (replay.types[e.type].w ?? 1) / 2, rank: r })
+  }
+  return (e) => {
+    const base = home.get(e.owner)?.x
+    const x = base === undefined || base === mid ? e.x + (replay.types[e.type]?.w ?? 1) / 2 : base
+    return x < mid ? 0 : Math.PI
+  }
+}
+
+/** 往横向差 dx 格的地方走一步、打过去之后朝哪边：横向差不到半格（正上正下）就不转身，不然走台阶形的路时一会儿朝左一会儿朝右，像倒着走 */
+export function faceToward(facing: number, dx: number): number {
+  return dx <= -.5 ? Math.PI : dx >= .5 ? 0 : facing
+}
+
 /** Old replays already contain enough order and position data to animate work without changing simulation. */
 export function workerPose(replay: Replay, entities: Map<number, EntSnap>, e: EntSnap, seconds: number, moving: boolean, farms?: Map<number, EntSnap>): BattlePose | undefined {
   const type = replay.types[e.type]
@@ -44,7 +71,9 @@ export function workerPose(replay: Replay, entities: Map<number, EntSnap>, e: En
   const valid = !!farm || (match![1] === "gather" ? tt.kind === "resource" && target.hp > 0 : target.bp !== undefined && target.bp < 100)
   if (!valid || carrying || moving || dx + dy > 1 || e.bf?.includes("眩晕")) return pose
   pose.work = ((seconds * 1.1 + e.id * .173) % 1 + 1) % 1
-  pose.angle = Math.atan2(target.y + tt.h / 2 - e.y - type.h / 2, target.x + tt.w / 2 - e.x - type.w / 2)
+  // 干活时面朝目标；目标在正上正下就照旧朝着原来的方向（D-234）
+  const side = target.x + tt.w / 2 - e.x - type.w / 2
+  if (Math.abs(side) >= .5) pose.angle = side < 0 ? Math.PI : 0
   return pose
 }
 

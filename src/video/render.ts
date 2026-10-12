@@ -9,7 +9,7 @@ import { findBrowser, launchBrowser } from "./browser.ts"
 import { checkScript, codeFacts, contestantNames, highlightPlayerWarnings, playerGames, PLAYER_PAGE_CHARS, PLAYER_PAGE_MIN, readSeries, resolveBotFile, RULES_PAGE_CHARS, SCRIPT_LIMITS, scriptWarnings, type SeriesFile, type VideoScript } from "./brief.ts"
 import { installVideoPage, type ReplayFrame, type SceneData } from "./page.ts"
 import { createBattleArt, type BattleAttack } from "./battle-art.ts"
-import { farmWorkers, legacySplashEffects, trainingQueue, workerPose } from "./visual-state.ts"
+import { faceToward, farmWorkers, homeFacing, legacySplashEffects, trainingQueue, workerPose } from "./visual-state.ts"
 import { portraitCameraTrack } from "./battle-camera.ts"
 import { excitement, gameFacts } from "../cli/highlights.ts"
 import { fighterTest, groupBattles, isRout } from "../cli/battles.ts"
@@ -289,9 +289,14 @@ function typeDetail(t: Replay["types"][string], spec?: TypeSpecs[string], nameOf
 function rulesScene(replay: Replay, ruleset: string, lines: string[], mapNote: string, seatColors: string[], fps: number, specs?: TypeSpecs): SceneData {
   const typeNames = Object.keys(replay.types)
   const ents: number[] = []
+  // 每个实体朝左还是朝右（D-234：背对自己的主基地）
+  const faces: number[] = []
+  const homeFace = homeFacing(replay)
   for (const e of replay.initial.entities) {
     const t = replay.types[e.type]
-    if (t) ents.push(e.x, e.y, t.w ?? 1, t.h ?? 1, e.owner, typeNames.indexOf(e.type))
+    if (!t) continue
+    ents.push(e.x, e.y, t.w ?? 1, t.h ?? 1, e.owner, typeNames.indexOf(e.type))
+    faces.push(homeFace(e))
   }
   const order = { building: 0, unit: 1, resource: 2 } as Record<string, number>
   // 最多 12 项（两栏 6 行）；放不下时先留单位和资源，建筑按定义的顺序从后往前删（科技规则包有 12 种）
@@ -316,6 +321,7 @@ function rulesScene(replay: Replay, ruleset: string, lines: string[], mapNote: s
     terrain: replay.map.terrain,
     colors: replay.map.colors,
     ents,
+    faces,
     markers: replay.initial.markers?.length ? replay.initial.markers : (replay.frames.find((f) => f.markers?.length)?.markers ?? []),
     types: typeNames.map((k) => ({ name: k, shape: replay.types[k].look?.shape ?? "circle", label: replay.types[k].look?.label ?? "", color: replay.types[k].look?.color ?? null, kind: replay.types[k].kind, worker: replay.types[k].worker, range: replay.types[k].attack?.range, splash: replay.types[k].attack?.splash, art: replay.types[k].look?.art })),
     seatColors,
@@ -495,6 +501,7 @@ export function replayScene(
   const typeNames = Object.keys(replay.types)
   // 主基地（每家开局都有、生命最多的建筑）：选手有形象图时画成头像（D-177）
   const baseType = baseTypeOf(replay)
+  const homeFace = homeFacing(replay)
   const types = typeNames.map((name) => {
     const t = replay.types[name]
     return { name, kind: t.kind, shape: t.look?.shape ?? "circle", label: t.look?.label ?? "", color: t.look?.color ?? null, worker: t.worker === true, base: name === baseType, range: t.attack?.range, splash: t.attack?.splash, art: t.look?.art }
@@ -604,10 +611,11 @@ export function replayScene(
         const e = state.ents.get(mv[j])
         if (!e) continue
         const dx = mv[j + 1] - e.x, dy = mv[j + 2] - e.y
-        if (dx || dy) facing.set(e.id, Math.atan2(dy, dx))
         const distance = Math.max(Math.abs(dx), Math.abs(dy))
         const displaced = distance >= 2 && (distance >= 3 || f.fx?.some((fx) => fx.x === mv[j + 1] && fx.y === mv[j + 2]) || f.bf?.some(([id, bf]) => id === e.id && bf?.includes(STUN)))
         if (!displaced) {
+          // 走一步才转身；被击退的照旧面朝原来的方向往后滑（D-234）
+          facing.set(e.id, faceToward(facing.get(e.id) ?? homeFace(e), dx))
           walking.set(e.id, { x: e.x, y: e.y, tick: k, duration: Math.max(1, e.st?.moveTicks ?? replay.types[e.type]?.moveTicks ?? 1) })
           continue
         }
@@ -652,7 +660,7 @@ export function replayScene(
         const angle = Math.atan2(y2 - y1, x2 - x1)
         attacks.push({ source: a.id, target: b.id, x1, y1, x2, y2, owner: a.owner, style, age: 0, duration, frame })
         attacking.set(a.id, { angle, frame, duration })
-        facing.set(a.id, angle)
+        facing.set(a.id, faceToward(facing.get(a.id) ?? homeFace(a), x2 - x1))
         hitAt.set(b.id, frame)
       }
       applyFrame(state, f)
@@ -691,7 +699,7 @@ export function replayScene(
         if (act && age < act.duration) labor.work = -1
         workers.push({ index: ents.length / 8 - 1, pose: labor })
       }
-      poses.push(facing.get(e.id) ?? (e.x < replay.map.width / 2 ? .3 : Math.PI + .3), walk, act && age < act.duration ? age / act.duration : -1, hit === undefined ? 0 : Math.max(0, 1 - (i - hit) / Math.max(1, fps * .1)))
+      poses.push(facing.get(e.id) ?? homeFace(e), walk, act && age < act.duration ? age / act.duration : -1, hit === undefined ? 0 : Math.max(0, 1 - (i - hit) / Math.max(1, fps * .1)))
       // 光环范围、身上有增益的单位（D-186；眩晕不算，D-226）
       if (e.bp === undefined) for (const a of ty.auras ?? []) auras.push(d.x, d.y, ty.w, ty.h, a.radius < 0 ? (e.st?.sight ?? ty.sight ?? 0) : a.radius, e.owner)
       if (e.bf?.some((b) => b !== STUN) && ty.kind === "unit") buffed.push(d.x, d.y)

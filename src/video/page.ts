@@ -44,6 +44,8 @@ export type SceneData = (
       colors: Record<string, string>
       /** [x, y, w, h, 座位(-1 中立), 类型下标] 一组 6 个 */
       ents: number[]
+      /** 和 ents 一一对应：朝右 0、朝左 π（D-234：背对自己的主基地） */
+      faces?: number[]
       markers: ({ kind: "zone"; x: number; y: number; w: number; h: number; owner: number | null; label?: string; color?: string } | { kind: "label"; x: number; y: number; text: string; owner?: number | null })[]
       types: (BattleType & { shape: string; label: string; color: string | null; kind: string })[]
       seatColors: string[]
@@ -526,7 +528,7 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
       const ty = s.types[ti]
       g.globalAlpha = a2
       g.save(); g.translate(mx, my); g.scale(tile, tile)
-      art.entity(g, ty, x, yy, w, h, ty.color ?? seatColor(o), { angle: o > 0 ? Math.PI : 0 })
+      art.entity(g, ty, x, yy, w, h, ty.color ?? seatColor(o), { angle: s.faces?.[k / 6] ?? (o > 0 ? Math.PI : 0) })
       g.restore()
     }
     g.globalAlpha = 1

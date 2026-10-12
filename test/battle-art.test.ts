@@ -3,7 +3,7 @@ import { test } from "node:test"
 import type { EntSnap, Replay } from "../src/core/types.ts"
 import { createBattleArt } from "../src/video/battle-art.ts"
 import { replayScene } from "../src/video/render.ts"
-import { farmWorkers, legacySplashEffects, trainingQueue, workerPose } from "../src/video/visual-state.ts"
+import { faceToward, farmWorkers, homeFacing, legacySplashEffects, trainingQueue, workerPose } from "../src/video/visual-state.ts"
 import { portraitCameraTrack } from "../src/video/battle-camera.ts"
 
 function fixture(): Replay {
@@ -209,4 +209,34 @@ test("规则包自带的素材（D-233）：base 换平台造型；领主不再�
   const g = new Proxy({}, { get: (_t, k) => (k === "globalAlpha" ? 1 : (...a: unknown[]) => { calls.push(String(k)); return a }), set: () => true }) as unknown as CanvasRenderingContext2D
   art.entity(g, { name: "lord", kind: "unit", art: { base: "infantry", under: "<svg viewBox='0 0 1 1'/>", over: "<svg viewBox='0 0 1 1'/>" } }, 0, 0, 1, 1, "#4ea1ff")
   assert.ok(calls.length > 10 && !calls.includes("drawImage"))
+})
+
+test("朝向（D-234）：没动过的背对自己的主基地；正上正下走、打正上正下的目标不转身；干活的目标在正上正下也不转", () => {
+  const r = fixture()
+  const face = homeFacing(r)
+  // P1 的主基地在右半边：哪怕站在左半边也朝左；中立的朝地图中间
+  assert.equal(face({ id: 9, type: "soldier", owner: 1, x: 2, y: 2, hp: 100, ord: "idle" }), Math.PI)
+  assert.equal(face({ id: 9, type: "soldier", owner: 0, x: 14, y: 2, hp: 100, ord: "idle" }), 0)
+  assert.equal(face({ id: 9, type: "soldier", owner: -1, x: 14, y: 2, hp: 100, ord: "idle" }), Math.PI)
+  assert.equal(faceToward(Math.PI, 0), Math.PI)
+  assert.equal(faceToward(Math.PI, .2), Math.PI)
+  assert.equal(faceToward(Math.PI, 1), 0)
+  assert.equal(faceToward(0, -1), Math.PI)
+  // 弓手先往左走一步、再往上走一步：还朝左（原来往上走就朝右）
+  r.frames[19] = { t: 20, move: [3, 1, 4] }
+  r.frames[29] = { t: 30, move: [3, 1, 3] }
+  const sc = scene(r)
+  const fr = sc.frame!(sc.data.frames - 1)
+  const archer = Object.keys(r.types).indexOf("archer")
+  const k = (fr.ents.findIndex((v, i) => i % 8 === 5 && v === archer) - 5) / 8
+  assert.equal(fr.poses![k * 4], Math.PI)
+  // 金矿在工人正上方：不给朝向，照旧用单位自己的
+  r.types.worker = { ...r.types.soldier, worker: true }
+  r.types.gold = { kind: "resource", w: 1, h: 1, maxHp: 0, moveTicks: 0, look: { shape: "diamond" } }
+  const mine = { id: 70, type: "gold", owner: -1, x: 3, y: 2, hp: 500, ord: "idle" }
+  const up = { id: 71, type: "worker", owner: 0, x: 3, y: 3, hp: 40, ord: "gather #70" }
+  const left = { ...up, id: 72, x: 4, y: 2 }
+  const ents = new Map<number, EntSnap>([mine, up, left].map((e) => [e.id, e]))
+  assert.equal(workerPose(r, ents, up, 1, false)!.angle, undefined)
+  assert.equal(workerPose(r, ents, left, 1, false)!.angle, Math.PI)
 })

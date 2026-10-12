@@ -2,7 +2,7 @@
 import { Application, CanvasSource, Container, Graphics, Sprite, Text, Texture } from "pixi.js"
 import type { EntSnap, Marker, Replay } from "../../src/core/types.ts"
 import { createBattleArt, type BattleAttack, type BattlePose, type BattleType } from "../../src/video/battle-art.ts"
-import { farmWorkers, legacySplashEffects, trainingQueue, workerPose } from "../../src/video/visual-state.ts"
+import { faceToward, farmWorkers, homeFacing, legacySplashEffects, trainingQueue, workerPose } from "../../src/video/visual-state.ts"
 import type { Delta, State } from "./model.ts"
 import { Vision } from "./vision.ts"
 
@@ -87,6 +87,8 @@ export class Renderer {
   private selLayer = new Graphics()
   private views = new Map<number, EntView>()
   private replay!: Replay
+  /** 还没动过的单位朝哪边（D-234：背对自己的主基地） */
+  private homeFace: (e: EntSnap) => number = () => 0
   private state!: State
   /** 已死目标最后的位置，攻击线还要画到那里 */
   private ghosts = new Map<number, { x: number; y: number; seen: boolean }>()
@@ -105,6 +107,7 @@ export class Renderer {
 
   load(replay: Replay, state: State): void {
     this.replay = replay
+    this.homeFace = homeFacing(replay)
     const { width, height, terrain, colors } = replay.map
     for (const child of this.terrainLayer.removeChildren()) child.destroy()
     this.terrainTexture?.destroy(true)
@@ -306,7 +309,8 @@ export class Renderer {
       v.y = e.y
       v.start = t
       v.dur = Math.max(1, this.replay.types[e.type]?.moveTicks ?? 1)
-      if (e.x !== m.fromX || e.y !== m.fromY) v.angle = Math.atan2(e.y - m.fromY, e.x - m.fromX)
+      // 走一步才转身，正上正下走不转；一下挪 2 格以上的（击退这类）不转身（D-234）
+      if (Math.max(Math.abs(e.x - m.fromX), Math.abs(e.y - m.fromY)) < 2) v.angle = faceToward(v.angle, e.x - m.fromX)
     }
     for (let j = 0; j < d.shots.length; j += 2) {
       const a = beforeMovement.get(d.shots[j])
@@ -319,7 +323,7 @@ export class Renderer {
       const x1 = a.x + ta.w / 2, y1 = a.y + ta.h / 2, x2 = b.x + tb.w / 2, y2 = b.y + tb.h / 2
       this.combatFx.push({ source: a.id, target: b.id, x1, y1, x2, y2, owner: a.owner, style, age: 0, duration, tick: t })
       const av = this.views.get(a.id), bv = this.views.get(b.id)
-      if (av) { av.angle = Math.atan2(y2 - y1, x2 - x1); av.attackAt = t; av.attackDuration = duration }
+      if (av) { av.angle = faceToward(av.angle, x2 - x1); av.attackAt = t; av.attackDuration = duration }
       if (bv) bv.hitAt = t
     }
     // 放技能：记下释放者的位置、目标（技能写的目标，加上同一 tick 在释放者 4 格内刷出来的资源点，比如点金的金矿）
@@ -387,7 +391,7 @@ export class Renderer {
     const info = this.replay.types[e.type]
     const w = info?.w ?? 1, h = info?.h ?? 1
     const root = new Container()
-    const angle = e.x < this.replay.map.width / 2 ? Math.PI / 4 : -Math.PI * 3 / 4
+    const angle = this.homeFace(e)
     const skin = this.skin(e, angle)
     const body = new Sprite(skin.texture)
     body.scale.set(.5)
