@@ -430,8 +430,6 @@ main { padding:18px; gap:18px; grid-template-columns:minmax(0,1fr) 340px; overfl
 .eyebrow { color:var(--accent); font-size:10px; letter-spacing:1.8px; font-weight:650; }
 .match-details h1 { margin:7px 0; font-size:17px; font-weight:600; color:#eee5d3; }
 #match-meta { color:var(--muted); font-size:11px; margin:0; }
-.stage-hint { position:absolute; bottom:10px; left:50%; transform:translateX(-50%); pointer-events:none; color:#91aaa8; font-size:10px; white-space:nowrap; padding:5px 12px; background:#0c171dcc; border:1px solid #33464a; border-radius:99px; opacity:.78; }
-.stage-hint span { padding:0 7px; color:#c4b28b; }
 #stage { background:radial-gradient(ellipse,#21342f,#101b20); }
 #status-line { position:static; transform:none; margin-top:13px; background:#25332e; color:#e4c898; border:1px solid #4b5545; padding:9px 12px; border-radius:7px; font-size:12px; }
 #result-banner { top:50%; transform:translate(-50%,-50%); padding:24px 34px; min-width:260px; border-color:#a68c5d; border-radius:14px; background:linear-gradient(135deg,#253731f5,#112029f5); box-shadow:0 18px 70px #0009; font-size:19px; }
