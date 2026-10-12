@@ -140,6 +140,8 @@ export interface VideoBrief {
 }
 
 export interface VideoScript {
+  /** 开场（D-179，D-230 加回来）：text 是开场阵容（封面）上的一句大字（最多 30 字，不写就是"<人数> 位选手的<规则包>联赛，谁能夺冠？"） */
+  hook?: { text?: string }
   /** 规则介绍：写给没玩过的观众，1～4 句、每句最多 45 字（不写就用规则包的一句话简介） */
   rules?: string[]
   /** 每个参赛选手（平台自带的参考 bot 不用写，视频里只介绍参赛 bot，D-221）：name 要和联赛里的名字一样 */
@@ -176,7 +178,7 @@ export const PLAYER_PAGE_MIN = 160
 /** 规则介绍合计最多 130 字（D-183、D-221 规则页时长两次减半，最长 3 秒，字数不变） */
 export const RULES_PAGE_CHARS = 130
 
-export const SCRIPT_LIMITS = { rulesLine: 45, rulesLines: 4, displayName: 28, byline: 40, tagline: 30, introLine: 65, introLines: 5, hlTitle: 24, commentary: 80, outro: 60, highlights: 16 }
+export const SCRIPT_LIMITS = { hook: 30, rulesLine: 45, rulesLines: 4, displayName: 28, byline: 40, tagline: 30, introLine: 65, introLines: 5, hlTitle: 24, commentary: 80, outro: 60, highlights: 16 }
 
 /**
  * 平台自带的参考 bot（陪练）：联赛汇总里记的文件在规则包的 bots/ 目录（rulesets/<规则包>/bots/）里。
@@ -206,6 +208,11 @@ export function checkScript(s: unknown, series: SeriesFile): string[] {
     else if ([...v].length > max) errs.push(`${name} 最多 ${max} 字（现在 ${[...v].length} 字，标点和空格也算）：${v.slice(0, 20)}…`)
   }
   str(o.outro, "outro", L.outro)
+  if (o.hook !== undefined) {
+    const h = o.hook as Record<string, unknown> | null
+    if (!h || typeof h !== "object" || Array.isArray(h)) errs.push("hook 要写成 { \"text\": \"开场的大字\" }")
+    else str(h.text, "hook.text", L.hook)
+  }
   if (o.rules !== undefined) {
     if (!Array.isArray(o.rules) || o.rules.length < 1 || o.rules.length > L.rulesLines) errs.push(`rules 要是 1～${L.rulesLines} 句的数组`)
     else o.rules.forEach((line, j) => str(line, `rules[${j}]`, L.rulesLine, true))
@@ -294,7 +301,7 @@ export function highlightPlayerWarnings(s: unknown, series: SeriesFile): string[
 export function scriptWarnings(s: unknown, otherRulesets: string[] = []): string[] {
   if (!s || typeof s !== "object") return []
   const o = s as VideoScript
-  const bold: [string, unknown][] = [["outro", o.outro]]
+  const bold: [string, unknown][] = [["hook.text", o.hook?.text], ["outro", o.outro]]
   if (Array.isArray(o.players)) o.players.forEach((p, i) => bold.push([`players[${i}].tagline`, p?.tagline]))
   if (Array.isArray(o.highlights))
     o.highlights.forEach((h, i) => {
@@ -306,9 +313,10 @@ export function scriptWarnings(s: unknown, otherRulesets: string[] = []): string
     .map(([where, v]) => `${where} 是粗体，里面的"一"看起来像破折号："${v}"——数量写成阿拉伯数字，或者换个说法`)
   // 不再有标题页、不再展示用户的话（D-177）：老脚本里的这几个字段用不上了
   const gone = (["title", "userText", "theme"] as const).filter((k) => (o as unknown as Record<string, unknown>)[k] !== undefined)
-  if (gone.length) out.push(`${gone.join("、")} 不再使用（视频没有标题页了，直接从规则介绍开始），删掉就行`)
+  if (gone.length) out.push(`${gone.join("、")} 不再使用（视频没有标题页了，开场阵容之后直接是规则介绍），删掉就行`)
   // 开场阵容删掉了（D-221，冷开场 D-181 就删了）
-  if ((o as unknown as Record<string, unknown>).hook !== undefined) out.push("hook 不再使用（开场阵容删掉了，视频直接从规则介绍开始），删掉就行")
+  // 冷开场删掉了（D-181）
+  if ((o.hook as Record<string, unknown> | undefined)?.index !== undefined) out.push("hook.index 不再使用（没有冷开场了），删掉就行")
   // 规则页最长 3 秒
   if (Array.isArray(o.rules)) {
     const n = o.rules.reduce((a: number, x) => a + (typeof x === "string" ? [...x].length : 0), 0)
@@ -447,6 +455,7 @@ export function videoBrief(seriesFile: string): VideoBrief {
   const own = contestantNames(s)
   const games = playerGames(s, own.map((name) => ({ name })), [])
   const scriptTemplate: VideoScript = {
+    hook: { text: "待填：开场的一句大字（30 字以内，可删）" },
     rules: ["待填：怎么赢（照 RULES.md 写给没玩过的观众）", "待填：最关键的机制或特别的单位"],
     players: own.map((name) => ({ name, displayName: "待填", byline: "待填", tagline: "待填", intro: ["待填", "待填", "待填", "待填"], ...(games.get(name) ? { highlight: games.get(name)! } : {}) })),
     highlights: [...games.values()].filter((x): x is number => x !== null).map((index) => ({ index, title: "待填（可删）", commentary: "待填（可删）" })),

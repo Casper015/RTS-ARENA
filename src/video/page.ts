@@ -69,6 +69,8 @@ export type SceneData = (
       /** 实时胜率：curve 是每 step tick 一个点的、sides[0] 那方赢的概率；不是两方对打或没有模型时 null（D-177） */
       win: { step: number; ticks: number; curve: number[]; sides: { name: string; color: string }[] } | null
     }
+  /** 开场阵容（D-179，D-221 删掉、D-230 加回来）：全体参赛选手的立绘和一句大字，第一帧就是完整画面（也当封面） */
+  | { kind: "lineup"; frames: number; title: string; sub: string; players: { name: string; color: string; portrait: string | null }[] }
   | { kind: "brandClose"; frames: number; speed?: number; outro: string | null; credits: string[] }
 ) & { first?: boolean }
 
@@ -452,6 +454,23 @@ export function installVideoPage(): void {
     watermark()
   }
 
+  /** 单位只画一个字（D-230，用户：字太大挡住底色，看不出是谁家的兵；改成不要底色、只用本队颜色的字表示兵）：本队颜色，深色描边 */
+  function unitGlyph(label: string, cx: number, cy: number, px: number, color: string, alpha = 1): void {
+    g.font = font(px, true)
+    g.textAlign = "center"
+    g.textBaseline = "middle"
+    g.lineJoin = "round"
+    g.globalAlpha = alpha
+    g.lineWidth = Math.max(2, px * 0.22)
+    g.strokeStyle = "rgba(0,0,0,0.85)"
+    g.strokeText(label, cx, cy)
+    g.fillStyle = color
+    g.fillText(label, cx, cy)
+    g.globalAlpha = 1
+    g.textAlign = "left"
+    g.textBaseline = "alphabetic"
+  }
+
   /** 画一个单位、建筑或资源点的形状（和回放一样的几种） */
   function shapeAt(shape: string, x: number, y: number, w: number, h: number, color: string): void {
     const cx = x + w / 2
@@ -544,8 +563,11 @@ export function installVideoPage(): void {
     for (let k = 0; k < e.length; k += 6) {
       const [x, yy, w, h, o, ti] = e.slice(k, k + 6)
       const ty = s.types[ti]
-      g.globalAlpha = a2
-      shapeAt(ty.shape, mx + x * tile, my + yy * tile, w * tile, h * tile, ty.color ?? seatColor(o))
+      if (ty.kind === "unit" && ty.label) unitGlyph(ty.label, mx + (x + w / 2) * tile, my + (yy + h / 2) * tile, Math.max(9, tile * 1.15), ty.color ?? seatColor(o), a2)
+      else {
+        g.globalAlpha = a2
+        shapeAt(ty.shape, mx + x * tile, my + yy * tile, w * tile, h * tile, ty.color ?? seatColor(o))
+      }
     }
     g.globalAlpha = 1
     text(s.mapNote, mx, my + s.height * tile + 24, 15, C.muted, { alpha: a2 })
@@ -559,10 +581,13 @@ export function installVideoPage(): void {
       const lx = mx + col * colW
       const yy = ly + Math.floor(k / cols) * 34
       const a = ease((i - 20 - k * 3) / 12)
-      g.globalAlpha = a
-      shapeAt(it.shape, lx, yy - 18, 22, 22, it.color ?? (it.kind === "resource" ? "#e0b53a" : s.seatColors[0] ?? "#4ea1ff"))
-      g.globalAlpha = 1
-      if (it.label) {
+      if (it.kind === "unit" && it.label) unitGlyph(it.label, lx + 11, yy - 7, 22, it.color ?? s.seatColors[0] ?? "#4ea1ff", a)
+      else {
+        g.globalAlpha = a
+        shapeAt(it.shape, lx, yy - 18, 22, 22, it.color ?? (it.kind === "resource" ? "#e0b53a" : s.seatColors[0] ?? "#4ea1ff"))
+        g.globalAlpha = 1
+      }
+      if (it.label && !(it.kind === "unit")) {
         g.font = font(12, true)
         g.textAlign = "center"
         g.fillStyle = "#fff"
@@ -794,6 +819,61 @@ export function installVideoPage(): void {
     return y + ls.length * size * 1.3
   }
 
+  /**
+   * 开场阵容（D-179，用户：三秒跳出率高；D-221 删掉、D-230 用户要求加回来）：第一帧就是全体选手的立绘和一句大字，不从黑屏淡入（也适合当封面）。
+   * 横屏排成一排；竖屏每行最多 4 个
+   */
+  function lineup(s: Any, a: number, vert: boolean): void {
+    const VWW = vert ? VW : W
+    if (!vert) background()
+    const n = s.players.length
+    const cols = vert ? Math.min(4, n) : n
+    const rows = Math.ceil(n / cols)
+    const top = vert ? 330 : 150
+    const ch = vert ? Math.min(400, (VH - top - 190) / rows - 50) : H - top - 92
+    const cw = (VWW - (vert ? 2 * SX : 40)) / cols
+    // 立绘慢慢推近一点（Ken Burns），第一帧已经是完整画面
+    const z = 1 + 0.04 * Math.min(1, a / Math.max(1, s.frames))
+    s.players.forEach((pl: Any, k: number) => {
+      const row = Math.floor(k / cols)
+      const inRow = Math.min(cols, n - row * cols)
+      const x = (VWW - inRow * cw) / 2 + (k - row * cols) * cw
+      const y = top + row * (ch + 50)
+      const bust = pl.portrait ? bustOf(pl.portrait) : null
+      g.save()
+      g.beginPath()
+      g.rect(x + 2, y, cw - 4, ch)
+      g.clip()
+      if (bust) {
+        const sh = bust.c.height * 0.9
+        const sw = Math.min(bust.c.width, (sh * (cw - 4)) / ch)
+        const zx = (sw * (z - 1)) / 2
+        const zy = (sh * (z - 1)) / 2
+        g.drawImage(bust.c, (bust.c.width - sw) / 2 + zx, zy, sw - 2 * zx, sh - 2 * zy, x + 2, y, cw - 4, ch)
+      } else {
+        g.globalAlpha = 0.5
+        g.fillStyle = pl.color
+        g.fillRect(x + 2, y, cw - 4, ch)
+        g.globalAlpha = 1
+        text([...pl.name][0] ?? "?", x + cw / 2, y + ch * 0.55, Math.min(cw, ch) * 0.5, "#ffffff", { bold: true, align: "center" })
+      }
+      g.restore()
+      // 下面一条选手颜色和名字
+      g.fillStyle = pl.color
+      g.fillRect(x + 2, y + ch, cw - 4, 5)
+      fitLines(pl.name, x + cw / 2, y + ch + 34, vert ? 26 : 22, 12, cw - 8, 1, pl.color, { bold: true, align: "center" })
+    })
+    // 大字压在立绘上面
+    const ty = vert ? 150 : 84
+    fitLines(s.title, VWW / 2, ty, vert ? 50 : 46, 24, vert ? SW : VWW - 80, 2, C.text, { bold: true, align: "center", wrapFirst: vert })
+    text(s.sub, VWW / 2, vert ? 270 : 128, vert ? 24 : 20, C.accent, { bold: true, align: "center" })
+    // 平台署名（D-181：不单独放片头页，用小字放在开场阵容最下面）
+    if (vert) {
+      fitLines("RTS Arena · 大模型写 bot 的即时战略竞技平台", VWW / 2, VH - 70, 20, 12, SW, 1, C.muted, { align: "center" })
+      fitLines(REPO, VWW / 2, VH - 38, 18, 10, SW, 2, C.accent, { align: "center" })
+    } else fitLines(`RTS Arena · 大模型写 bot 的即时战略竞技平台 · ${REPO}`, VWW / 2, H - 16, 15, 11, VWW - 40, 1, C.muted, { align: "center" })
+  }
+
   /** 竖屏：渐变背景 */
   function vBackground(): void {
     const gr = g.createLinearGradient(0, 0, 0, VH)
@@ -986,48 +1066,40 @@ export function installVideoPage(): void {
       const by = ty.kind === "unit" ? cy - r : py + 1.5
       const bw = ty.kind === "unit" ? 2 * r : pw - 3
       const bh = ty.kind === "unit" ? 2 * r : ph - 3
-      g.beginPath()
-      if (ty.shape === "square") g.roundRect(bx, by, bw, bh, 3)
-      else if (ty.shape === "triangle") {
-        g.moveTo(cx, by)
-        g.lineTo(bx + bw, by + bh)
-        g.lineTo(bx, by + bh)
-        g.closePath()
-      } else if (ty.shape === "diamond") {
-        g.moveTo(cx, by)
-        g.lineTo(bx + bw, cy)
-        g.lineTo(cx, by + bh)
-        g.lineTo(bx, cy)
-        g.closePath()
-      } else if (ty.shape === "hex") {
-        for (let a = 0; a < 6; a++) {
-          const ang = (Math.PI / 3) * a + Math.PI / 6
-          const hx = cx + r * Math.cos(ang)
-          const hy = cy + r * Math.sin(ang)
-          if (a === 0) g.moveTo(hx, hy)
-          else g.lineTo(hx, hy)
-        }
-        g.closePath()
-      } else g.arc(cx, cy, r, 0, Math.PI * 2)
-      g.fill()
-      g.stroke()
+      // 有字的单位只画字，不画底色和形状（D-230）
+      const glyphOnly = ty.kind === "unit" && !!ty.label
+      if (!glyphOnly) {
+        g.beginPath()
+        if (ty.shape === "square") g.roundRect(bx, by, bw, bh, 3)
+        else if (ty.shape === "triangle") {
+          g.moveTo(cx, by)
+          g.lineTo(bx + bw, by + bh)
+          g.lineTo(bx, by + bh)
+          g.closePath()
+        } else if (ty.shape === "diamond") {
+          g.moveTo(cx, by)
+          g.lineTo(bx + bw, cy)
+          g.lineTo(cx, by + bh)
+          g.lineTo(bx, cy)
+          g.closePath()
+        } else if (ty.shape === "hex") {
+          for (let a = 0; a < 6; a++) {
+            const ang = (Math.PI / 3) * a + Math.PI / 6
+            const hx = cx + r * Math.cos(ang)
+            const hy = cy + r * Math.sin(ang)
+            if (a === 0) g.moveTo(hx, hy)
+            else g.lineTo(hx, hy)
+          }
+          g.closePath()
+        } else g.arc(cx, cy, r, 0, Math.PI * 2)
+        g.fill()
+        g.stroke()
+      }
       g.globalAlpha = 1
       // 和回放页面一样标上汉字：建筑大字，单位小字
       if (ty.kind === "building" && ty.label) text(ty.label, cx, cy + TILE / 2, (TILE * 4) / 3, "rgba(255,255,255,0.9)", { bold: true, align: "center" })
-      else if (ty.kind === "unit" && ty.label) {
-        // 白字加深色描边：在哪种颜色上都看得清；字和一格一样大（D-220），工人的字还是原来的大小
-        g.font = font(TILE * (ty.worker ? 0.56 : 1), true)
-        g.textAlign = "center"
-        g.textBaseline = "middle"
-        const ly = cy + (ty.shape === "triangle" ? r * 0.22 : ty.worker ? 0.5 : TILE * 0.04)
-        g.lineWidth = ty.worker ? 1.8 : Math.max(2, TILE * 0.16)
-        g.strokeStyle = "rgba(0,0,0,0.6)"
-        g.lineJoin = "round"
-        g.strokeText(ty.label, cx, ly)
-        g.fillStyle = "#ffffff"
-        g.fillText(ty.label, cx, ly)
-        g.textBaseline = "alphabetic"
-      }
+      // 字和一格一样大（D-220），工人的字小一些、和原来工人的圆一样大
+      else if (glyphOnly) unitGlyph(ty.label, cx, cy + TILE * 0.04, TILE * (ty.worker ? 0.72 : 1), col)
       // 血条：没满血的单位和建筑（单位的画在放大后的图形上面）
       if (ty.kind !== "resource" && hp < 100) {
         const hx = ty.kind === "unit" ? bx : px + 1
@@ -1401,15 +1473,17 @@ export function installVideoPage(): void {
 
   /** 一个场景的画面（横屏的画法；竖屏时先画到 landCanvas 上再拼） */
   function drawScene(s: Any, f: Any | null, i: number, a: number): void {
-    if (s.kind === "rules") rules(s, a)
+    if (s.kind === "lineup") lineup(s, a, false)
+    else if (s.kind === "rules") rules(s, a)
     else if (s.kind === "player") player(s, a)
     else if (s.kind === "replay") replay(s, f ?? {}, i)
     else if (s.kind === "brandClose") brandClose(s, a)
   }
   function draw(f: Any | null, i: number): void {
     const s = scene!
-    // 页内动画按 speed 加快（淡入淡出还是按实际帧数）；视频第一段从第一帧起就是完整画面（也当封面，D-221），页内动画直接跳到放完
-    const a = i * (s.speed ?? 1) + (s.first ? 120 : 0)
+    // 页内动画按 speed 加快（淡入淡出还是按实际帧数）；视频第一段从第一帧起就是完整画面（也当封面，D-221），页内动画直接跳到放完；
+    // 开场阵容本来第一帧就是完整的，只有立绘慢慢推近，不用跳
+    const a = i * (s.speed ?? 1) + (s.first && s.kind !== "lineup" ? 120 : 0)
     if (!VERT) {
       g.setTransform(SCALE, 0, 0, SCALE, 0, 0)
       g.save()
@@ -1419,8 +1493,8 @@ export function installVideoPage(): void {
       g.setTransform(1, 0, 0, 1, 0, 0)
       return
     }
-    // 竖屏：规则、选手和回放直接按竖屏画（D-183、D-221）；片尾先按横屏画到 landCanvas，再拼到竖屏画布上
-    const direct = s.kind === "replay" || s.kind === "rules" || s.kind === "player"
+    // 竖屏：开场阵容、规则、选手和回放直接按竖屏画（D-183、D-221、D-230）；片尾先按横屏画到 landCanvas，再拼到竖屏画布上
+    const direct = s.kind === "lineup" || s.kind === "replay" || s.kind === "rules" || s.kind === "player"
     if (!direct) {
       g = landG!
       g.setTransform(SCALE, 0, 0, SCALE, 0, 0)
@@ -1433,7 +1507,8 @@ export function installVideoPage(): void {
     g.setTransform(VS, 0, 0, VS, 0, 0)
     g.save()
     vBackground()
-    if (s.kind === "replay") vReplay(s, f ?? {}, i)
+    if (s.kind === "lineup") lineup(s, a, true)
+    else if (s.kind === "replay") vReplay(s, f ?? {}, i)
     else if (s.kind === "rules") vRules(s, a)
     else if (s.kind === "player") vPlayer(s, a)
     else vFrame(s, f ?? {}, i)
