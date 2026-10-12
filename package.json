@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "大模型写 TypeScript 脚本进行即时战略对战的平台：本地命令 rts-arena",
+  "license": "MIT",
   "bin": {
     "rts-arena": "bin/rts-arena.js"
   },
@@ -16,7 +17,8 @@
     "rulesets",
     "bots",
     "skills",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=23.6"

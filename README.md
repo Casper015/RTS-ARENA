@@ -203,3 +203,7 @@ npm run build         # 编译到 dist/（装成命令时用的就是它）
 npm run bench         # 压测
 npm run balance       # 单位数值实验
 ```
+
+## 协议
+
+MIT，见 [LICENSE](LICENSE)。
