@@ -465,6 +465,8 @@ export interface EntSnap {
   st?: StatDiff
   /** 身上的增益、减益的名字（D-186）；没有就没有 */
   bf?: string[]
+  /** Production order and remaining ticks; undefined in older replays, [] means idle. */
+  queue?: { type: string; ticksLeft: number }[]
 }
 
 /** 实体和它类型原值不一样的数值（bot 视图的 stats、回放的 st） */
@@ -501,6 +503,8 @@ export interface Frame {
   /** [攻击者, 目标, ...] */
   shots?: number[]
   ord?: [number, string][]
+  /** Changed production queues, including [] when completed, cancelled or captured. */
+  queue?: [number, NonNullable<EntSnap["queue"]>][]
   /** die 里由规则包 remove 掉的（不是被打死的） */
   removed?: number[]
   /** 规则包用 ctx.note 写的事件（p 是主要关于谁，-1 是所有人） */

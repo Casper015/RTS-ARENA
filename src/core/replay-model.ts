@@ -94,6 +94,10 @@ export function applyFrame(s: State, f: Frame): Delta {
     const e = s.ents.get(id)
     if (e) e.ord = ord
   }
+  for (const [id, queue] of f.queue ?? []) {
+    const e = s.ents.get(id)
+    if (e) e.queue = queue
+  }
   const ow = f.owner ?? []
   for (let i = 0; i < ow.length; i += 2) {
     const e = s.ents.get(ow[i])

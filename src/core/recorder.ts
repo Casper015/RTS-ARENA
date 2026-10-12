@@ -24,6 +24,7 @@ export function orderText(e: EntityState): string {
 function snapOf(e: EntityState, w: World): EntSnap {
   const s: EntSnap = { id: e.id, type: e.type, owner: e.owner, x: e.x, y: e.y, hp: e.def.kind === "resource" ? e.amount : e.hp, ord: orderText(e) }
   if (e.construction) s.bp = Math.floor((100 * e.construction.done) / e.construction.total)
+  if (e.def.produces.length || e.queue.length) s.queue = e.queue.map(q => ({ ...q }))
   const st = statDiff(e.def, w.types[e.type])
   if (st) s.st = st
   // 眩晕（D-207）跟增益记在一起，播放器显示成「眩晕」
@@ -61,6 +62,7 @@ export class Recorder {
     const move: number[] = []
     const hp: number[] = []
     const ord: [number, string][] = []
+    const queue: NonNullable<Frame["queue"]> = []
     const bp: number[] = []
     const owner: number[] = []
     const st: [number, StatDiff | null][] = []
@@ -76,6 +78,7 @@ export class Recorder {
       if (prev.x !== cur.x || prev.y !== cur.y) move.push(e.id, cur.x, cur.y)
       if (prev.hp !== cur.hp) hp.push(e.id, cur.hp)
       if (prev.ord !== cur.ord) ord.push([e.id, cur.ord])
+      if (JSON.stringify(prev.queue) !== JSON.stringify(cur.queue)) queue.push([e.id, cur.queue ?? []])
       if (prev.bp !== cur.bp) bp.push(e.id, cur.bp ?? 100)
       if (prev.owner !== cur.owner) owner.push(e.id, cur.owner)
       if ((prev.st || cur.st) && JSON.stringify(prev.st) !== JSON.stringify(cur.st)) st.push([e.id, cur.st ?? null])
@@ -95,6 +98,7 @@ export class Recorder {
     if (removed.length) f.removed = removed
     if (w.shots.length) f.shots = w.shots.slice()
     if (ord.length) f.ord = ord
+    if (queue.length) f.queue = queue
     if (bp.length) f.bp = bp
     if (owner.length) f.owner = owner
     if (st.length) f.st = st

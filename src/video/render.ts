@@ -8,10 +8,14 @@ import type { Replay } from "../core/types.ts"
 import { findBrowser, launchBrowser } from "./browser.ts"
 import { checkScript, codeFacts, contestantNames, highlightPlayerWarnings, playerGames, PLAYER_PAGE_CHARS, PLAYER_PAGE_MIN, readSeries, resolveBotFile, RULES_PAGE_CHARS, SCRIPT_LIMITS, scriptWarnings, type SeriesFile, type VideoScript } from "./brief.ts"
 import { installVideoPage, type ReplayFrame, type SceneData } from "./page.ts"
+import { createBattleArt, type BattleAttack } from "./battle-art.ts"
+import { farmWorkers, legacySplashEffects, trainingQueue, workerPose } from "./visual-state.ts"
+import { portraitCameraTrack } from "./battle-camera.ts"
 import { excitement, gameFacts } from "../cli/highlights.ts"
 import { fighterTest, groupBattles, isRout } from "../cli/battles.ts"
 import { importRuleset, listRulesets } from "../cli/catalog.ts"
 import { analyzeLeague, baseTypeOf, twoSides, winCurve, type LeagueAnalysis } from "./analysis.ts"
+import { PKG_ROOT } from "../paths.ts"
 
 /** 联赛没挑中的局：现场从回放算看点（不算爆冷） */
 export function gameReasons(replay: Replay, seatNames: string[]): string[] {
@@ -20,7 +24,7 @@ export function gameReasons(replay: Replay, seatNames: string[]): string[] {
   return excitement(f, null, sideName).reasons
 }
 
-export const PALETTE = ["#4ea1ff", "#ff5d5d", "#5ee08a", "#f5c542", "#c77dff", "#4dd4d4", "#ff9f43", "#a3cb38"]
+export const PALETTE = ["#66b5d0", "#de806b", "#8cbc84", "#e4c278", "#b398d1", "#72c9bc", "#e2a36a", "#aab75e"]
 /** 每个选手在视频里的颜色（按参赛顺序），写在 PROMPT.md 里 */
 export const PALETTE_NAMES = ["蓝", "红", "绿", "黄", "紫", "青", "橙", "草绿"]
 /** 标准单位的中文名（事件文字用）；规则包自己的类型用原名 */
@@ -248,7 +252,7 @@ function rulesScene(replay: Replay, ruleset: string, lines: string[], mapNote: s
   const legend = cand
     .filter((x) => kept.has(x.k))
     .sort((a, b) => (order[a.t.kind] ?? 3) - (order[b.t.kind] ?? 3))
-    .map(({ k, t }) => ({ shape: t.look?.shape ?? "circle", label: t.look?.label ?? "", color: t.look?.color ?? null, kind: t.kind, name: typeName(replay, k), detail: typeDetail(t, specs?.[k], (x) => typeName(replay, x)) }))
+    .map(({ k, t }) => ({ shape: t.look?.shape ?? "circle", label: t.look?.label ?? "", color: t.look?.color ?? null, kind: t.kind, name: typeName(replay, k), detail: typeDetail(t, specs?.[k], (x) => typeName(replay, x)), art: { name: k, kind: t.kind, worker: t.worker, range: t.attack?.range, splash: t.attack?.splash, label: t.look?.label } }))
   const chars = lines.reduce((a, l) => a + [...l].length, 0)
   return {
     kind: "rules",
@@ -264,7 +268,7 @@ function rulesScene(replay: Replay, ruleset: string, lines: string[], mapNote: s
     colors: replay.map.colors,
     ents,
     markers: replay.initial.markers?.length ? replay.initial.markers : (replay.frames.find((f) => f.markers?.length)?.markers ?? []),
-    types: typeNames.map((k) => ({ shape: replay.types[k].look?.shape ?? "circle", label: replay.types[k].look?.label ?? "", color: replay.types[k].look?.color ?? null, kind: replay.types[k].kind })),
+    types: typeNames.map((k) => ({ name: k, shape: replay.types[k].look?.shape ?? "circle", label: replay.types[k].look?.label ?? "", color: replay.types[k].look?.color ?? null, kind: replay.types[k].kind, worker: replay.types[k].worker, range: replay.types[k].attack?.range, splash: replay.types[k].attack?.splash })),
     seatColors,
     legend,
     tickNote: `时间单位 tick：1 秒 = ${replay.tickRate} tick，一局最多 ${replay.maxTicks} tick`,
@@ -427,7 +431,7 @@ export function pacing(replay: Replay, fps: number): { playFrames: number; tickO
 }
 
 /** 回放场景：交火（大战、小冲突）都按 4 倍速放、没动静快进（D-172、D-174、D-225），最后定格 1.5 秒显示结果 */
-function replayScene(
+export function replayScene(
   replay: Replay,
   no: number,
   title: string,
@@ -444,7 +448,7 @@ function replayScene(
   const baseType = baseTypeOf(replay)
   const types = typeNames.map((name) => {
     const t = replay.types[name]
-    return { name, kind: t.kind, shape: t.look?.shape ?? "circle", label: t.look?.label ?? "", color: t.look?.color ?? null, worker: t.worker === true, base: name === baseType }
+    return { name, kind: t.kind, shape: t.look?.shape ?? "circle", label: t.look?.label ?? "", color: t.look?.color ?? null, worker: t.worker === true, base: name === baseType, range: t.attack?.range, splash: t.attack?.splash }
   })
   // 实时胜率（D-177）：两方对打、有胜率模型时，每 WIN_STEP tick 一个点；两方各取第一个座位的名字和颜色
   const sides = twoSides(replay)
@@ -467,6 +471,20 @@ function replayScene(
   const model = new ReplayModel(replay)
   let state: State = model.initialState()
   const tickOf = (i: number) => (i >= playFrames ? T : pace.tickOf(i))
+  const portraitCameras = portraitCameraTrack(replay, Array.from({ length: playFrames }, (_, i) => tickOf(i)), fps, Array.from({ length: playFrames }, (_, i) => pace.mode(i) === "fight"))
+  const art = createBattleArt()
+  // Canonical output-frame timestamps make effects deterministic when seeking or rendering previews.
+  const displayedAt = new Int32Array(T + 1)
+  for (let i = 0, tick = 0; i < playFrames; i++) {
+    const end = tickOf(i)
+    while (tick <= end) displayedAt[tick++] = i
+  }
+  let attacks: (BattleAttack & { frame: number })[] = []
+  let fallen: (NonNullable<ReplayFrame["fallen"]>[number] & { frame: number })[] = []
+  let attacking = new Map<number, { angle: number; frame: number; duration: number }>()
+  let facing = new Map<number, number>()
+  let walking = new Map<number, { x: number; y: number; tick: number; duration: number }>()
+  let hitAt = new Map<number, number>()
   let deaths: { x: number; y: number; frame: number }[] = []
   // 特效（D-190）：最近放的技能（释放者、目标）、最近的回血、每个实体放技能和出现的 tick（算冷却环）、最近一次回血的 tick
   let casts: { x: number; y: number; targets: { x: number; y: number }[]; frame: number }[] = []
@@ -481,7 +499,11 @@ function replayScene(
   /** 第 i 帧画在哪：在滑的按缓出插值（先快后慢），滑完或没在滑就是实际位置；p 是滑了多少（0～1） */
   const drawnAt = (id: number, e: { x: number; y: number }, i: number) => {
     const k = knocks.get(id)
-    if (!k) return { x: e.x, y: e.y, p: 1 }
+    if (!k) {
+      const step = walking.get(id)
+      const p = !step || i >= playFrames ? 1 : Math.min(1, Math.max(0, (tickOf(i) - step.tick) / step.duration))
+      return { x: step ? step.x + (e.x - step.x) * p : e.x, y: step ? step.y + (e.y - step.y) * p : e.y, p: 1 }
+    }
     const p = Math.min(1, Math.max(0, (i - k.frame) / KNOCK_FRAMES))
     const q = 1 - (1 - p) ** 2
     return { x: k.x0 + (e.x - k.x0) * q, y: k.y0 + (e.y - k.y0) * q, p }
@@ -494,6 +516,12 @@ function replayScene(
     bornAt = new Map(replay.initial.entities.map((e) => [e.id, 0]))
     healedAt = new Map()
     knocks = new Map()
+    attacks = []
+    fallen = []
+    attacking = new Map()
+    facing = new Map()
+    walking = new Map()
+    hitAt = new Map()
   }
   resetFx()
   let lastTick = 0
@@ -508,13 +536,16 @@ function replayScene(
     }
     lastFrame = i
     const t = tickOf(i)
-    const shots: number[] = []
     for (let k = lastTick + 1; k <= t; k++) {
       const f = replay.frames[k - 1]
       const removed = new Set(f.removed ?? [])
       for (const id of f.die ?? []) {
         const e = state.ents.get(id)
-        if (e && !removed.has(id) && replay.types[e.type]?.kind !== "resource") deaths.push({ x: e.x, y: e.y, frame: i })
+        const ty = e && replay.types[e.type]
+        if (e && ty && !removed.has(id) && ty.kind !== "resource") {
+          deaths.push({ x: e.x, y: e.y, frame: displayedAt[k] })
+          fallen.push({ x: e.x, y: e.y, w: ty.w, h: ty.h, owner: e.owner, age: 0, frame: displayedAt[k], duration: Math.round(fps * (ty.kind === "building" ? 1.2 : .65)), building: ty.kind === "building" })
+        }
       }
       // 这一 tick 一下挪了 2 格以上的（规则包 teleport，比如击退）：画成从原来的位置滑过去（D-226，用户：4 倍速下根本看不出谁被击退）；
       // 规则包在落点放的那团特效不画（用户：被击退的不用再显示这个意义不明的效果），带字的（领主身上的「击退」冲击波）照画
@@ -522,9 +553,17 @@ function replayScene(
       const mv = f.move ?? []
       for (let j = 0; j < mv.length; j += 3) {
         const e = state.ents.get(mv[j])
-        if (!e || Math.max(Math.abs(mv[j + 1] - e.x), Math.abs(mv[j + 2] - e.y)) < 2) continue
-        const from = drawnAt(mv[j], e, i)
-        knocks.set(mv[j], { x0: from.x, y0: from.y, frame: i })
+        if (!e) continue
+        const dx = mv[j + 1] - e.x, dy = mv[j + 2] - e.y
+        if (dx || dy) facing.set(e.id, Math.atan2(dy, dx))
+        const distance = Math.max(Math.abs(dx), Math.abs(dy))
+        const displaced = distance >= 2 && (distance >= 3 || f.fx?.some((fx) => fx.x === mv[j + 1] && fx.y === mv[j + 2]) || f.bf?.some(([id, bf]) => id === e.id && bf?.includes(STUN)))
+        if (!displaced) {
+          walking.set(e.id, { x: e.x, y: e.y, tick: k, duration: Math.max(1, e.st?.moveTicks ?? replay.types[e.type]?.moveTicks ?? 1) })
+          continue
+        }
+        const from = drawnAt(mv[j], e, displayedAt[k])
+        knocks.set(mv[j], { x0: from.x, y0: from.y, frame: displayedAt[k] })
         landed.add(`${mv[j + 1]},${mv[j + 2]}`)
       }
       for (const e of f.spawn ?? []) bornAt.set(e.id, f.t)
@@ -538,28 +577,43 @@ function replayScene(
         if (tg) targets.push({ x: tg.x, y: tg.y })
         // 同一 tick 在释放者 4 格内刷出来的资源点（点金的金矿）
         for (const e of f.spawn ?? []) if (replay.types[e.type]?.kind === "resource" && Math.abs(e.x - caster.x) + Math.abs(e.y - caster.y) <= 4) targets.push({ x: e.x, y: e.y })
-        casts.push({ x: caster.x, y: caster.y, targets, frame: i })
+        casts.push({ x: caster.x, y: caster.y, targets, frame: displayedAt[k] })
       }
-      for (const fx of f.fx ?? []) if (fx.text || !landed.has(`${fx.x},${fx.y}`)) ruleFxs.push({ ...fx, frame: i })
+      const splashFx = legacySplashEffects(replay, f, state.ents)
+      for (const fx of f.fx ?? []) if (!splashFx.has(fx) && (fx.text || !landed.has(`${fx.x},${fx.y}`))) ruleFxs.push({ ...fx, frame: displayedAt[k] })
       const hl = f.heal ?? []
       for (let j = 0; j < hl.length; j += 2) {
         healedAt.set(hl[j], f.t)
         const e = state.ents.get(hl[j])
-        if (e) heals.push({ x: e.x, y: e.y, amount: hl[j + 1], frame: i })
+        if (e) heals.push({ x: e.x, y: e.y, amount: hl[j + 1], frame: displayedAt[k] })
       }
-      // 攻击线只画这一帧最后几 tick 的
-      if (t - k < 3) {
-        const sh = f.shots ?? []
-        for (let j = 0; j < sh.length; j += 2) {
-          const a = state.ents.get(sh[j])
-          const b = state.ents.get(sh[j + 1])
-          if (a && b) shots.push(a.x, a.y, b.x, b.y, a.owner)
-        }
+      // Preserve every recorded strike, including melee and events crossed while fast-forwarding.
+      // Combat resolves after spawning and before movement or removal of dead entities.
+      const sh = f.shots ?? []
+      for (let j = 0; j < sh.length; j += 2) {
+        const a = state.ents.get(sh[j]) ?? f.spawn?.find((e) => e.id === sh[j])
+        const b = state.ents.get(sh[j + 1]) ?? f.spawn?.find((e) => e.id === sh[j + 1])
+        if (!a || !b) continue
+        const ta = replay.types[a.type], tb = replay.types[b.type]
+        if (!ta || !tb) continue
+        const x1 = a.x + ta.w / 2, y1 = a.y + ta.h / 2, x2 = b.x + tb.w / 2, y2 = b.y + tb.h / 2
+        const style = art.attackStyle({ name: a.type, kind: ta.kind, worker: ta.worker, range: a.st?.attack?.range ?? ta.attack?.range, splash: ta.attack?.splash })
+        const duration = Math.max(3, Math.round(fps * (style === "shell" ? .48 : style === "arrow" ? .30 : .24)))
+        const frame = displayedAt[k]
+        const angle = Math.atan2(y2 - y1, x2 - x1)
+        attacks.push({ source: a.id, target: b.id, x1, y1, x2, y2, owner: a.owner, style, age: 0, duration, frame })
+        attacking.set(a.id, { angle, frame, duration })
+        facing.set(a.id, angle)
+        hitAt.set(b.id, frame)
       }
       applyFrame(state, f)
     }
     lastTick = t
     const ents: number[] = []
+    const poses: number[] = []
+    const workers: NonNullable<ReplayFrame["workers"]> = []
+    const production: NonNullable<ReplayFrame["production"]> = []
+    const farms=farmWorkers(replay,state.ents)
     const auras: number[] = []
     const buffed: number[] = []
     // 技能冷却环 [x, y, w, h, 冷却好了的比例]、正在回血的 [x, y, w, h]（D-190）
@@ -576,6 +630,19 @@ function replayScene(
       const kn = knocks.get(e.id)
       if (kn && d.p < 1) knockFx.push(kn.x0, kn.y0, d.x, d.y, d.p)
       ents.push(d.x, d.y, ty.w, ty.h, e.owner, typeNames.indexOf(e.type), hp, e.bp ?? 100)
+      const queue=trainingQueue(replay,e)
+      if(queue?.length)production.push({x:d.x,y:d.y,w:ty.w,h:ty.h,count:queue.length,active:queue.filter(q=>q.active).map(q=>({progress:q.progress,blocked:q.blocked}))})
+      const act = attacking.get(e.id)
+      const age = act ? i - act.frame : Infinity
+      const step = walking.get(e.id)
+      const walk = step && t - step.tick <= step.duration && i < playFrames ? Math.sin(t / step.duration * Math.PI + e.id * 1.7) : 0
+      const hit = hitAt.get(e.id)
+      const labor = workerPose(replay, state.ents, e, Math.min(i, playFrames - 1) / fps, !!step && t - step.tick < step.duration, farms)
+      if (labor) {
+        if (act && age < act.duration) labor.work = -1
+        workers.push({ index: ents.length / 8 - 1, pose: labor })
+      }
+      poses.push(facing.get(e.id) ?? (e.x < replay.map.width / 2 ? .3 : Math.PI + .3), walk, act && age < act.duration ? age / act.duration : -1, hit === undefined ? 0 : Math.max(0, 1 - (i - hit) / Math.max(1, fps * .1)))
       // 光环范围、身上有增益的单位（D-186；眩晕不算，D-226）
       if (e.bp === undefined) for (const a of ty.auras ?? []) auras.push(d.x, d.y, ty.w, ty.h, a.radius < 0 ? (e.st?.sight ?? ty.sight ?? 0) : a.radius, e.owner)
       if (e.bf?.some((b) => b !== STUN) && ty.kind === "unit") buffed.push(d.x, d.y)
@@ -608,10 +675,24 @@ function replayScene(
       return { army, workers, buildings, score: Math.round(state.players[p]?.score ?? 0), alive: state.players[p]?.alive ?? true }
     })
     const recent = deaths.filter((d) => i - d.frame < 8).flatMap((d) => [d.x, d.y, i - d.frame])
+    attacks = attacks.filter((a) => i - a.frame < a.duration)
+    // Fast-forward can cross several attacks by one soldier in one output frame. Show its latest
+    // stroke rather than stacking many identical weapons over the same body.
+    const visibleAttacks = new Map<number, (typeof attacks)[number]>()
+    for (const a of attacks) visibleAttacks.set(a.source, a)
+    fallen = fallen.filter((d) => i - d.frame < d.duration)
+    for (const id of walking.keys()) if (!state.ents.has(id)) { walking.delete(id); facing.delete(id); attacking.delete(id); hitAt.delete(id) }
     return {
       t,
       ents,
-      shots,
+      // Legacy endpoints are derived from the same timeline, so seeking gives identical frames.
+      shots: [...visibleAttacks.values()].filter((a) => i - a.frame <= 1).flatMap((a) => [a.x1 - .5, a.y1 - .5, a.x2 - .5, a.y2 - .5, a.owner]),
+      combat: [...visibleAttacks.values()].map(({ frame, ...a }) => ({ ...a, age: i - frame })),
+      poses,
+      workers,
+      production,
+      camera: portraitCameras[Math.min(i, playFrames - 1)],
+      fallen: fallen.map(({ frame, ...d }) => ({ ...d, age: i - frame })),
       deaths: recent,
       counts,
       events: eventsAt(t),
@@ -864,7 +945,8 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
   try {
     const muxerFile = createRequire(import.meta.url).resolve("mp4-muxer")
     await browser.evaluate(readFileSync(muxerFile, "utf8") + ";true")
-    await browser.evaluate(`(${installVideoPage.toString()})();true`)
+    await browser.evaluate(`(${installVideoPage.toString()})(${createBattleArt.toString()});true`)
+    await browser.evaluate(`__brand(${JSON.stringify(readFileSync(join(PKG_ROOT, "assets", "brand", "logo.svg"), "utf8"))})`)
     const width = o.width ?? (o.vertical ? 1080 : 1920)
     const height = o.height ?? (o.vertical ? 1920 : 1080)
     await browser.evaluate(`__size(${width}, ${height})`)

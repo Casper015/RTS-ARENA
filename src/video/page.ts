@@ -1,6 +1,8 @@
 // 视频页面里跑的代码：画每一帧、用 WebCodecs 编成 H.264、交给 mp4-muxer 封装成 MP4。
-// installVideoPage 会被 toString() 后原样注入无头浏览器，所以必须自包含：不能引用这个文件外面的任何东西。
+// installVideoPage 会被 toString() 后注入无头浏览器；画面工厂作为参数传入，不引用模块闭包。
 // Node 那边每帧算好要画的东西（场景的固定内容用 __scene 送一次，回放的局面每帧用 __frames 送）
+import type { BattleAttack, BattlePose, BattleType, createBattleArt } from "./battle-art.ts"
+import type { BattleCamera } from "./battle-camera.ts"
 
 /** 一个场景的固定内容；first：视频的第一段，第一帧就是完整画面、不从黑屏淡入（D-221 起是规则介绍） */
 export type SceneData = (
@@ -43,9 +45,9 @@ export type SceneData = (
       /** [x, y, w, h, 座位(-1 中立), 类型下标] 一组 6 个 */
       ents: number[]
       markers: ({ kind: "zone"; x: number; y: number; w: number; h: number; owner: number | null; label?: string; color?: string } | { kind: "label"; x: number; y: number; text: string; owner?: number | null })[]
-      types: { shape: string; label: string; color: string | null; kind: string }[]
+      types: (BattleType & { shape: string; label: string; color: string | null; kind: string })[]
       seatColors: string[]
-      legend: { shape: string; label: string; color: string | null; kind: string; name: string; detail: string }[]
+      legend: { shape: string; label: string; color: string | null; kind: string; name: string; detail: string; art?: BattleType }[]
       /** 左下角的小字：1 秒 = 多少 tick */
       tickNote: string
     }
@@ -62,7 +64,7 @@ export type SceneData = (
       terrain: string[]
       colors: Record<string, string>
       /** base：主基地（选手有形象图时画成头像） */
-      types: { name: string; kind: string; shape: string; label: string; color: string | null; worker: boolean; base: boolean }[]
+      types: (BattleType & { name: string; kind: string; shape: string; label: string; color: string | null; worker: boolean; base: boolean })[]
       /** 每个座位的名字和颜色；avatar 是形象图的名字（没有就 null） */
       seats: { name: string; color: string; avatar?: string | null }[]
       result: string
@@ -79,6 +81,14 @@ export interface ReplayFrame {
   ents: number[]
   /** [x1, y1, x2, y2, 座位] 一组 5 个 */
   shots: number[]
+  /** Typed attacks retain their source, target, flight and impact across output frames. */
+  combat?: BattleAttack[]
+  /** Aligned with ents: [heading radians, walking stride, attack phase (-1 idle), hit flash]. */
+  poses?: number[]
+  workers?: { index: number; pose: BattlePose }[]
+  production?: { x:number; y:number; w:number; h:number; count:number; active:{progress:number;blocked:boolean}[] }[]
+  camera?: BattleCamera
+  fallen?: { x: number; y: number; w: number; h: number; owner: number; age: number; duration: number; building: boolean }[]
   /** 刚死的：[x, y, 第几帧前死的] 一组 3 个 */
   deaths: number[]
   /** 每个座位：兵、工人、建筑、分数（歼灭是击杀价值、夺点是控制分……看规则包） */
@@ -113,7 +123,9 @@ export interface ReplayFrame {
   healing?: number[]
 }
 
-export function installVideoPage(): void {
+export function installVideoPage(artFactory: typeof createBattleArt): void {
+  const art = artFactory()
+  let brandImage: HTMLImageElement | null = null
   // 画面按 1280×720 排版，输出时整体放大（1920×1080 是 1.5 倍）；文字和图形都是矢量画的，放大不糊
   const W = 1280
   const H = 720
@@ -122,7 +134,7 @@ export function installVideoPage(): void {
   const MONO = 'Consolas, "Cascadia Mono", "Microsoft YaHei", monospace'
   /** 平台的远程仓库：gitee 和 GitHub（片头下方、片尾署名里） */
   const REPO = "gitee.com/mingomin/rts-arena  ·  github.com/Clark760/RTS-ARENA"
-  const C = { bg1: "#0b1220", bg2: "#14203a", text: "#e8edf7", muted: "#8fa0bf", accent: "#f5b942", line: "#26344f", panel: "rgba(16,26,46,0.92)" }
+  const C = { bg1: "#10191d", bg2: "#19292b", text: "#eee9db", muted: "#95a7aa", accent: "#dfb76d", line: "#304346", panel: "rgba(23,36,40,0.94)" }
   let canvas = new OffscreenCanvas(W * SCALE, H * SCALE)
   let g = canvas.getContext("2d")!
   /** 输出画布的画笔（横屏时就是 g） */
@@ -275,7 +287,7 @@ export function installVideoPage(): void {
 
   /** 角落里的小署名（除片头片尾外每个画面都有） */
   function watermark(): void {
-    text("RTS Arena", W - 24, H - 18, 16, "rgba(232,237,247,0.45)", { bold: true, align: "right" })
+    g.save();g.globalAlpha=.5;drawBrand(W-126,H-34,102);g.restore()
   }
 
   /** 场景开头结尾的黑场过渡：12 帧，短场景按长度缩短（D-221 选手页只有 1 秒多）；视频第一段不淡入（第一帧就是完整画面，也当封面） */
@@ -453,38 +465,6 @@ export function installVideoPage(): void {
   }
 
   /** 画一个单位、建筑或资源点的形状（和回放一样的几种） */
-  function shapeAt(shape: string, x: number, y: number, w: number, h: number, color: string): void {
-    const cx = x + w / 2
-    const cy = y + h / 2
-    const r = Math.min(w, h) / 2
-    g.fillStyle = color
-    g.strokeStyle = "rgba(0,0,0,0.6)"
-    g.lineWidth = 1
-    g.beginPath()
-    if (shape === "square") g.roundRect(x + 0.5, y + 0.5, w - 1, h - 1, 2)
-    else if (shape === "triangle") {
-      g.moveTo(cx, y)
-      g.lineTo(x + w, y + h)
-      g.lineTo(x, y + h)
-      g.closePath()
-    } else if (shape === "diamond") {
-      g.moveTo(cx, y)
-      g.lineTo(x + w, cy)
-      g.lineTo(cx, y + h)
-      g.lineTo(x, cy)
-      g.closePath()
-    } else if (shape === "hex")
-      for (let a = 0; a < 6; a++) {
-        const ang = (Math.PI / 3) * a + Math.PI / 6
-        if (a === 0) g.moveTo(cx + r * Math.cos(ang), cy + r * Math.sin(ang))
-        else g.lineTo(cx + r * Math.cos(ang), cy + r * Math.sin(ang))
-      }
-    else g.arc(cx, cy, r, 0, Math.PI * 2)
-    g.closePath()
-    g.fill()
-    g.stroke()
-  }
-
   function rules(s: Any, i: number): void {
     background()
     const p = ease(i / 15)
@@ -520,11 +500,9 @@ export function installVideoPage(): void {
     const mx = x0 + (boxW - s.width * tile) / 2
     const my = y0
     g.globalAlpha = a2
-    for (let yy = 0; yy < s.height; yy++)
-      for (let xx = 0; xx < s.width; xx++) {
-        g.fillStyle = s.colors[s.terrain[yy][xx]] ?? "#333"
-        g.fillRect(mx + xx * tile, my + yy * tile, tile + 0.3, tile + 0.3)
-      }
+    g.save(); g.translate(mx, my)
+    art.terrain(g, s.terrain, s.colors, tile)
+    g.restore()
     const seatColor = (o: number) => (o >= 0 ? (s.seatColors[o] ?? "#ccc") : "#9aa0a6")
     for (const m of s.markers as Any[]) {
       if (m.kind !== "zone") continue
@@ -545,7 +523,9 @@ export function installVideoPage(): void {
       const [x, yy, w, h, o, ti] = e.slice(k, k + 6)
       const ty = s.types[ti]
       g.globalAlpha = a2
-      shapeAt(ty.shape, mx + x * tile, my + yy * tile, w * tile, h * tile, ty.color ?? seatColor(o))
+      g.save(); g.translate(mx, my); g.scale(tile, tile)
+      art.entity(g, ty, x, yy, w, h, ty.color ?? seatColor(o), { angle: o > 0 ? Math.PI : 0 })
+      g.restore()
     }
     g.globalAlpha = 1
     text(s.mapNote, mx, my + s.height * tile + 24, 15, C.muted, { alpha: a2 })
@@ -560,17 +540,10 @@ export function installVideoPage(): void {
       const yy = ly + Math.floor(k / cols) * 34
       const a = ease((i - 20 - k * 3) / 12)
       g.globalAlpha = a
-      shapeAt(it.shape, lx, yy - 18, 22, 22, it.color ?? (it.kind === "resource" ? "#e0b53a" : s.seatColors[0] ?? "#4ea1ff"))
+      g.save(); g.translate(lx, yy - 18); g.scale(22, 22)
+      art.entity(g, it.art ?? it, 0, 0, 1, 1, it.color ?? (it.kind === "resource" ? "#e0b53a" : s.seatColors[0] ?? "#4ea1ff"))
+      g.restore()
       g.globalAlpha = 1
-      if (it.label) {
-        g.font = font(12, true)
-        g.textAlign = "center"
-        g.fillStyle = "#fff"
-        g.globalAlpha = a
-        g.fillText(it.label, lx + 11, yy - 3)
-        g.globalAlpha = 1
-        g.textAlign = "left"
-      }
       text(it.name, lx + 32, yy - 1, 18, C.text, { bold: true, alpha: a })
       g.font = font(18, true)
       const nw = g.measureText(it.name).width
@@ -670,7 +643,6 @@ export function installVideoPage(): void {
 
   /** 单位图形的半径是几格（D-220：直径 1.4 格，比一格大，挨着的单位边缘叠在一起）；工人还是原来的大小（不到一格，D-221 用户） */
   const UNIT_R = 0.7
-  const unitR = (ty: Any) => (ty.worker ? TILE / 2 - 1.8 : TILE * UNIT_R)
   /** 一格多大：按地图大小算，尽量铺满左边（输出时是整数像素，地形不会有缝） */
   let TILE = 18
   const MX = 24
@@ -801,6 +773,9 @@ export function installVideoPage(): void {
     gr.addColorStop(1, C.bg2)
     g.fillStyle = gr
     g.fillRect(0, 0, VW, VH)
+    g.save();g.strokeStyle="rgba(173,186,153,.07)";g.lineWidth=1
+    for(const x of [18,VW-18]){g.beginPath();g.moveTo(x,18);g.lineTo(x,VH-18);g.stroke()}
+    g.strokeStyle="rgba(205,178,122,.20)";g.beginPath();g.moveTo(SX,56);g.lineTo(VW-SX,56);g.stroke();g.restore()
   }
 
   /**
@@ -810,7 +785,7 @@ export function installVideoPage(): void {
   function vFrame(s: Any, f: Any, i: number): void {
     const LY = 330
     const LH = (SW * H) / W
-    text("RTS Arena", VW / 2, 64, 26, C.accent, { bold: true, align: "center" })
+    drawBrand(VW/2-98,9,196)
     if (s.kind === "brandClose") fitLines(s.outro ?? "比赛和视频都由平台自动生成", VW / 2, 200, 40, 24, SW, 2, C.text, { bold: true, align: "center" })
     g.drawImage(landCanvas!, SX, LY, SW, LH)
     const y = LY + LH + 70
@@ -828,32 +803,14 @@ export function installVideoPage(): void {
     g.restore()
   }
   function drawFieldInner(s: Any, f: Any, ox: number, oy: number, i: number): void {
-    // 地形按现在画布的实际放大倍数画（竖屏回放直接画在竖屏画布上）
     const rs = VERT ? VS : SCALE
-    // 地图
     if (!terrainLayer) {
-      // 按输出的实际像素画一次地形，之后每帧贴上去
-      terrainLayer = new OffscreenCanvas(Math.ceil(s.width * TILE * rs), Math.ceil(s.height * TILE * rs))
+      // A fixed, sufficiently detailed terrain cache survives smooth camera zoom without reallocating.
+      const rasterTile = VERT ? Math.min(Math.max(32, TILE), 4096 / (Math.max(s.width, s.height) * rs)) : TILE
+      terrainLayer = new OffscreenCanvas(Math.ceil(s.width * rasterTile * rs), Math.ceil(s.height * rasterTile * rs))
       const t = terrainLayer.getContext("2d")!
       t.scale(rs, rs)
-      for (let y = 0; y < s.height; y++)
-        for (let x = 0; x < s.width; x++) {
-          t.fillStyle = s.colors[s.terrain[y][x]] ?? "#333"
-          t.fillRect(x * TILE, y * TILE, TILE, TILE)
-        }
-      t.strokeStyle = "rgba(0,0,0,0.12)"
-      for (let x = 0; x <= s.width; x++) {
-        t.beginPath()
-        t.moveTo(x * TILE + 0.5, 0)
-        t.lineTo(x * TILE + 0.5, s.height * TILE)
-        t.stroke()
-      }
-      for (let y = 0; y <= s.height; y++) {
-        t.beginPath()
-        t.moveTo(0, y * TILE + 0.5)
-        t.lineTo(s.width * TILE, y * TILE + 0.5)
-        t.stroke()
-      }
+      art.terrain(t, s.terrain, s.colors, rasterTile)
     }
     g.drawImage(terrainLayer, ox, oy, s.width * TILE, s.height * TILE)
     const colorOf = (seat: number) => (seat >= 0 ? (s.seats[seat]?.color ?? "#ccc") : "#9aa0a6")
@@ -943,101 +900,56 @@ export function installVideoPage(): void {
       g.stroke()
     }
     g.restore()
+    g.save()
+    g.translate(ox, oy)
+    g.scale(TILE, TILE)
+    for (const d of f.fallen ?? []) art.fallen(g, d.x, d.y, d.w, d.h, colorOf(d.owner), d.age, d.duration, d.building)
+    g.restore()
     const e = f.ents as number[]
-    for (let k = 0; k < e.length; k += 8) {
+    const poses = (f.poses ?? []) as number[]
+    const workers = new Map<number, BattlePose>((f.workers ?? []).map((w: { index: number; pose: BattlePose }) => [w.index, w.pose]))
+    // Paint from back to front; neighboring soldiers overlap naturally, with buildings behind units.
+    const order = Array.from({ length: e.length / 8 }, (_, k) => k * 8).sort((a, b) => {
+      const ak = s.types[e[a + 5]].kind === "unit" ? 1 : 0
+      const bk = s.types[e[b + 5]].kind === "unit" ? 1 : 0
+      return ak - bk || e[a + 1] + e[a + 3] - e[b + 1] - e[b + 3] || e[a] - e[b]
+    })
+    for (const k of order) {
       const [x, y, ew, eh, seat, ti, hp, bp] = e.slice(k, k + 8)
       const ty = s.types[ti]
-      const px = ox + x * TILE
-      const py = oy + y * TILE
-      const pw = ew * TILE
-      const ph = eh * TILE
       const col = ty.color ?? colorOf(seat)
-      // 主基地换成选手头像（D-177），描一圈座位颜色
+      const pi = k / 2
+      g.save()
+      g.translate(ox, oy)
+      g.scale(TILE, TILE)
+      art.entity(g, ty, x, y, ew, eh, col, { angle: poses[pi], walk: poses[pi + 1], attack: poses[pi + 2], hit: poses[pi + 3], ...workers.get(k / 8) }, bp)
+      g.restore()
+      const px = ox + x * TILE, py = oy + y * TILE, pw = ew * TILE, ph = eh * TILE
+      // Portraits are a heraldic inset on the keep, so the base still reads as a building.
       const av = ty.base && seat >= 0 ? images.get(s.seats[seat]?.avatar ?? "") : undefined
       if (av) {
-        g.save()
-        g.beginPath()
-        g.roundRect(px + 1.5, py + 1.5, pw - 3, ph - 3, 4)
-        g.clip()
-        g.drawImage(av.avatar, px + 1.5, py + 1.5, pw - 3, ph - 3)
-        g.restore()
-        g.strokeStyle = col
-        g.lineWidth = 2.5
-        g.beginPath()
-        g.roundRect(px + 1.5, py + 1.5, pw - 3, ph - 3, 4)
-        g.stroke()
-        if (hp < 100) {
-          g.fillStyle = "rgba(0,0,0,0.6)"
-          g.fillRect(px + 1, py - 4, pw - 2, 3)
-          g.fillStyle = hp > 50 ? "#5ee08a" : hp > 25 ? "#f5c542" : "#ff5d5d"
-          g.fillRect(px + 1, py - 4, ((pw - 2) * hp) / 100, 3)
-        }
-        continue
+        const side = Math.min(pw, ph) * .40, ax = px + (pw - side) / 2, ay = py + ph * .25
+        g.save(); g.beginPath(); g.roundRect(ax, ay, side, side, 2); g.clip()
+        g.drawImage(av.avatar, ax, ay, side, side); g.restore()
+        g.strokeStyle = "#e3cf9d"; g.lineWidth = 1.3; g.strokeRect(ax, ay, side, side)
       }
-      g.globalAlpha = ty.kind === "building" ? (bp < 100 ? 0.45 : 0.85) : 1
-      g.fillStyle = col
-      g.strokeStyle = "rgba(0,0,0,0.6)"
-      g.lineWidth = 1.2
-      const cx = px + pw / 2
-      const cy = py + ph / 2
-      // 单位比一格大（D-220，用户：手机上看不清兵种；挨着的单位边缘叠在一起没关系），工人小一点；建筑占满自己的格子
-      const r = ty.kind === "unit" ? unitR(ty) : Math.min(pw, ph) / 2 - 1.5
-      const bx = ty.kind === "unit" ? cx - r : px + 1.5
-      const by = ty.kind === "unit" ? cy - r : py + 1.5
-      const bw = ty.kind === "unit" ? 2 * r : pw - 3
-      const bh = ty.kind === "unit" ? 2 * r : ph - 3
-      g.beginPath()
-      if (ty.shape === "square") g.roundRect(bx, by, bw, bh, 3)
-      else if (ty.shape === "triangle") {
-        g.moveTo(cx, by)
-        g.lineTo(bx + bw, by + bh)
-        g.lineTo(bx, by + bh)
-        g.closePath()
-      } else if (ty.shape === "diamond") {
-        g.moveTo(cx, by)
-        g.lineTo(bx + bw, cy)
-        g.lineTo(cx, by + bh)
-        g.lineTo(bx, cy)
-        g.closePath()
-      } else if (ty.shape === "hex") {
-        for (let a = 0; a < 6; a++) {
-          const ang = (Math.PI / 3) * a + Math.PI / 6
-          const hx = cx + r * Math.cos(ang)
-          const hy = cy + r * Math.sin(ang)
-          if (a === 0) g.moveTo(hx, hy)
-          else g.lineTo(hx, hy)
-        }
-        g.closePath()
-      } else g.arc(cx, cy, r, 0, Math.PI * 2)
-      g.fill()
-      g.stroke()
-      g.globalAlpha = 1
-      // 和回放页面一样标上汉字：建筑大字，单位小字
-      if (ty.kind === "building" && ty.label) text(ty.label, cx, cy + TILE / 2, (TILE * 4) / 3, "rgba(255,255,255,0.9)", { bold: true, align: "center" })
-      else if (ty.kind === "unit" && ty.label) {
-        // 白字加深色描边：在哪种颜色上都看得清；字和一格一样大（D-220），工人的字还是原来的大小
-        g.font = font(TILE * (ty.worker ? 0.56 : 1), true)
-        g.textAlign = "center"
-        g.textBaseline = "middle"
-        const ly = cy + (ty.shape === "triangle" ? r * 0.22 : ty.worker ? 0.5 : TILE * 0.04)
-        g.lineWidth = ty.worker ? 1.8 : Math.max(2, TILE * 0.16)
-        g.strokeStyle = "rgba(0,0,0,0.6)"
-        g.lineJoin = "round"
-        g.strokeText(ty.label, cx, ly)
-        g.fillStyle = "#ffffff"
-        g.fillText(ty.label, cx, ly)
-        g.textBaseline = "alphabetic"
-      }
-      // 血条：没满血的单位和建筑（单位的画在放大后的图形上面）
       if (ty.kind !== "resource" && hp < 100) {
-        const hx = ty.kind === "unit" ? bx : px + 1
-        const hy = ty.kind === "unit" ? by - 4 : py - 4
-        const hw = ty.kind === "unit" ? bw : pw - 2
-        g.fillStyle = "rgba(0,0,0,0.6)"
-        g.fillRect(hx, hy, hw, 3)
-        g.fillStyle = hp > 50 ? "#5ee08a" : hp > 25 ? "#f5c542" : "#ff5d5d"
-        g.fillRect(hx, hy, (hw * hp) / 100, 3)
+        const bw = ty.kind === "unit" ? TILE * .85 : pw - 3
+        const clearance = art.headroom(ty)
+        const bx = px + (pw - bw) / 2, by = py - 3 - clearance * TILE
+        g.fillStyle = "rgba(9,18,18,.85)"; g.fillRect(bx - 1, by - 1, bw + 2, 4)
+        g.fillStyle = hp > 50 ? "#a8ce91" : hp > 25 ? "#efc673" : "#ee8270"
+        g.fillRect(bx, by, bw * hp / 100, 2)
       }
+    }
+    // Production bars and one pip per queued unit; no inferred queue in old replays.
+    for(const q of (f.production??[]) as NonNullable<ReplayFrame["production"]>) {
+      const x=ox+q.x*TILE,y=oy+(q.y+q.h)*TILE+2, width=q.w*TILE-2
+      q.active.forEach((slot,j)=>{
+        g.fillStyle="#122026";g.fillRect(x,y+j*4,width+2,3)
+        g.fillStyle=slot.blocked?"#de806b":"#dfb76d";g.fillRect(x+1,y+j*4+1,width*slot.progress,1.5)
+      })
+      for(let j=0;j<q.count;j++){g.fillStyle=j<q.active.length?"#dfb76d":"#617780";g.fillRect(x+1+j*4,y+2+q.active.length*4,2.5,2.5)}
     }
     // 身上有增益的单位：外面一圈金色，一呼一吸（D-186、D-190）
     const bf = (f.buffed ?? []) as number[]
@@ -1050,18 +962,12 @@ export function installVideoPage(): void {
       g.stroke()
     }
     g.globalAlpha = 1
-    // 攻击线
-    const sh = f.shots as number[]
-    g.lineWidth = 1.6
-    for (let k = 0; k < sh.length; k += 5) {
-      g.strokeStyle = colorOf(sh[k + 4])
-      g.globalAlpha = 0.8
-      g.beginPath()
-      g.moveTo(ox + (sh[k] + 0.5) * TILE, oy + (sh[k + 1] + 0.5) * TILE)
-      g.lineTo(ox + (sh[k + 2] + 0.5) * TILE, oy + (sh[k + 3] + 0.5) * TILE)
-      g.stroke()
-      g.globalAlpha = 1
-    }
+    // Weapon-specific motion and impacts, with a lifetime independent of skipped simulation ticks.
+    g.save()
+    g.translate(ox, oy)
+    g.scale(TILE, TILE)
+    for (const a of f.combat ?? []) art.attack(g, a, colorOf(a.owner))
+    g.restore()
     // 技能冷却环（D-190）：金色是冷却好了的部分，好了整圈发光；正在回血的外面再一圈绿色
     const cd = (f.cds ?? []) as number[]
     for (let k = 0; k < cd.length; k += 5) {
@@ -1215,169 +1121,169 @@ export function installVideoPage(): void {
       g.globalAlpha = 1
       if (r.text) text(r.text, cx, cy - base - TILE * (0.6 + fr * 1.6), fxPx(20), `rgba(${rgb},${a})`, { bold: true })
     }
-    // 刚死的：一圈扩散的红圈
-    const d = f.deaths as number[]
-    for (let k = 0; k < d.length; k += 3) {
-      const age = d[k + 2]
-      g.strokeStyle = `rgba(255,120,90,${Math.max(0, 0.9 - age * 0.12)})`
-      g.lineWidth = 2
-      g.beginPath()
-      g.arc(ox + (d[k] + 0.5) * TILE, oy + (d[k + 1] + 0.5) * TILE, ((6 + age * 2.5) * TILE) / 18, 0, Math.PI * 2)
-      g.stroke()
+  }
+
+  function broadcastCard(x:number,y:number,width:number,height:number,accent=C.line):void {
+    g.save()
+    const fill=g.createLinearGradient(x,y,x+width,y+height)
+    fill.addColorStop(0,"#203039");fill.addColorStop(1,"#132129")
+    g.beginPath();g.roundRect(x,y,width,height,10);g.fillStyle=fill;g.fill()
+    g.strokeStyle=accent;g.lineWidth=1;g.stroke()
+    g.beginPath();g.moveTo(x+13,y+.8);g.lineTo(x+Math.min(width-13,75),y+.8);g.strokeStyle="#a6a68b";g.globalAlpha=.38;g.stroke()
+    g.restore()
+  }
+  function drawBrand(x:number,y:number,width:number):void {
+    if(!brandImage)throw new Error("Logo must be loaded with __brand before rendering")
+    g.drawImage(brandImage,x,y,width,width*brandImage.naturalHeight/brandImage.naturalWidth)
+  }
+  function broadcastBrand(x:number,y:number):void {
+    drawBrand(x,y-20,160)
+  }
+  function teamCard(st:Any,c:Any,x:number,y:number,width:number,height:number,seat:number):void {
+    broadcastCard(x,y,width,height)
+    g.fillStyle=st.color;g.fillRect(x+1,y+13,3,height-26)
+    if(height<60) {
+      fitLines(st.name,x+16,y+height/2+5,15,11,width-112,1,st.color,{bold:true})
+      text(String(c.score),x+width-16,y+height/2+7,22,C.text,{bold:true,align:"right",mono:true})
+      return
     }
+    const short=height<86, avatar=short?15:21
+    avatarCircle(st.avatar,st.name,st.color,x+18+avatar,y+18+avatar,avatar)
+    fitLines(st.name,x+28+avatar*2,y+27,short?15:19,12,width-avatar*2-104,1,st.color,{bold:true})
+    text(c.alive?`P${seat} · 场上`:`P${seat} · 已出局`,x+28+avatar*2,y+45,10,C.muted)
+    text(String(c.score),x+width-16,y+(short?28:32),short?23:29,C.text,{bold:true,align:"right",mono:true})
+    text("得分",x+width-16,y+(short?44:49),10,C.muted,{align:"right"})
+    if(short) {
+      if(height>62)text(`部队 ${c.army}  /  农民 ${c.workers}  /  建筑 ${c.buildings}`,x+16,y+height-12,12,C.muted)
+    } else {
+      const cw=(width-32)/3
+      for(const [j,key,label] of [[0,"army","作战部队"],[1,"workers","农民"],[2,"buildings","建筑"]] as const) {
+        const dx=x+16+cw*j
+        text(String(c[key]),dx,y+height-27,21,C.text,{bold:true,mono:true})
+        text(label,dx,y+height-11,10,C.muted)
+        if(j<2){g.strokeStyle=C.line;g.beginPath();g.moveTo(dx+cw-12,y+height-44);g.lineTo(dx+cw-12,y+height-12);g.stroke()}
+      }
+    }
+  }
+  function fieldFrame(x:number,y:number,width:number,height:number):void {
+    g.save();g.strokeStyle="#4a625e";g.lineWidth=1;g.strokeRect(x-.5,y-.5,width+1,height+1)
+    g.strokeStyle=C.accent;g.lineWidth=2;g.globalAlpha=.72
+    for(const dx of [0,width])for(const dy of [0,height]){const sx=dx? -1:1,sy=dy? -1:1;g.beginPath();g.moveTo(x+dx,y+dy+sy*12);g.lineTo(x+dx,y+dy);g.lineTo(x+dx+sx*12,y+dy);g.stroke()}
+    g.restore()
   }
 
   function replay(s: Any, f: Any, i: number): void {
-    g.fillStyle = C.bg1
-    g.fillRect(0, 0, W, H)
-    // 顶部：精彩对局的标题和解说
-    const kicker = s.kicker ?? `精彩对局 ${s.no}`
-    text(kicker, 24, 38, 20, C.accent, { bold: true })
-    g.font = font(20, true)
-    const kx = 24 + g.measureText(kicker).width + 18
-    fitLines(s.title, kx, 38, 22, 14, W - 24 - kx, 1, C.text, { bold: true })
-    if (s.commentary) {
-      // 解说放一行：放不下就缩小字号，最小 14 号还放不下就折成两行
-      let px = 18
-      g.font = font(px)
-      while (px > 14 && g.measureText(s.commentary).width > W - 60) g.font = font(--px)
-      const ls = wrap(s.commentary, W - 60)
-      if (ls.length === 1) text(ls[0], 24, 70, px, C.muted)
-      else ls.slice(0, 2).forEach((l, k) => text(l, 24, 62 + k * 18, px, C.muted))
+    background()
+    broadcastBrand(24,33)
+    fitLines(s.kicker??"精彩对局 "+s.no,190,24,12,10,W-220,1,C.accent,{bold:true})
+    fitLines(s.title,190,49,23,16,W-220,1,C.text,{bold:true})
+    if(s.commentary)fitLines(s.commentary,190,71,14,11,W-220,1,C.muted)
+    const mapW=s.width*TILE,mapH=s.height*TILE
+    broadcastCard(MX-7,MY-7,mapW+14,mapH+14)
+    drawField(s,f,MX,MY,i);fieldFrame(MX,MY,mapW,mapH)
+    const x0=MX+mapW+24,pw=W-x0-24,bottom=Math.max(MY+mapH,H-68)
+    const ch=Math.max(40,Math.min(112,(bottom-MY-126)/Math.max(1,s.seats.length)-10))
+    let y=MY
+    s.seats.forEach((st:Any,k:number)=>{teamCard(st,f.counts[k],x0,y,pw,ch,k);y+=ch+10})
+    if(s.win&&bottom-y>180){broadcastCard(x0,y,pw,104);drawWin(s.win,f.t,x0+14,y+25,pw-28,52,13);y+=116}
+    if(f.status&&bottom-y>90) {
+      broadcastCard(x0,y,pw,56)
+      fitLines(f.status,x0+14,y+24,14,11,pw-28,2,C.accent,{bold:true});y+=68
     }
-    drawField(s, f, MX, MY, i)
-    // 右边面板
-    const x0 = MX + s.width * TILE + 20
-    const pw = W - x0 - 20
-    roundRect(x0, MY, pw, s.height * TILE, 12, C.panel, C.line)
-    let y = MY + 34
-    s.seats.forEach((st: Any, k: number) => {
-      const c = f.counts[k]
-      g.fillStyle = st.color
-      g.fillRect(x0 + 16, y - 18, 6, 64)
-      g.font = font(20, true)
-      let nm = st.name
-      while (g.measureText(nm).width > pw - 50) nm = nm.slice(0, -1)
-      text(nm + (nm.length < st.name.length ? "…" : ""), x0 + 32, y, 20, st.color, { bold: true })
-      text(c.alive ? `兵 ${c.army}  工人 ${c.workers}  建筑 ${c.buildings}` : "已出局", x0 + 32, y + 26, 17, C.text)
-      text(`分数 ${c.score}`, x0 + 32, y + 48, 17, C.muted)
-      y += 88
-    })
-    // 实时胜率预测（D-177；折线图 D-178）
-    if (s.win) {
-      drawWin(s.win, f.t, x0 + 16, y, pw - 32, 66, 15)
-      y += 66 + 34
-    }
-    g.strokeStyle = C.line
-    g.beginPath()
-    g.moveTo(x0 + 14, y - 14)
-    g.lineTo(x0 + pw - 14, y - 14)
-    g.stroke()
-    // 规则包的状态栏（比分、目标……）
-    if (f.status) {
-      g.font = font(16)
-      for (const l of wrapBalanced(f.status, pw - 32).slice(0, 2)) {
-        text(l, x0 + 16, y + 10, 16, C.accent)
-        y += 23
+    if(bottom-y>45) {
+      broadcastCard(x0,y,pw,bottom-y)
+      text("战况速递",x0+16,y+25,13,C.muted,{bold:true});y+=52
+      const room=Math.max(1,Math.floor((bottom-y)/49))
+      for(const ev of (f.events??[]).slice(-room)) {
+        g.fillStyle=C.accent;g.beginPath();g.arc(x0+17,y-4,2.4,0,Math.PI*2);g.fill()
+        y=fitLines(ev,x0+28,y,14,11,pw-44,2,C.text)+12
       }
-      y += 12
+      if(!(f.events??[]).length)fitLines("部队正在部署，等待交锋",x0+16,y,14,11,pw-32,2,C.muted)
     }
-    text("战况", x0 + 16, y + 12, 17, C.muted, { bold: true })
-    y += 40
-    g.font = font(16)
-    // 面板里放得下几条放几条，留最新的（每条最多两行）
-    const bottom = MY + s.height * TILE - 14
-    const blocks = (f.events as string[]).map((ev) => wrapBalanced(ev, pw - 32).slice(0, 2))
-    let first = blocks.length
-    let used = 0
-    while (first > 0 && y + used + (blocks[first - 1].length - 1) * 23 <= bottom) used += blocks[--first].length * 23 + 4
-    for (const ls of blocks.slice(first)) {
-      for (const l of ls) {
-        text(l, x0 + 16, y, 16, C.text)
-        y += 23
-      }
-      y += 4
-    }
-    // 进度条
-    const by = MY + s.height * TILE + 22
-    roundRect(MX, by, s.width * TILE, 8, 4, "rgba(255,255,255,0.1)")
-    roundRect(MX, by, Math.max(8, s.width * TILE * f.progress), 8, 4, C.accent)
-    text(`第 ${f.t} tick`, MX + s.width * TILE, by - 6, 15, C.muted, { align: "right" })
-    // 交战 4x（D-226 不再分大战、小冲突），没动静快进、写实际倍速（D-172、D-174；D-226 用户：倍速写成 4x 这样）
-    if (!f.final) {
-      if (f.pace === "quiet") text(`▸▸ 快进 ${f.speed}x`, MX, by - 6, 15, C.accent, { bold: true })
-      else text(`▶ 交战 ${f.speed}x`, MX, by - 6, 15, C.text, { bold: true })
-    }
-    if (f.final) {
-      g.globalAlpha = 0.85
-      roundRect(MX + 120, MY + (s.height * TILE) / 2 - 60, s.width * TILE - 240, 120, 16, "#0b1220", C.accent)
-      g.globalAlpha = 1
-      text(s.result, MX + (s.width * TILE) / 2, MY + (s.height * TILE) / 2 + 15, 36, C.accent, { bold: true, align: "center" })
+    const by=MY+mapH+23
+    roundRect(MX,by,mapW,5,3,"#35464a")
+    roundRect(MX,by,Math.max(5,mapW*f.progress),5,3,C.accent)
+    const mode=f.final?"对局结束":f.pace==="quiet"?"全图 · 快进 "+f.speed+"x":"交战 · "+f.speed+"x"
+    text(mode,MX,by-8,12,C.accent,{bold:true})
+    text("第 "+f.t+" tick",MX+mapW,by-8,12,C.muted,{align:"right",mono:true})
+    if(f.final) {
+      const rw=Math.min(mapW-32,480),rx=MX+(mapW-rw)/2,ry=MY+mapH/2-57
+      broadcastCard(rx,ry,rw,114,C.accent)
+      text("对局结束",rx+rw/2,ry+30,13,C.muted,{align:"center"})
+      fitLines(s.result,rx+rw/2,ry+76,30,18,rw-38,1,C.accent,{bold:true,align:"center"})
     }
     watermark()
-    void i
   }
 
   /**
    * 竖屏的回放（D-181、D-182，用户：地图拉到 100% 宽度、放在画面正中）：上面是标题、解说、双方头像和兵力（左右两栏），
-   * 中间是拉满宽度的地图，下面是进度条、胜率折线和最新的战况
+   * 中间放大主要交战区域；下方小地图保留全局位置，镜头轨迹按回放预先计算，预览和跳转结果一致
    */
   function vReplay(s: Any, f: Any, i: number): void {
     vBackground()
-    const mapW = s.width * TILE
-    const mapH = s.height * TILE
-    const ox = (VW - mapW) / 2
-    // 地图上方：「<选手>的高光对局」、双方（左右两栏），再往下是这局的标题和解说（D-224，用户：放进双方和地图之间的空地，字放大）
-    text("RTS Arena", VW / 2, 40, 20, C.accent, { bold: true, align: "center" })
-    text(s.kicker ?? `精彩对局 ${s.no}`, VW / 2, 80, 24, C.accent, { bold: true, align: "center" })
-    const seats = (s.seats as Any[]).slice(0, 2)
-    const colW = SW / Math.max(1, seats.length)
-    const sy = 100
-    seats.forEach((st, k) => {
-      const c = f.counts?.[k] ?? { army: 0, workers: 0, buildings: 0, score: 0, alive: true }
-      const cx = SX + k * colW
-      avatarCircle(st.avatar, st.name, st.color, cx + 32, sy + 36, 28)
-      fitLines(st.name, cx + 70, sy + 22, 24, 14, colW - 76, 1, st.color, { bold: true })
-      fitLines(c.alive ? `兵 ${c.army}  工人 ${c.workers}` : "已出局", cx + 70, sy + 50, 18, 12, colW - 76, 1, C.text)
-      if (c.alive) fitLines(`建筑 ${c.buildings}  分数 ${c.score}`, cx + 70, sy + 74, 18, 12, colW - 76, 1, C.muted)
-    })
-    const top = sy + 92
-    // 标题（最多两行）和解说（最多三行）：先排好算出高度，放在双方和地图之间的空地正中
-    const title = layoutLines(s.title, 40, 26, SW, 2, true)
-    const note = s.commentary ? layoutLines(s.commentary, 26, 18, SW, 3, false) : null
-    const blockH = title.lines.length * title.size * 1.25 + (note ? 14 + note.lines.length * note.size * 1.35 : 0)
-    // 地图放在画面正中（D-182，用户要求）；上面的字太多放不下时才往下挪
-    const oy = Math.max((VH - mapH) / 2, top + blockH + 30)
-    const y0 = top + (oy - top - blockH) / 2
-    title.lines.forEach((l, k) => text(l, VW / 2, y0 + title.size * 0.95 + k * title.size * 1.25, title.size, C.text, { bold: true, align: "center" }))
-    if (note) {
-      const n0 = y0 + title.lines.length * title.size * 1.25 + 14
-      note.lines.forEach((l, k) => text(l, VW / 2, n0 + note.size * 0.95 + k * note.size * 1.35, note.size, C.muted, { align: "center" }))
+    broadcastBrand(SX,32)
+    fitLines(s.kicker??"精彩对局 "+s.no,SX+SW,32,16,12,SW-210,1,C.accent,{bold:true,align:"right"})
+    const seats=(s.seats as Any[]).slice(0,2),gap=12,colW=(SW-gap)/2
+    seats.forEach((st,k)=>teamCard(st,f.counts?.[k]??{army:0,workers:0,buildings:0,score:0,alive:true},SX+k*(colW+gap),72,colW,116,k))
+    const top = 203
+    const title = layoutLines(s.title, 34, 25, SW, 2, true)
+    const note = s.commentary ? layoutLines(s.commentary, 22, 17, SW, 2, false) : null
+    let y = top
+    for(const l of title.lines) { y += title.size * 1.23; text(l,VW/2,y,title.size,C.text,{bold:true,align:"center"}) }
+    if(note) { y += 8; for(const l of note.lines) { y += note.size * 1.3; text(l,VW/2,y,note.size,C.muted,{align:"center"}) } }
+    const oy = y + 42, viewH = Math.max(360, Math.min(550, 880 - oy))
+    const camera = (!f.final && f.camera) || { x:s.width/2, y:s.height/2, zoom:1 }
+    const baseTile = Math.min(SW / s.width, viewH / s.height)
+    TILE = baseTile * camera.zoom
+    const viewW = SW / TILE, viewTilesH = viewH / TILE
+    const cx = viewW >= s.width ? s.width/2 : Math.max(viewW/2,Math.min(s.width-viewW/2,camera.x))
+    const cy = viewTilesH >= s.height ? s.height/2 : Math.max(viewTilesH/2,Math.min(s.height-viewTilesH/2,camera.y))
+    const ox = SX + SW/2 - cx*TILE, fieldY = oy + viewH/2 - cy*TILE
+    text(camera.zoom>1.15?"主战场":"全局概览",SX,oy-12,17,C.accent,{bold:true})
+    if(camera.zoom>1.15)text(camera.zoom.toFixed(1)+"×",SX+SW,oy-12,16,C.muted,{align:"right"})
+    roundRect(SX,oy,SW,viewH,10,"#172428",C.line)
+    g.save();g.beginPath();g.rect(SX,oy,SW,viewH);g.clip()
+    drawField(s,f,ox,fieldY,i)
+    g.restore()
+    fieldFrame(SX,oy,SW,viewH)
+    if(f.final) {
+      roundRect(SX+16,oy+viewH/2-48,SW-32,96,12,"rgba(11,18,25,.92)",C.accent)
+      fitLines(s.result,VW/2,oy+viewH/2+12,34,20,SW-60,1,C.accent,{bold:true,align:"center"})
     }
-    drawField(s, f, ox, oy, i)
-    if (f.final) {
-      g.globalAlpha = 0.85
-      roundRect(SX, oy + mapH / 2 - 60, SW, 120, 16, "#0b1220", C.accent)
-      g.globalAlpha = 1
-      fitLines(s.result, VW / 2, oy + mapH / 2 + 14, 36, 20, SW - 40, 1, C.accent, { bold: true, align: "center" })
+    const by = oy + viewH + 34
+    roundRect(SX,by,SW,7,4,"rgba(255,255,255,.1)")
+    roundRect(SX,by,Math.max(7,SW*(f.progress??0)),7,4,C.accent)
+    text("第 "+(f.t??0)+" tick",SX+SW,by-10,17,C.muted,{align:"right"})
+    if(!f.final)text(f.pace==="quiet"?"▸▸ 快进 "+f.speed+"x":"▶ 交战 "+f.speed+"x",SX,by-10,17,f.pace==="quiet"?C.accent:C.text,{bold:true})
+
+    // The overview stays visible while the large window follows a battle; the gold rectangle locates it.
+    const my=by+30, miniW=210, miniH=Math.min(150,miniW*s.height/s.width), panelW=238
+    const mt=Math.min(miniW/s.width,miniH/s.height),mw=s.width*mt,mh=s.height*mt, mapX=SX+14,mapY=my+43
+    const cardH=Math.max(190,mh+57)
+    broadcastCard(SX,my,panelW,cardH)
+    text("全局位置",SX+14,my+25,14,C.muted,{bold:true})
+    if(terrainLayer)g.drawImage(terrainLayer,mapX,mapY,mw,mh)
+    const entities=f.ents??[]
+    for(let k=0;k<entities.length;k+=8) {
+      const [x,y,w,h,owner,ti]=entities.slice(k,k+6),type=s.types[ti]
+      if(type.kind==="resource")continue
+      g.fillStyle=owner>=0?(s.seats[owner]?.color??"#ccc"):"#ada48a"
+      g.fillRect(mapX+x*mt,mapY+y*mt,Math.max(2,w*mt),Math.max(2,h*mt))
     }
-    // 地图下方：进度条和变速、胜率折线、最新的战况
-    const by = oy + mapH + 30
-    roundRect(SX, by, SW, 8, 4, "rgba(255,255,255,0.1)")
-    roundRect(SX, by, Math.max(8, SW * (f.progress ?? 0)), 8, 4, C.accent)
-    text(`第 ${f.t ?? 0} tick`, SX + SW, by - 8, 18, C.muted, { align: "right" })
-    if (!f.final) text(f.pace === "quiet" ? `▸▸ 快进 ${f.speed}x` : `▶ 交战 ${f.speed}x`, SX, by - 8, 18, f.pace === "quiet" ? C.accent : C.text, { bold: true })
-    let y2 = by + 46
-    if (s.win) {
-      drawWin(s.win, f.t ?? 0, SX, y2, SW, 100, 22)
-      y2 += 12 + 100 + 34
+    const left=Math.max(0,cx-viewW/2),right=Math.min(s.width,cx+viewW/2)
+    const upper=Math.max(0,cy-viewTilesH/2),lower=Math.min(s.height,cy+viewTilesH/2)
+    g.strokeStyle=C.accent;g.lineWidth=1.5;g.strokeRect(mapX+left*mt,mapY+upper*mt,(right-left)*mt,(lower-upper)*mt)
+    const tx=SX+panelW+14,tw=SW-panelW-14
+    broadcastCard(tx,my,tw,cardH)
+    text("战况速递",tx+16,my+25,14,C.muted,{bold:true})
+    let ey=my+54
+    for(const event of (f.events??[]).slice(-2)) {
+      g.fillStyle=C.accent;g.beginPath();g.arc(tx+17,ey-5,2.5,0,Math.PI*2);g.fill()
+      ey=fitLines(event,tx+29,ey,17,14,tw-45,2,C.text)+14
     }
-    const room = Math.max(0, Math.floor((VH - 16 - y2) / 28) + 1)
-    for (const ev of (f.events as string[]).slice(-room)) {
-      fitLines(ev, SX, y2, 19, 14, SW, 1, C.muted)
-      y2 += 28
-    }
-    void i
+    if(!(f.events??[]).length)fitLines(f.status||"部队正在部署，等待交锋",tx+16,ey,18,14,tw-32,3,C.muted)
+    if(s.win)drawWin(s.win,f.t??0,SX,my+cardH+30,SW,50,16)
+
   }
 
   function brandClose(s: Any, i: number): void {
@@ -1392,7 +1298,7 @@ export function installVideoPage(): void {
       }
       y += 30
     }
-    text("RTS Arena", W / 2, y + 70, 80, C.text, { bold: true, align: "center", alpha: p })
+    g.save();g.globalAlpha=p;drawBrand(W/2-220,y-8,440);g.restore()
     text("本视频由 RTS Arena 联赛视频接口自动生成", W / 2, y + 130, 28, C.text, { align: "center", alpha: ease((i - 10) / 20) })
     text(REPO, W / 2, y + 172, 24, C.accent, { align: "center", alpha: ease((i - 15) / 20) })
     text("选手", W / 2, y + 226, 18, C.muted, { bold: true, align: "center", alpha: ease((i - 20) / 20) })
@@ -1479,6 +1385,14 @@ export function installVideoPage(): void {
     // High 4.2：1080p 到 60 帧都够
     encoder.configure({ codec: "avc1.64002a", width: canvas.width, height: canvas.height, bitrate: opts.bitrate, framerate: fps })
     frameNo = 0
+    return true
+  }
+  /** Load the exact SVG used by the web header before exporting any frames. */
+  w.__brand = async (svg: string) => {
+    const image = new Image()
+    image.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg)
+    await image.decode()
+    brandImage = image
     return true
   }
   /** 选手形象图：原图、裁好的头像（正方形）、选手页的半身像（第一次用时做） */

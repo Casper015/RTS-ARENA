@@ -9,6 +9,8 @@
   },
   "files": [
     "bin",
+    "assets/brand",
+    "scripts/brand-assets.ts",
     "dist",
     "src",
     "rulesets",
@@ -28,7 +30,7 @@
     "wiki": "node src/cli/wiki.ts",
     "viewer": "vite viewer",
     "viewer:build": "vite build viewer",
-    "build": "tsc -p tsconfig.build.json && vite build viewer --outDir ../dist/viewer --emptyOutDir",
+    "build": "node scripts/brand-assets.ts && tsc -p tsconfig.build.json && vite build viewer --outDir ../dist/viewer --emptyOutDir",
     "prepare": "npm run build"
   },
   "dependencies": {

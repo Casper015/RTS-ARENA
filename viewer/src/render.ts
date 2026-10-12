@@ -1,11 +1,13 @@
 // PixiJS 画面：地形、实体、攻击线、叠加层；拖动平移、滚轮缩放、点击选中；可以按某一队的视野看（迷雾）
 import { Application, CanvasSource, Container, Graphics, Sprite, Text, Texture } from "pixi.js"
-import type { EntSnap, Look, Marker, Replay } from "../../src/core/types.ts"
+import type { EntSnap, Marker, Replay } from "../../src/core/types.ts"
+import { createBattleArt, type BattleAttack, type BattlePose, type BattleType } from "../../src/video/battle-art.ts"
+import { farmWorkers, legacySplashEffects, trainingQueue, workerPose } from "../../src/video/visual-state.ts"
 import type { Delta, State } from "./model.ts"
 import { Vision } from "./vision.ts"
 
 export const TILE = 16
-export const PLAYER_COLORS = [0x4ea1ff, 0xff5d5d, 0x5ee08a, 0xf5c542, 0xc77dff, 0x4dd4d4]
+export const PLAYER_COLORS = [0x66b5d0, 0xde806b, 0x8cbc84, 0xe4c278, 0xb398d1, 0x72c9bc]
 const NEUTRAL = 0x9aa0a6
 
 export function playerColor(owner: number | null | undefined): number {
@@ -18,7 +20,12 @@ function cssColor(c: string): number {
 
 interface EntView {
   root: Container
-  body: Graphics
+  body: Sprite
+  skin: string
+  angle: number
+  attackAt: number
+  attackDuration: number
+  hitAt: number
   bar: Graphics
   /** 身上有增益时外面的金色圈（D-186） */
   ring: Graphics
@@ -36,12 +43,16 @@ interface EntView {
   lastHp: number
   /** 上次画的建造进度（100 = 建好了） */
   lastBp: number
+  lastQueue?: string
 }
 
 export class Renderer {
   readonly app = new Application()
   private camera = new Container()
-  private terrainLayer = new Graphics()
+  private terrainLayer = new Container()
+  private terrainTexture: Texture | null = null
+  private art = createBattleArt()
+  private skins = new Map<string, Texture>()
   /** 迷雾：每格一个像素的画布，放大成格子 */
   private fogLayer = new Container()
   private fog: { canvas: HTMLCanvasElement; image: ImageData; texture: Texture } | null = null
@@ -50,7 +61,9 @@ export class Renderer {
   private team: number | null = null
   private markerLayer = new Container()
   private entLayer = new Container()
-  private shotLayer = new Graphics()
+  private shotLayer = new Container()
+  private shotSurface: { canvas: HTMLCanvasElement; texture: Texture; sprite: Sprite } | null = null
+  private combatFx: (BattleAttack & { tick: number })[] = []
   /** 光环范围（菱形，曼哈顿距离）和放技能的闪光（D-186） */
   private auraLayer = new Graphics()
   /** 特效（D-190）：放技能、回血、技能冷却环；飘字放在 fxLayer 里 */
@@ -75,18 +88,16 @@ export class Renderer {
   private views = new Map<number, EntView>()
   private replay!: Replay
   private state!: State
-  /** 当前帧的攻击，和它发生的 tick */
-  private shots: number[] = []
-  private shotTick = 0
   /** 已死目标最后的位置，攻击线还要画到那里 */
   private ghosts = new Map<number, { x: number; y: number; seen: boolean }>()
   selected: number | null = null
   onSelect: (id: number | null) => void = () => {}
 
   async init(host: HTMLElement): Promise<void> {
-    await this.app.init({ resizeTo: host, background: 0x15181c, antialias: true, autoDensity: true, resolution: window.devicePixelRatio || 1 })
+    await this.app.init({ resizeTo: host, background: 0x10191d, antialias: true, autoDensity: true, resolution: window.devicePixelRatio || 1 })
     host.appendChild(this.app.canvas)
     this.fxLayer.addChild(this.castLayer)
+    this.entLayer.sortableChildren = true
     this.camera.addChild(this.terrainLayer, this.fogLayer, this.markerLayer, this.auraLayer, this.entLayer, this.statusLayer, this.shotLayer, this.fxLayer, this.selLayer)
     this.app.stage.addChild(this.camera)
     this.setupInput(host)
@@ -95,19 +106,28 @@ export class Renderer {
   load(replay: Replay, state: State): void {
     this.replay = replay
     const { width, height, terrain, colors } = replay.map
-    const g = this.terrainLayer.clear()
-    for (let y = 0; y < height; y++) {
-      // 同一行连续相同的地形合成一个矩形
-      let x0 = 0
-      for (let x = 1; x <= width; x++) {
-        if (x < width && terrain[y][x] === terrain[y][x0]) continue
-        g.rect(x0 * TILE, y * TILE, (x - x0) * TILE, TILE).fill(cssColor(colors[terrain[y][x0]] ?? "#000000"))
-        x0 = x
-      }
-    }
-    for (let x = 0; x <= width; x++) g.moveTo(x * TILE, 0).lineTo(x * TILE, height * TILE)
-    for (let y = 0; y <= height; y++) g.moveTo(0, y * TILE).lineTo(width * TILE, y * TILE)
-    g.stroke({ width: 1, color: 0x000000, alpha: 0.18 })
+    for (const child of this.terrainLayer.removeChildren()) child.destroy()
+    this.terrainTexture?.destroy(true)
+    for (const texture of this.skins.values()) texture.destroy(true)
+    this.skins.clear()
+    const canvas = document.createElement("canvas")
+    canvas.width = width * TILE * 2
+    canvas.height = height * TILE * 2
+    this.art.terrain(canvas.getContext("2d")!, terrain, colors, TILE * 2)
+    this.terrainTexture = new Texture({ source: new CanvasSource({ resource: canvas }) })
+    const sprite = new Sprite(this.terrainTexture)
+    sprite.scale.set(.5)
+    this.terrainLayer.addChild(sprite)
+    for (const child of this.shotLayer.removeChildren()) child.destroy()
+    this.shotSurface?.texture.destroy(true)
+    const effects = document.createElement("canvas")
+    effects.width = width * TILE * 2
+    effects.height = height * TILE * 2
+    const texture = new Texture({ source: new CanvasSource({ resource: effects }) })
+    const effectSprite = new Sprite(texture)
+    effectSprite.scale.set(.5)
+    this.shotLayer.addChild(effectSprite)
+    this.shotSurface = { canvas: effects, texture, sprite: effectSprite }
     this.setupFog(replay)
     this.indexAbilities(replay)
     this.fit()
@@ -227,7 +247,7 @@ export class Renderer {
     this.views.clear()
     this.ghosts.clear()
     for (const e of state.ents.values()) this.addView(e, state.tick)
-    this.shots = []
+    this.combatFx = []
     this.castFx = []
     this.healFx = []
     this.ruleFx = []
@@ -241,6 +261,11 @@ export class Renderer {
   advance(state: State, d: Delta): void {
     this.state = state
     const t = state.tick
+    const beforeMovement = new Map([...state.ents, ...d.died.map((e) => [e.id, e] as const)])
+    for (const m of d.moved) {
+      const e = beforeMovement.get(m.id)
+      if (e) beforeMovement.set(m.id, { ...e, x: m.fromX, y: m.fromY })
+    }
     for (const e of d.died) {
       const v = this.views.get(e.id)
       if (v) {
@@ -269,10 +294,21 @@ export class Renderer {
       v.y = e.y
       v.start = t
       v.dur = Math.max(1, this.replay.types[e.type]?.moveTicks ?? 1)
+      if (e.x !== m.fromX || e.y !== m.fromY) v.angle = Math.atan2(e.y - m.fromY, e.x - m.fromX)
     }
-    if (d.shots.length) {
-      this.shots = d.shots
-      this.shotTick = t
+    for (let j = 0; j < d.shots.length; j += 2) {
+      const a = beforeMovement.get(d.shots[j])
+      const b = beforeMovement.get(d.shots[j + 1])
+      if (!a || !b) continue
+      const ta = this.replay.types[a.type], tb = this.replay.types[b.type]
+      if (!ta || !tb) continue
+      const style = this.art.attackStyle(this.battleType(a.type))
+      const duration = Math.max(4, this.replay.tickRate * (style === "shell" ? 1.3 : .7))
+      const x1 = a.x + ta.w / 2, y1 = a.y + ta.h / 2, x2 = b.x + tb.w / 2, y2 = b.y + tb.h / 2
+      this.combatFx.push({ source: a.id, target: b.id, x1, y1, x2, y2, owner: a.owner, style, age: 0, duration, tick: t })
+      const av = this.views.get(a.id), bv = this.views.get(b.id)
+      if (av) { av.angle = Math.atan2(y2 - y1, x2 - x1); av.attackAt = t; av.attackDuration = duration }
+      if (bv) bv.hitAt = t
     }
     // 放技能：记下释放者的位置、目标（技能写的目标，加上同一 tick 在释放者 4 格内刷出来的资源点，比如点金的金矿）
     for (const c of d.casts) {
@@ -295,7 +331,9 @@ export class Renderer {
       this.float(`+${d.heals[i + 1]}`, d.heals[i], t, 0x6ee36e, 10)
     }
     // 规则包的画面特效（D-205，比如击退的冲击波）：区域中心爆开一圈光，飘字
+    const splashFx = legacySplashEffects(this.replay, this.replay.frames[t - 1], beforeMovement)
     for (const fx of d.fx) {
+      if (splashFx.has(fx)) continue
       const color = fx.color && /^#[0-9a-fA-F]{6}$/.test(fx.color) ? cssColor(fx.color) : 0xf2c14e
       this.ruleFx.push({ x: fx.x, y: fx.y, w: fx.w, h: fx.h, color, radius: fx.radius ?? 2.6, tick: t })
       if (fx.text) this.float(fx.text, -1, t, color, 16, { x: (fx.x + fx.w / 2) * TILE, y: (fx.y + fx.h / 2) * TILE })
@@ -304,52 +342,48 @@ export class Renderer {
     this.refreshVision()
   }
 
+  private battleType(name: string): BattleType {
+    const info = this.replay.types[name]
+    return { name, kind: info.kind, label: info.look?.label, shape: info.look?.shape, worker: info.worker, range: info.attack?.range, splash: info.attack?.splash }
+  }
+
+  private skin(e: EntSnap, angle = 0, walk = 0, attack = -1, hit = 0, labor?: BattlePose): { key: string; texture: Texture } {
+    const info = this.replay.types[e.type]
+    const turn = Math.round((labor?.angle ?? angle) / (Math.PI / 4))
+    const step = Math.round(walk)
+    const swing = attack < 0 ? -1 : Math.min(5, Math.floor(attack * 6))
+    const flash = hit > .5 ? 1 : 0
+    const work = labor?.work === undefined || labor.work < 0 ? -1 : Math.min(9, Math.floor(labor.work * 10))
+    const progress = e.bp === undefined ? 100 : Math.floor(e.bp / 25) * 25
+    const color = info.look?.color ?? "#" + playerColor(e.owner).toString(16).padStart(6, "0")
+    const key = [e.type, color, turn, step, swing, flash, progress, work, labor?.job, labor?.carrying ? 1 : 0].join("|")
+    let texture = this.skins.get(key)
+    if (!texture) {
+      const canvas = document.createElement("canvas")
+      canvas.width = (info.w + 2) * TILE * 2
+      canvas.height = (info.h + 2) * TILE * 2
+      const g = canvas.getContext("2d")!
+      g.scale(TILE * 2, TILE * 2)
+      this.art.entity(g, this.battleType(e.type), 1, 1, info.w, info.h, color, { angle: turn * Math.PI / 4, walk: step, attack: swing < 0 ? -1 : swing / 6, hit: flash, work: work < 0 ? -1 : work / 10, job: labor?.job, carrying: labor?.carrying }, progress)
+      texture = new Texture({ source: new CanvasSource({ resource: canvas }) })
+      this.skins.set(key, texture)
+    }
+    return { key, texture }
+  }
+
   private addView(e: EntSnap, t: number): void {
     const info = this.replay.types[e.type]
-    const look: Look = info?.look ?? { shape: "circle" }
-    const w = info?.w ?? 1
-    const h = info?.h ?? 1
+    const w = info?.w ?? 1, h = info?.h ?? 1
     const root = new Container()
-    const body = new Graphics()
-    const color = look.color ? cssColor(look.color) : playerColor(e.owner)
-    const pw = w * TILE
-    const ph = h * TILE
-    const pad = info?.kind === "unit" ? 2.5 : 1.5
-    const cx = pw / 2
-    const cy = ph / 2
-    const r = Math.min(pw, ph) / 2 - pad
-    switch (look.shape) {
-      case "circle":
-        body.circle(cx, cy, r)
-        break
-      case "square":
-        body.roundRect(pad, pad, pw - pad * 2, ph - pad * 2, 3)
-        break
-      case "triangle":
-        body.poly([cx, pad, pw - pad, ph - pad, pad, ph - pad])
-        break
-      case "diamond":
-        body.poly([cx, pad, pw - pad, cy, cx, ph - pad, pad, cy])
-        break
-      case "hex":
-        body.regularPoly(cx, cy, r, 6)
-        break
-    }
-    body.fill({ color, alpha: info?.kind === "building" ? 0.55 : 0.95 }).stroke({ width: 1.2, color: 0x000000, alpha: 0.6 })
-    root.addChild(body)
-    if (look.label) {
-      const size = info?.kind === "unit" ? 9 : 13
-      const label = new Text({ text: look.label, style: { fontSize: size * 2, fill: 0xffffff, fontWeight: "bold" } })
-      label.scale.set(0.5)
-      label.anchor.set(0.5)
-      label.position.set(cx, cy + 0.5)
-      root.addChild(label)
-    }
-    const bar = new Graphics()
-    const ring = new Graphics()
-    root.addChild(bar, ring)
+    const angle = e.x < this.replay.map.width / 2 ? Math.PI / 4 : -Math.PI * 3 / 4
+    const skin = this.skin(e, angle)
+    const body = new Sprite(skin.texture)
+    body.scale.set(.5)
+    body.position.set(-TILE, -TILE)
+    const bar = new Graphics(), ring = new Graphics()
+    root.addChild(body, bar, ring)
     this.entLayer.addChild(root)
-    this.views.set(e.id, { root, body, bar, ring, lastBf: "", w, h, fx: e.x, fy: e.y, x: e.x, y: e.y, start: t, dur: 1, lastHp: -1, lastBp: -1 })
+    this.views.set(e.id, { root, body, bar, ring, skin: skin.key, angle, attackAt: -1000, attackDuration: 1, hitAt: -1000, lastBf: "", w, h, fx: e.x, fy: e.y, x: e.x, y: e.y, start: t, dur: 1, lastHp: -1, lastBp: -1 })
   }
 
   /** 在实体头顶飘一行字（技能名、+回血），life 个 tick 后消失 */
@@ -393,17 +427,30 @@ export class Renderer {
   draw(now: number): void {
     // 光环波纹、金环呼吸、冷却环发光按真实时间动（暂停时也在动）；放技能、回血的特效按 tick 走
     const wall = performance.now() / 1000
+    const farms = farmWorkers(this.replay,this.state.ents)
     for (const [id, v] of this.views) {
       const p = Math.min(1, Math.max(0, (now - v.start) / v.dur))
       const px = v.fx + (v.x - v.fx) * p
       const py = v.fy + (v.y - v.fy) * p
       v.root.position.set(px * TILE, py * TILE)
       const e = this.state.ents.get(id)
-      if (e && (e.hp !== v.lastHp || (e.bp ?? 100) !== v.lastBp)) {
+      if (e) {
+        const unit = this.replay.types[e.type]?.kind === "unit"
+        v.root.zIndex = (unit ? this.replay.map.height + 1 : 0) + py + v.h
+        if (v.root.visible) {
+          const walking = unit && p < 1 && (v.x !== v.fx || v.y !== v.fy) ? Math.sin(now / v.dur * Math.PI + id * 1.7) : 0
+          const attack = now - v.attackAt < v.attackDuration ? Math.max(0, (now - v.attackAt) / v.attackDuration) : -1
+          const labor = workerPose(this.replay, this.state.ents, e, now / this.replay.tickRate, p < 1 && (v.x !== v.fx || v.y !== v.fy), farms)
+          if (labor && attack >= 0) labor.work = -1
+          const skin = this.skin(e, unit ? v.angle : 0, walking, unit ? attack : -1, unit ? Math.max(0, 1 - (now - v.hitAt) / 3) : 0, labor)
+          if (skin.key !== v.skin) { v.body.texture = skin.texture; v.skin = skin.key }
+        }
+      }
+      const queueKey=JSON.stringify([e?.queue,this.team])
+      if (e && (e.hp !== v.lastHp || (e.bp ?? 100) !== v.lastBp || queueKey!==v.lastQueue)) {
         v.lastHp = e.hp
         v.lastBp = e.bp ?? 100
-        // 没建好的建筑画得淡一些
-        v.body.alpha = v.lastBp < 100 ? 0.4 : 1
+        v.lastQueue=queueKey
         this.drawBar(v, e)
       }
       // 身上有增益（光环、技能给的）：外面一圈金色
@@ -545,17 +592,30 @@ export class Renderer {
       return true
     })
     // 攻击线：本帧发生的攻击，在一个 tick 内淡出
-    const sg = this.shotLayer.clear()
-    const age = now - this.shotTick
-    if (this.shots.length && age < 1.5) {
-      const alpha = Math.max(0, 1 - age / 1.5)
-      for (let i = 0; i < this.shots.length; i += 2) {
-        const a = this.centerOf(this.shots[i])
-        const b = this.centerOf(this.shots[i + 1])
-        if (!a || !b) continue
-        const owner = this.state.ents.get(this.shots[i])?.owner
-        sg.moveTo(a.x, a.y).lineTo(b.x, b.y).stroke({ width: 1.6, color: playerColor(owner), alpha })
-        sg.circle(b.x, b.y, 2.2).fill({ color: 0xffffff, alpha })
+    this.combatFx = this.combatFx.filter((a) => now - a.tick < a.duration)
+    if (this.shotSurface) {
+      const { canvas, texture, sprite } = this.shotSurface
+      sprite.visible = this.combatFx.length > 0
+      if (sprite.visible) {
+        const g = canvas.getContext("2d")!
+        g.setTransform(1, 0, 0, 1, 0, 0)
+        g.clearRect(0, 0, canvas.width, canvas.height)
+        g.scale(TILE * 2, TILE * 2)
+        const latest = new Map<number, (typeof this.combatFx)[number]>()
+        for (const a of this.combatFx) latest.set(a.source, a)
+        for (const a of latest.values()) {
+          // Both ends must be visible: effects must not reveal enemies through fog of war.
+          if (!this.centerOf(a.source) || !this.centerOf(a.target)) continue
+          this.art.attack(g, { ...a, age: Math.max(0, now - a.tick) }, "#" + playerColor(a.owner).toString(16).padStart(6, "0"))
+        }
+        texture.source.update()
+      }
+    }
+    if (this.skins.size > 2048) {
+      const active = new Set([...this.views.values()].map((v) => v.skin))
+      for (const [key, texture] of this.skins) {
+        if (!active.has(key)) { texture.destroy(true); this.skins.delete(key) }
+        if (this.skins.size <= 1536) break
       }
     }
     const sel = this.selLayer.clear()
@@ -585,10 +645,20 @@ export class Renderer {
       g.rect(1, v.h * TILE - 3, w, 2.5).fill(0x000000)
       g.rect(1, v.h * TILE - 3, (w * e.bp) / 100, 2.5).fill(0x5aa9f2)
     }
+    if(this.team===null||(this.replay.players[e.owner]?.team??e.owner)===this.team) {
+      const queue=trainingQueue(this.replay,e)??[],active=queue.filter(q=>q.active)
+      active.forEach((q,i)=>{
+        const y=v.h*TILE+2+i*4
+        g.rect(0,y,w+2,3).fill(0x122026)
+        g.rect(1,y+1,w*q.progress,1.5).fill(q.blocked?0xde806b:0xdfb76d)
+      })
+      queue.forEach((q,i)=>g.rect(1+i*4,v.h*TILE+4+active.length*4,2.5,2.5).fill(q.active?0xdfb76d:0x617780))
+    }
     if (!max || e.hp >= max) return // 满血不画
     const frac = Math.max(0, e.hp / max)
-    g.rect(1, -3, w, 2.5).fill(0x000000)
-    g.rect(1, -3, w * frac, 2.5).fill(frac > 0.5 ? 0x6ee36e : frac > 0.25 ? 0xf2c14e : 0xf25f5c)
+    const y = -3 - this.art.headroom(this.battleType(e.type)) * TILE
+    g.rect(1, y, w, 2.5).fill(0x000000)
+    g.rect(1, y, w * frac, 2.5).fill(frac > 0.5 ? 0x6ee36e : frac > 0.25 ? 0xf2c14e : 0xf25f5c)
   }
 
   private setupInput(host: HTMLElement): void {

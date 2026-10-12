@@ -4,56 +4,61 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>RTS Arena</title>
+    <link id="brand-icon" rel="icon" type="image/svg+xml" />
     <link rel="stylesheet" href="./src/style.css" />
   </head>
   <body>
     <header>
-      <strong class="brand">RTS Arena</strong>
+      <a class="brand" href="./" aria-label="RTS Arena 首页"><img id="brand-logo" width="188" height="44" alt="RTS Arena · 战术竞技场" /></a>
       <nav class="tabs">
         <button data-tab="replay" class="on">回放</button>
         <button data-tab="arena">对战</button>
       </nav>
-      <span class="replay-only">
+      <span class="replay-only replay-library">
         <select id="replay-select" title="选择回放"></select>
         <button id="refresh" title="刷新回放列表">刷新</button>
         <label class="file-btn">打开文件<input id="file-input" type="file" accept=".json" hidden /></label>
-        <span id="match-title" class="muted"></span>
       </span>
+      <span class="header-note">观察 · 推演 · 交锋</span>
     </header>
     <main id="replay-page">
-      <section id="stage">
-        <div id="status-line"></div>
+      <section class="battle-shell">
+        <div id="stage">
         <div id="result-banner" hidden></div>
-        <div id="empty" class="muted">还没有回放。到「对战」页开一场，或者在 bot 目录里 <code>rts-arena run</code></div>
+        <div id="empty"><div class="empty-crest">◇</div><h2>战场，等待你的策略</h2><p>打开一份回放，或到「对战」开启新的较量。</p><span class="muted">拖动平移 · 滚轮缩放 · 点击单位查看详情</span></div>
+        <div class="stage-hint">拖动平移 <span>·</span> 滚轮缩放 <span>·</span> 点击检视</div>
+        </div>
       </section>
       <aside>
+        <div class="panel match-details"><span class="eyebrow">对局信息</span><h1 id="match-title">选择一场对局</h1><p id="match-meta">打开回放后查看对局信息</p><div id="status-line"></div></div>
         <div class="panel">
-          <h3>玩家</h3>
-          <table id="players"></table>
+          <h3>对阵概况 <span class="panel-caption">兵力 / 经济</span></h3>
+          <div id="players"></div>
         </div>
         <div class="panel">
-          <h3>选中</h3>
+          <h3>单位档案 <span class="panel-caption">战场检视</span></h3>
           <div id="selected" class="muted">点画面上的实体查看</div>
         </div>
         <div class="panel grow">
           <h3>
-            日志
+            战局日志
             <span id="log-filter"></span>
           </h3>
           <div id="logs"></div>
         </div>
         <details class="panel">
-          <summary>bot 统计</summary>
+          <summary>运行统计</summary>
           <div id="bot-stats"></div>
         </details>
       </aside>
     </main>
     <section id="arena-page" hidden>
       <div class="panel arena-setup">
-        <h3>开一场比赛</h3>
+        <div class="setup-heading"><span class="eyebrow">MATCH SETUP</span><h1>创建比赛</h1><p>选好阵容，让策略在战场上见分晓。</p></div>
+        <fieldset class="setup-group"><legend><span>01</span> 赛制与规则</legend>
         <label class="field">方式 <select id="ar-mode">
-          <option value="series">比赛：一组 bot 打 N 局</option>
-          <option value="league">联赛：多个 bot 两两循环对打，出排行榜</option>
+          <option value="series">对局 · 固定阵容</option>
+          <option value="league">联赛 · 循环对战与排名</option>
         </select></label>
         <label class="field">规则包 <select id="ar-ruleset"></select></label>
         <label class="field" id="ar-size-row" hidden>每局人数 <select id="ar-size"></select></label>
@@ -62,34 +67,43 @@
           <option value="mixed">轮换搭档：所有分组方式都打，看谁最会配合</option>
           <option value="same">同一个 bot 组队：每队都是同一个 bot</option>
         </select></label>
+        </fieldset>
+        <fieldset class="setup-group"><legend><span>02</span> 参赛阵容</legend>
         <div class="muted" id="ar-players-hint"></div>
         <div id="ar-seats"></div>
         <div id="ar-naming" class="naming" hidden></div>
         <input id="ar-file" type="file" accept=".ts" hidden />
-        <div class="row"><button id="ar-add">加一个</button><button id="ar-remove">减一个</button></div>
+        <div class="row seat-controls"><button id="ar-add">＋ 添加席位</button><button id="ar-remove">移除末席</button></div>
         <label class="field" id="ar-teams-row">分队 <select id="ar-teams"></select></label>
+        </fieldset>
+        <fieldset class="setup-group"><legend><span>03</span> 比赛参数</legend>
+        <div class="setup-numbers">
         <label class="field"><span id="ar-games-label">局数</span> <input id="ar-games" type="number" min="1" max="1000" value="10" /></label>
         <label class="field">种子 <input id="ar-seed" type="number" placeholder="留空随机" /></label>
+        </div>
         <div class="muted small" id="ar-note">同一个种子会把各方的位置轮换一遍（两人就是换边各打一次）。回放和每个 bot 的日志写在回放目录里。</div>
-        <div class="row"><button id="ar-start" class="primary">开始</button><button id="ar-stop" disabled>停止</button></div>
+        </fieldset>
+        <div class="row launch-controls"><button id="ar-start" class="primary">▶ 开始比赛</button><button id="ar-stop" disabled>停止</button></div>
         <div id="ar-msg" class="err"></div>
       </div>
       <div class="arena-results">
-        <div class="panel">
-          <h3>当前比赛 <span id="ar-progress"></span></h3>
+        <div class="panel live-match">
+          <h3><span><span class="section-dot"></span> 当前比赛</span><span id="ar-progress" class="run-status" aria-live="polite"></span></h3>
           <div id="ar-current" class="muted">还没开始</div>
         </div>
-        <div class="panel grow">
-          <h3>历史比赛 <button id="ar-history-refresh">刷新</button></h3>
+        <div class="panel match-history">
+          <h3><span>比赛记录 <span class="panel-caption">RESULTS</span></span><button id="ar-history-refresh">刷新记录</button></h3>
           <div id="ar-history"></div>
         </div>
       </div>
     </section>
     <footer id="replay-footer">
-      <button id="to-start" title="回到开头 (Home)">⏮</button>
-      <button id="step-back" title="后退 1 tick (←)">◀</button>
-      <button id="play" title="播放 / 暂停 (空格)">▶</button>
-      <button id="step-fwd" title="前进 1 tick (→)">▶|</button>
+      <div class="timeline"><span class="eyebrow">对局进程</span><input id="slider" aria-label="对局进度" type="range" min="0" max="0" value="0" /><span id="tick-label">0 / 0</span></div>
+      <div class="transport"><div class="transport-buttons">
+      <button id="to-start" aria-label="回到开头" title="回到开头 (Home)">⏮</button>
+      <button id="step-back" aria-label="后退一帧" title="后退 1 tick (←)">◀</button>
+      <button id="play" aria-label="播放" title="播放 / 暂停 (空格)">▶ 播放</button>
+      <button id="step-fwd" aria-label="前进一帧" title="前进 1 tick (→)">▶|</button>
       <select id="speed" title="速度">
         <option value="0.5">0.5×</option>
         <option value="1" selected>1×</option>
@@ -98,10 +112,10 @@
         <option value="8">8×</option>
         <option value="16">16×</option>
       </select>
-      <input id="slider" type="range" min="0" max="0" value="0" />
-      <span id="tick-label">0 / 0</span>
+      </div><span class="keyboard-hint">空格 播放 / 暂停 <span>← → 逐帧</span></span><div class="view-controls">
       <select id="pov" title="按某一方（分队时是一队）的视野看：迷雾外的敌人不显示，对手的资源也看不到"></select>
       <button id="fit" title="缩放到整张地图">全图</button>
+      </div></div>
     </footer>
     <script type="module" src="./src/main.ts"></script>
   </body>

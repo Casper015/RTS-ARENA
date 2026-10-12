@@ -235,6 +235,7 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
   let info: ArenaInfo | null = null
   let seats: string[] = []
   let timer: number | null = null
+  let running = false
 
   const rulesetSel = $<HTMLSelectElement>("ar-ruleset")
   const modeSel = $<HTMLSelectElement>("ar-mode")
@@ -282,9 +283,10 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
       .map((g) => `<optgroup label="${esc(g)}">${found.filter((b) => b.group === g).map((b) => opt(b.path, b.label ?? b.path)).join("")}</optgroup>`)
       .join("")
     const uploaded = found.some((b) => b.path === value && b.uploaded)
-    return `<div class="seat" data-i="${i}">
-      <span class="swatch" style="background:${hex(playerColor(i))}"></span><span class="seat-no">${i + 1}</span>
-      <select class="ar-bot">
+    return `<div class="seat" data-i="${i}" style="--seat-color:${hex(playerColor(i))}">
+      <div class="seat-heading"><span class="seat-badge">${String(i+1).padStart(2,"0")}</span><strong>参赛席位 ${i+1}</strong><div class="seat-actions"><button class="ar-pick" title="从电脑上选一个 bot 文件（.ts）">导入 bot</button>
+      ${uploaded ? '<button class="ar-rename" title="修改已上传 bot 的显示名称">改名</button><button class="ar-delete" title="删除已上传的副本">删除</button>' : ""}</div></div>
+      <select class="ar-bot" aria-label="参赛席位 ${i+1} 的 bot">
         ${groups}
         <optgroup label="现成">${r.bots.map((b) => opt(b, b, r.botAbout?.[b])).join("")}</optgroup>
         <optgroup label="别的位置">
@@ -292,8 +294,6 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
           <option value="${PATH}"${isKnown ? "" : " selected"}>填路径…</option>
         </optgroup>
       </select>
-      <button class="ar-pick" title="从电脑上选一个 bot 文件（.ts）">选文件…</button>
-      ${uploaded ? '<button class="ar-rename" title="改这个上传的 bot 的名字（比赛结果里显示这个名字）">改名</button><button class="ar-delete" title="删除这个上传的副本（以前的回放不受影响）">删除</button>' : ""}
       <input class="ar-path" placeholder="bot 文件路径（相对 bot 目录）" value="${isKnown ? "" : esc(value)}" ${isKnown ? "hidden" : ""} />
     </div>`
   }
@@ -366,7 +366,7 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
         ? "每一对用同一个种子换边打，每对局数最好是双数。排名：胜 1 分、平 0.5 分；等级分（1500 起）按全部对局一起算。"
         : `每一桌用同一个种子轮换座位，每桌局数最好是 ${k} 的倍数。名次分：第一名 1 分、最后一名 0 分、中间平分；等级分（1500 起）把名次拆成两两比较，按全部对局一起算。`
       : "同一个种子会把各方的位置轮换一遍（两人就是换边各打一次）。回放和每个 bot 的日志写在回放目录里。"
-    $<HTMLButtonElement>("ar-start").disabled = lg && !leagueOk
+    $<HTMLButtonElement>("ar-start").disabled = running || (lg && !leagueOk)
     const specs = !lg && r.teams ? compositions(seats.length) : []
     const keep = teamsSel.value
     teamsSel.innerHTML = `<option value="">各自为战</option>` + specs.map((s) => `<option value="${s}">${s}（按座位顺序分组）</option>`).join("")
@@ -584,10 +584,11 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
       .map((b) => `<span class="err">P${b.seat} ${b.status === "dead" ? `停止：${esc(b.deadReason ?? "")}` : `报错 ${b.errors}、燃料耗尽 ${b.fuelOuts}`}</span>`)
       .join(" ")
     const logs = g.logs.map((l) => `<a href="/logs/${encodeURIComponent(l.file)}" target="_blank">P${l.seat}</a>`).join(" ")
-    return `<div class="game">
-      <div><b>第 ${g.index} 局</b> <span class="muted">种子 ${g.seed}</span> ${lineup}</div>
-      <div>→ ${won}（第 ${g.tick} tick，${esc(g.reason)}） ${trouble}
-        ${g.replay ? `<button class="link" data-replay="${esc(g.replay)}">看回放</button> <span class="muted">日志</span> ${logs}` : '<span class="muted">没存回放</span>'}</div>
+    return `<div class="game match-game">
+      <div class="game-top"><b>第 ${g.index} 局</b><span class="muted">种子 ${g.seed} · ${g.tick} tick</span></div>
+      <div class="game-lineup">${lineup}</div>
+      <div class="game-bottom"><div><strong class="game-winner">${won}</strong><span class="game-reason">${esc(g.reason)}</span>${trouble}</div><div class="game-actions">
+        ${g.replay ? `<button class="watch-replay" data-replay="${esc(g.replay)}">▶ 看回放</button>` : '<span class="muted">未保存回放</span>'}${logs?`<span class="game-logs">日志 ${logs}</span>`:""}</div></div>
     </div>`
   }
 
@@ -739,13 +740,17 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
       const list = await api<Series[]>("/api/arena/series")
       $("ar-history").innerHTML = list.length
         ? list.map((s) => `<details><summary>${seriesHead(s)}</summary>${seriesBody(s)}</details>`).join("")
-        : '<span class="muted">还没有比赛记录</span>'
+        : '<div class="history-empty"><span>尚无比赛记录</span><small>完成的比赛会保存在这里，可随时展开结果或观看回放。</small></div>'
     } catch (e) {
       $("ar-history").textContent = (e as Error).message
     }
   }
 
   const renderRun = (r: RunState) => {
+    running = r.running
+    $<HTMLButtonElement>("ar-start").disabled = running || (league() && (current()?.players.max ?? 2) < 2)
+    $<HTMLButtonElement>("ar-stop").disabled = !running
+    $("ar-start").textContent = running ? "比赛进行中…" : "▶ 开始比赛"
     const events = r.events ?? []
     const start = events.find((e) => e.type === "start") as StartEvent | undefined
     const games = events.filter((e) => e.type === "game") as GameEvent[]
@@ -753,6 +758,7 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
     const errors = events.filter((e) => e.type === "error").map((e) => String(e.message))
     const warnings = events.filter((e) => e.type === "warning").map((e) => String(e.message))
     $("ar-progress").textContent = r.running ? `进行中 ${games.length}/${start?.games ?? "?"}` : r.cancelled ? "已停止" : summary ? "已完成" : errors.length ? "出错" : ""
+    $("ar-progress").dataset.state = running ? "running" : errors.length ? "error" : "ready"
     const head = start
       ? start.league
         ? `<div class="muted">联赛 · ${esc(start.name)} · ${start.participants.length} 个 bot · ${(start.size ?? 2) > 2 ? `每局 ${start.size} 人 · ${start.tables} 桌 · 每桌 ${start.perTable} 局` : `每对 ${start.perTable} 局`} · 共 ${start.games} 局 · 种子从 ${start.seed} 起</div>`
@@ -763,17 +769,15 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
     const lmulti = start ? (start.size ?? 2) > 2 || (start as { partners?: string }).partners === "mixed" : false
     const teamed = start ? start.teams !== null : false
     if (events.length === 0 && !r.running) {
-      $("ar-current").innerHTML = '<span class="muted">还没开始</span>'
+      $("ar-current").innerHTML = '<div class="arena-empty"><div class="duel-emblem" aria-hidden="true"><span>◇</span><b>VS</b><span>◇</span></div><h2>下一场较量，由你安排</h2><p>设置赛制与参赛 bot，开始后在这里查看比赛进度和结果。</p><div class="empty-steps"><span>选择规则</span><i>›</i><span>配置阵容</span><i>›</i><span>开始比赛</span></div></div>'
       return
     }
     $("ar-current").innerHTML =
-      head +
+      (start ? `<div class="run-overview"><div class="run-numbers"><div><strong>${games.length}<small> / ${start.games}</small></strong><span>已完成对局</span></div><div><strong>${start.participants.length}</strong><span>参赛 bot</span></div><div><strong>${start.league?"联赛":"对局"}</strong><span>${r.running?"正在进行":summary?"比赛结束":"等待结果"}</span></div></div><div class="run-track" role="progressbar" aria-label="比赛进度" aria-valuemin="0" aria-valuemax="${start.games}" aria-valuenow="${games.length}"><span style="width:${Math.max(0,Math.min(100,games.length/Math.max(1,start.games)*100))}%"></span></div>${head}</div>` : head) +
       errors.map((m) => `<div class="err">${esc(m)}</div>`).join("") +
       warnings.map((m) => `<div class="warn">提醒：${esc(m)}</div>`).join("") +
       (start?.league ? highlightsHtml(summary?.highlights) + (standings ? standingsHtml(standings, lmulti) + partnersHtml(standings) + statsHtml(standings.stats, standings) : "") + leagueGames(games, r.running, teamed) : games.map((g) => gameRow(g, teamed)).join("") + (summary ? summaryTable(summary) : "")) +
       (!r.running && r.exitCode && !errors.length && r.stderr ? `<pre class="err">${esc(r.stderr)}</pre>` : "")
-    $<HTMLButtonElement>("ar-start").disabled = r.running
-    $<HTMLButtonElement>("ar-stop").disabled = !r.running
   }
 
   const poll = async () => {
