@@ -341,7 +341,7 @@ const QUIET_MIN_SPEED = 4
  * D-225 大战也 4 倍速（用户嫌节奏慢），D-226 不再分大战、小冲突（用户：都是 4 倍速没区别）
  */
 const FIGHT_SPEED = 4
-/** 一下挪了好几格的单位（击退这类规则包 teleport）滑到落点要几帧（D-226，30 帧一秒：0.6 秒，4 倍速下也看得出谁被推走了） */
+/** 被击退的单位滑到落点要几帧（D-226，30 帧一秒：0.6 秒，4 倍速下也看得出谁被推走了） */
 const KNOCK_FRAMES = 18
 /** 眩晕在回放里跟增益记在一起（recorder.ts），视频里不画金圈（D-226：被击退的敌人套着金圈，像吃了增益） */
 const STUN = "眩晕"
@@ -550,12 +550,13 @@ export function replayScene(
   let castAt = new Map<string, number>()
   let bornAt = new Map<number, number>()
   let healedAt = new Map<number, number>()
-  // 一下挪了 2 格以上的单位（击退这类规则包 teleport，D-226）：从哪儿、第几帧开始滑
-  let knocks = new Map<number, { x0: number; y0: number; frame: number }>()
+  // 被击退的单位（D-226）：从哪儿、滑到哪儿、第几帧开始滑
+  let knocks = new Map<number, { x0: number; y0: number; x1: number; y1: number; frame: number }>()
   /** 第 i 帧画在哪：在滑的按缓出插值（先快后慢），滑完或没在滑就是实际位置；p 是滑了多少（0～1） */
   const drawnAt = (id: number, e: { x: number; y: number }, i: number) => {
     const k = knocks.get(id)
-    if (!k) {
+    // 落地后又走开了（快进时一帧好几 tick）：不再滑，免得拖尾一直拉到它现在的位置（D-235）
+    if (!k || e.x !== k.x1 || e.y !== k.y1) {
       const step = walking.get(id)
       const p = !step || i >= playFrames ? 1 : Math.min(1, Math.max(0, (tickOf(i) - step.tick) / step.duration))
       return { x: step ? step.x + (e.x - step.x) * p : e.x, y: step ? step.y + (e.y - step.y) * p : e.y, p: 1 }
@@ -603,7 +604,8 @@ export function replayScene(
           fallen.push({ x: e.x, y: e.y, w: ty.w, h: ty.h, owner: e.owner, age: 0, frame: displayedAt[k], duration: Math.round(fps * (ty.kind === "building" ? 1.2 : .65)), building: ty.kind === "building" })
         }
       }
-      // 这一 tick 一下挪了 2 格以上的（规则包 teleport，比如击退）：画成从原来的位置滑过去（D-226，用户：4 倍速下根本看不出谁被击退）；
+      // 被击退的（规则包 teleport 一下挪 2 格以上，落点有规则包放的特效、或者这一 tick 被眩晕）：画成从原来的位置滑过去（D-226，用户：4 倍速下根本看不出谁被击退）；
+      // 光看挪了几格不算：自己人互相让路时一 tick 里能被连着换好几次位置，一下挪 2～4 格，那是走路（D-235，用户：兵营出来的兵快进会错误触发击退效果）；
       // 规则包在落点放的那团特效不画（用户：被击退的不用再显示这个意义不明的效果），带字的（领主身上的「击退」冲击波）照画
       const landed = new Set<string>()
       const mv = f.move ?? []
@@ -612,7 +614,7 @@ export function replayScene(
         if (!e) continue
         const dx = mv[j + 1] - e.x, dy = mv[j + 2] - e.y
         const distance = Math.max(Math.abs(dx), Math.abs(dy))
-        const displaced = distance >= 2 && (distance >= 3 || f.fx?.some((fx) => fx.x === mv[j + 1] && fx.y === mv[j + 2]) || f.bf?.some(([id, bf]) => id === e.id && bf?.includes(STUN)))
+        const displaced = distance >= 2 && (f.fx?.some((fx) => fx.x === mv[j + 1] && fx.y === mv[j + 2]) || f.bf?.some(([id, bf]) => id === e.id && bf?.includes(STUN)))
         if (!displaced) {
           // 走一步才转身；被击退的照旧面朝原来的方向往后滑（D-234）
           facing.set(e.id, faceToward(facing.get(e.id) ?? homeFace(e), dx))
@@ -620,7 +622,7 @@ export function replayScene(
           continue
         }
         const from = drawnAt(mv[j], e, displayedAt[k])
-        knocks.set(mv[j], { x0: from.x, y0: from.y, frame: displayedAt[k] })
+        knocks.set(mv[j], { x0: from.x, y0: from.y, x1: mv[j + 1], y1: mv[j + 2], frame: displayedAt[k] })
         landed.add(`${mv[j + 1]},${mv[j + 2]}`)
       }
       for (const e of f.spawn ?? []) bornAt.set(e.id, f.t)
@@ -712,7 +714,10 @@ export function replayScene(
       const lh = healedAt.get(e.id)
       if (regen && lh !== undefined && t - lh <= regen.every + 1) healing.push(d.x, d.y, ty.w, ty.h)
     }
-    for (const [id, k] of knocks) if (!state.ents.has(id) || i - k.frame >= KNOCK_FRAMES) knocks.delete(id)
+    for (const [id, k] of knocks) {
+      const e = state.ents.get(id)
+      if (!e || e.x !== k.x1 || e.y !== k.y1 || i - k.frame >= KNOCK_FRAMES) knocks.delete(id)
+    }
     casts = casts.filter((c) => i - c.frame < 18)
     heals = heals.filter((h) => i - h.frame < 14)
     ruleFxs = ruleFxs.filter((r) => i - r.frame < 24)

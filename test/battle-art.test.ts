@@ -240,3 +240,21 @@ test("朝向（D-234）：没动过的背对自己的主基地；正上正下走
   assert.equal(workerPose(r, ents, up, 1, false)!.angle, undefined)
   assert.equal(workerPose(r, ents, left, 1, false)!.angle, Math.PI)
 })
+
+test("击退拖尾只认真正的击退（D-235）：让路时一 tick 挪 3 格不算；击退落地后又走开，拖尾不跟着拉长", () => {
+  const plain = fixture()
+  plain.frames[49] = { t: 50, move: [1, 9, 5] }
+  let sc = scene(plain), i = 0
+  while (sc.frame!(i).t < 50) i++
+  assert.equal(sc.frame!(i).knockFx, undefined)
+  const knocked = fixture()
+  knocked.frames[49] = { t: 50, move: [1, 9, 5], fx: [{ x: 9, y: 5, w: 1, h: 1, color: "#9fd8ff", radius: 1 }], bf: [[1, ["眩晕"]]] }
+  knocked.frames[50] = { t: 51, move: [1, 10, 5] }
+  sc = scene(knocked); i = 0
+  while (sc.frame!(i).t < 50) i++
+  const kf = sc.frame!(i).knockFx
+  // 同一帧里已经走到 51 tick（快进）就不滑了；还在 50 tick 就从原来的位置往落点滑，终点不过落点
+  if (sc.frame!(i).t === 50) assert.ok(kf && kf[0] === 6 && kf[2] <= 9, JSON.stringify(kf))
+  while (sc.frame!(i).t < 51) i++
+  assert.equal(sc.frame!(i).knockFx, undefined)
+})
