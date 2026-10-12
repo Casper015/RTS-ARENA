@@ -1,6 +1,6 @@
-// 塔爆（封主矿、骑兵砍副矿）：开局留 1 个工人采矿，另外 3 个工人直接走到对手家门口，在它主基地射程外、又够得着它家门口金矿的地方合力建箭塔，封住它的主矿（专打采矿的工人）；家里同时建兵营，先出骑兵：塔把对方逼去分矿、仓库那边采，4 个骑兵就从塔边出发去砍那边的工人（不进它主基地射程、不靠近它的箭塔，枪兵围上来就跑），有没人护着的炮来拆塔就先砍炮。第一座塔之后，兵营建好、出了骑兵才补塔、加塔，对方那边建好 3 座、或者塔全被拆了就收手，建塔的工人回家采矿。第 1500 tick 起转中期：枪、弓、骑 2:2:1 带 2 门炮，凑够 14 个推。
-// 仿照克制拓荒里一个大模型写的「四个工人去对方家门口合建箭塔」的打法（D-217；这里派 3 个，家里留的人多些，用户：参考 bot 里要有这种打法，让写 bot 的大模型有防备）；D-219 加上骑兵砍副矿。
-// 防它：看到对方工人往你家门口走就拉工人、派兵去打建塔的工人（地基长血比打得快，打人不打地基）；塔建好了就出炮拆（炮射程 5，塔打不到它），炮要带兵护着；矿被塔盯上就去别的矿、开分矿，分矿要有枪兵守着防骑兵。
+// 塔爆（封主矿、骑兵砍副矿）：开局留 1 个工人采矿，另外 3～4 个工人绕开对手主基地的射程走到它家门口，站在塔位旁背着它主基地的几格里合力建箭塔（塔离它主基地 7 格以上，罩住它家门口金矿旁采矿的位置，5 格内的矿对方多半当成去不得的矿），封住它的主矿；家里同时先建兵营、出骑兵，对方被逼去分矿，4 个骑兵就从塔边出发去砍那边的工人（不靠近它的箭塔，枪兵围上来就跑），有没人护着的炮来拆塔就先砍炮。塔建好以后建塔的工人回家采矿。第 1500 tick 起转中期：枪、弓、骑 2:2:1 带 2 门炮，凑够 14 个推。
+// 塔位只看地形和已知的建筑、金矿来挑，走到旁边再用 buildProblem 确认；建塔的工人先走到塔位背后 4 格外再笔直走过去，不沿对手主基地射程边走。
+// 防它：看到对方工人往你家门口走就拉工人（多拉几个，别只拉两个）和兵去围打建塔的工人，打人不打地基，趁塔没建好围死它们；塔建好了就出炮拆（炮射程 5，塔打不到它），炮要带兵护着；矿被塔盯上就去别的矿、开分矿，分矿要有枪兵守着防骑兵。
 /** 这个 bot 的打法参数（几个参考 bot 共用下面的写法，只有这里不一样，D-219） */
 const CFG = {
   workers: 10,
@@ -28,8 +28,8 @@ const CFG = {
   midRaid: 4,
   midPushAt: 14,
   militia: true,
-  engineers: 3,
-  rushTowers: 3,
+  engineers: 4,
+  rushTowers: 1,
 }
 
 // ======================= 下面是几个参考 bot 共用的写法（各 bot 只有上面的 CFG 不一样） =======================
@@ -59,6 +59,10 @@ const siteSeen = new Map<number, number>()
 /** 塔爆（CFG.engineers > 0）：去对手家门口建塔的工人 id；建好过塔没有（塔全被拆了就收手） */
 let engineers: number[] = []
 let hadTower = false
+/** 塔爆：下一座塔打算建的位置；放不下的位置（按格子编号记） */
+let planned: Pos | null = null
+const skipSpots = new Set<number>()
+let plannedWait = 0
 
 function nearest<T extends Pos>(from: Pos, list: T[]): T | undefined {
   let best: T | undefined
@@ -132,24 +136,70 @@ function attack(cmd: Commands, u: Entity, t: Entity): void {
 }
 
 /** 农田旁边（贴着它）能站的空格里离 from 最近的 */
-/** 塔爆的塔位：离对手主基地 8 格以上（主基地射程 6，围着地基建的工人也不挨打）、离它家门口某个金矿 3 格以内（箭塔射程 4，矿边的工人在射程里）；挑盖住金矿最多的，一样多挑离它主基地远些（10 格封顶）、离 from 近的格子 */
-function towerSpot(view: View, from: Pos, eb: { x: number; y: number; w: number; h: number }): Pos | null {
+const DIRS = [[0, -1], [-1, 0], [1, 0], [0, 1]]
+const walkAt = (x: number, y: number) => x >= 0 && y >= 0 && x < game.width && y < game.height && !!game.walkable[game.terrain[y][x]]
+const covers = (b: { x: number; y: number; w: number; h: number }, x: number, y: number) => x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h
+/** 塔爆：塔 c 旁边建塔的工人能站的格子（四邻、能走、没有建筑、在对手主基地射程外——射程 6，离它 7 格以上） */
+function safeCells(c: Pos, eb: { x: number; y: number; w: number; h: number }, blockers: Entity[]): Pos[] {
+  const out: Pos[] = []
+  for (const [dx, dy] of DIRS) {
+    const x = c.x + dx
+    const y = c.y + dy
+    if (!walkAt(x, y) || blockers.some((b) => covers(b, x, y))) continue
+    if (dist({ x, y, w: 1, h: 1 }, eb) < 7) continue
+    out.push({ x, y })
+  }
+  return out
+}
+/** 走到塔旁的安全格：离得远时先走到这格背着对手主基地方向 4 格外的点，再笔直走过来（别沿着对手主基地的射程边走，路上挨打） */
+function goCell(cmd: Commands, w: Entity, cell: Pos, eb: { x: number; y: number; w: number; h: number }): void {
+  const ex = eb.x + 1
+  const ey = eb.y + 1
+  const vertical = Math.abs(cell.y - ey) >= Math.abs(cell.x - ex)
+  const way = vertical ? { x: cell.x, y: cell.y + Math.sign(cell.y - ey || 1) * 4 } : { x: cell.x + Math.sign(cell.x - ex || 1) * 4, y: cell.y }
+  let clear = true
+  for (let i = 0; i <= 4; i++) {
+    const x = vertical ? cell.x : cell.x + Math.sign(cell.x - ex || 1) * i
+    const y = vertical ? cell.y + Math.sign(cell.y - ey || 1) * i : cell.y
+    if (!walkAt(x, y) || dist({ x, y, w: 1, h: 1 }, eb) < 7) clear = false
+  }
+  if (clear && dist(w, cell) > 5) order(cmd, w, "move", way)
+  else order(cmd, w, "move", cell)
+}
+/** 塔爆的塔位（只看地形和已知的建筑、金矿，不要求现在看得见，走到旁边再用 buildProblem 确认）：
+ *  离对手主基地 7 格以上（射程 6，打不到塔和建塔的工人），箭塔射程 4 内盖住对手家门口金矿旁采矿工人能站的格子（还没被已有的塔盖住的）越多越好，盖住的矿越多越好；一样的取离 from 近的 */
+function towerPlan(view: View, from: Pos, eb: { x: number; y: number; w: number; h: number }, towers: Pos[], blockers: Entity[], skip: Set<number>): Pos | null {
   const mines = view.entities.filter((e) => e.type === "goldmine" && (e.amount ?? 0) > 0 && dist(e, eb) <= 9)
+  const slots: { x: number; y: number; m: number }[] = []
+  for (const m of mines)
+    for (const [dx, dy] of DIRS) {
+      const x = m.x + dx
+      const y = m.y + dy
+      if (!walkAt(x, y) || blockers.some((b) => covers(b, x, y))) continue
+      slots.push({ x, y, m: m.id })
+    }
+  const fresh = slots.filter((s) => !towers.some((t) => dist(t, s) <= 4))
   let best: Pos | null = null
   let bestScore = -Infinity
-  const done = new Set<number>()
-  for (const m of mines)
-    for (let dy = -3; dy <= 3; dy++)
-      for (let dx = -3; dx <= 3; dx++) {
-        const x = m.x + dx
-        const y = m.y + dy
-        if (done.has(y * game.width + x)) continue
-        done.add(y * game.width + x)
+  const seenCell = new Set<number>()
+  for (const s of fresh)
+    for (let dy = -4; dy <= 4; dy++)
+      for (let dx = -(4 - Math.abs(dy)); dx <= 4 - Math.abs(dy); dx++) {
+        const x = s.x + dx
+        const y = s.y + dy
+        const key = y * game.width + x
+        if (seenCell.has(key)) continue
+        seenCell.add(key)
+        if (!walkAt(x, y) || skip.has(key) || blockers.some((b) => covers(b, x, y))) continue
         const c = { x, y, w: 1, h: 1 }
-        if (dist(c, eb) < 8 || !canBuild(view, "tower", x, y)) continue
-        // 别贴着建筑、金矿（留出采矿的路）
-        if (view.entities.some((e) => game.types[e.type].kind !== "unit" && dist(e, c) <= 1)) continue
-        const score = mines.filter((k) => dist(k, c) <= 3).length * 100 + Math.min(dist(c, eb), 10) * 15 - dist(c, from)
+        if (dist(c, eb) < 7 || blockers.some((b) => dist(b, c) <= 1)) continue
+        const safe = safeCells(c, eb, blockers).length
+        if (safe < 2) continue
+        const cov = fresh.filter((k) => dist(k, c) <= 4)
+        const nm = new Set(cov.map((k) => k.m)).size
+        // 对方的 bot 多半把箭塔 5 格内的矿都当成去不得的矿，所以 5 格内的矿也算分
+        const near5 = new Set(mines.filter((m) => dist(m, c) <= 5 && !towers.some((t) => dist(t, m) <= 5)).map((m) => m.id)).size
+        const score = cov.length * 8 + nm * 15 + near5 * 30 + Math.min(safe, 4) * 40 - dist(c, from) * 0.4
         if (score > bestScore) {
           bestScore = score
           best = { x, y }
@@ -203,7 +253,13 @@ export function onTick(view: View, cmd: Commands): void {
     // 塔爆：开局留离金矿最近的 1 个工人采矿，其余的去对手家门口建塔
     const ws = mine.filter((e) => e.type === "worker")
     const miner = ws.slice().sort((a, b) => dist(a, nearest(a, goldmines) ?? a) - dist(b, nearest(b, goldmines) ?? b))[0]
-    engineers = ws.filter((w) => w.id !== miner?.id).slice(0, CFG.engineers).map((w) => w.id)
+    // 派几个人：塔位旁边安全的格子有几个就派几个（最多 CFG.engineers），多了也只是站着等
+    const rect0 = { x: view.objectives.enemyBases[0].x, y: view.objectives.enemyBases[0].y, w: 3, h: 3 }
+    const cand = ws.filter((w) => w.id !== miner?.id)
+    const blockers0 = view.entities.filter((e) => game.types[e.type].kind !== "unit")
+    const plan0 = towerPlan(view, cand[0] ?? ws[0], rect0, [], blockers0, skipSpots)
+    const nSafe = plan0 ? safeCells(plan0, rect0, blockers0).length : CFG.engineers
+    engineers = cand.slice(0, Math.max(1, Math.min(CFG.engineers, nSafe + 1))).map((w) => w.id)
   }
   engineers = engineers.filter((id) => mine.some((e) => e.id === id))
   const crew = mine.filter((e) => engineers.includes(e.id))
@@ -242,7 +298,7 @@ export function onTick(view: View, cmd: Commands): void {
     engineers = []
   }
   // 给下一座塔留 100 金：第一座马上建；之后要等兵营建好、出了骑兵（先护住第一座再加塔）
-  const nextTower = engineers.length > 0 && !rushTowers.some((t) => t.construction) && (rushTowers.length === 0 || (done("barracks").length > 0 && army.some((u) => u.type === "cavalry")))
+  const nextTower = engineers.length > 0 && !rushTowers.some((t) => t.construction) && rushTowers.length < CFG.rushTowers && (rushTowers.length === 0 || (done("barracks").length > 0 && army.some((u) => u.type === "cavalry")))
   let gold = view.resources.gold - (nextTower ? 100 : 0)
   let reserve = 0
 
@@ -264,16 +320,58 @@ export function onTick(view: View, cmd: Commands): void {
   const intruders = foeBuildings.filter((b) => (b.type === "tower" || b.type === "wall") && (dist(b, base) <= 16 || goldmines.some((m) => dist(m, base) <= 12 && dist(b, m) <= 6)))
   if (intruders.length) siegeNeeded = true
 
-  // ---------- 塔爆的工人：一起建塔，躲兵，砍没人护着的炮，塔挨炮时离开塔边 ----------
+  // ---------- 塔爆的工人：走到塔位旁（站在离对手主基地射程外的那几格），合力建塔，躲兵，砍没人护着的炮，塔挨炮时离开塔边 ----------
   if (crew.length > 0) {
+    const blockers = [...new Map([...view.entities.filter(isBuilding).concat(view.entities.filter((e) => e.type === "goldmine")), ...foeMemory.values()].map((e) => [e.id, e] as const)).values()]
     const site = rushTowers.find((t) => t.construction)
     const lead = crew[0]
     // 只躲兵，不躲工人：对方派工人来打地基时接着建
     const threat = foes.filter((e) => isArmy(e) && e.type !== "cannon")
     const siege = foes.filter((e) => e.type === "cannon" && (rushTowers.some((t) => dist(t, e) <= 6) || crew.some((w) => dist(w, e) <= 6)))
     const loneSiege = siege.filter((c) => !threat.some((e) => dist(e, c) <= 3))
+    if (site) planned = null
+    else if (nextTower) {
+      if (planned && (blockers.some((b) => covers(b, planned!.x, planned!.y)) || skipSpots.has(planned.y * game.width + planned.x))) planned = null
+      if (!planned) {
+        planned = towerPlan(view, lead, enemyRect, rushTowers, blockers, skipSpots)
+        plannedWait = 0
+        if (planned) console.log(`第 ${view.tick} tick 塔位 (${planned.x}, ${planned.y})`)
+      }
+    }
+    const target: Pos | null = site ?? planned
+    // 每个建塔的工人分一个塔旁边的安全格（离对手主基地 7 格以上）
+    const cellOf = new Map<number, Pos>()
+    if (target) {
+      const cells = safeCells(target, enemyRect, blockers)
+      const taken = new Set<number>()
+      const rest = crew.slice()
+      while (rest.length && taken.size < cells.length) {
+        let bw: Entity | undefined
+        let bc: Pos | undefined
+        let bd = Infinity
+        for (const w of rest)
+          for (const c of cells) {
+            if (taken.has(c.y * game.width + c.x)) continue
+            const d = Math.abs(w.x - c.x) + Math.abs(w.y - c.y)
+            if (d < bd) {
+              bd = d
+              bw = w
+              bc = c
+            }
+          }
+        if (!bw || !bc) break
+        taken.add(bc.y * game.width + bc.x)
+        cellOf.set(bw.id, bc)
+        rest.splice(rest.indexOf(bw), 1)
+      }
+    }
+    let placed = false
+    let atCell = 0
+    // 来的兵不多（两个以内）、塔已经动工或者建好时，继续建（地基长血比一个枪兵打得快，建好的塔会收拾它）
+    const near = site ?? rushTowers[0]
+    const fewThreat = !!near && threat.filter((e) => dist(e, near) <= 6).length <= 2
     for (const w of crew) {
-      const danger = threat.some((e) => dist(e, w) <= 3)
+      const danger = threat.some((e) => dist(e, w) <= 3) && !(fewThreat && dist(w, near!) <= 3 && (site ? (site.construction?.done ?? 0) >= 60 : true))
       if (loneSiege.length && !danger) {
         // 炮打的是塔，砍它的人不挨溅射
         attack(cmd, w, nearest(w, loneSiege)!)
@@ -290,23 +388,37 @@ export function onTick(view: View, cmd: Commands): void {
         order(cmd, w, "move", clampPos({ x: w.x + Math.sign(w.x - c.x || 1) * 3, y: w.y + Math.sign(w.y - c.y || 1) * 3 }))
         continue
       }
+      const cell = cellOf.get(w.id)
       if (site) {
-        if (w.order?.kind !== "build" || w.order.target !== site.id) cmd.build(w, "tower", site.x, site.y)
+        if (dist(w, site) <= 1) {
+          if (w.order?.kind !== "build" || w.order.target !== site.id) cmd.build(w, "tower", site.x, site.y)
+        } else if (cell) goCell(cmd, w, cell, enemyRect)
+        else if (dist(w, site) > 3) order(cmd, w, "move", toward(site, home, 2))
         continue
       }
-      if (dist(w, enemyRect) > 12) {
-        // 先走到对手主基地射程外 11 格，再找塔位（别从它主基地旁边绕过去）
-        order(cmd, w, "move", toward(enemyCenter, home, 11))
+      if (planned) {
+        if (!cell) {
+          // 没分到格子的在塔位旁边等
+          if (dist(w, planned) > 3) order(cmd, w, "move", toward(planned, home, 2))
+        } else if (w.x !== cell.x || w.y !== cell.y) goCell(cmd, w, cell, enemyRect)
+        else {
+          atCell++
+          if (nextTower && view.resources.gold >= 100 && buildProblem(view, "tower", planned.x, planned.y) === null) {
+            cmd.build(w, "tower", planned.x, planned.y)
+            placed = true
+          }
+        }
         continue
       }
-      if (w.id !== lead.id) {
-        if (dist(w, lead) > 2) order(cmd, w, "move", { x: lead.x, y: lead.y })
-        continue
+      if (nextTower && dist(w, enemyRect) > 12) order(cmd, w, "move", toward(enemyCenter, home, 11))
+    }
+    if (planned && !placed && atCell > 0 && nextTower && view.resources.gold >= 100) {
+      // 站到位了还放不下：连着几次就换个塔位
+      if (++plannedWait >= 4) {
+        console.log(`第 ${view.tick} tick 塔位 (${planned.x}, ${planned.y}) 放不下：${buildProblem(view, "tower", planned.x, planned.y)}，换一个`)
+        skipSpots.add(planned.y * game.width + planned.x)
+        planned = null
       }
-      if (!nextTower || view.resources.gold < 100) continue
-      const spot = towerSpot(view, w, enemyRect)
-      if (spot) cmd.build(w, "tower", spot.x, spot.y)
-      else order(cmd, w, "move", toward(enemyCenter, home, 8))
     }
   }
 

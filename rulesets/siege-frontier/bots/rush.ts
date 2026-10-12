@@ -1,16 +1,16 @@
-// 骑兵骚扰转马弓：前期两座兵营只出骑兵，凑够 4 个就出门专杀采矿的工人（家里照样开分矿、种 4 块田）：不进对方主基地射程、不靠近箭塔，看不到工人就轮流去对手那一侧的矿找；冲进对方主基地射程最多待 80 tick；对方的枪兵、弓兵围上来（每 2 个骑兵 1 个以上）就跑回家，凑齐了再出去，血掉到三成五以下的骑兵留在家里。第 2000 tick 起转中期：弓兵、骑兵 2:1 出，骚扰队只留 6 个骑兵，其余骑兵和弓兵合成主力，凑够 14 个出击。
-// 防它：矿边建箭塔、出枪兵守着工人，工人见到骑兵就往主基地跑。
+// 骑兵骚扰转马弓：前期兵营只出骑兵，凑够 4 个就出门专杀采矿的工人，也砍落单的弓兵和炮（家里照样开分矿、种 4 块田）：只打旁边枪兵压得住的目标（每个枪兵要 3 个骑兵以上），不靠近箭塔（没建好的也躲），枪兵靠到 3 格内就绕开；没有目标就去离对方主基地 10 格以外的矿（分矿、中间的大矿）找，再没有就在它主基地射程外 16 格盯着；冲进对方主基地射程最多待 120 tick，血掉到三成五以下的骑兵留在家里。第 2000 tick 起转中期：弓兵、骑兵 2:1 出，骚扰队只留 6 个骑兵，其余骑兵和弓兵合成主力，凑够 14 个出击。
+// 防它：矿边建箭塔、出枪兵守着工人（枪兵一下 28，骑兵 6 下就死，骑兵不敢靠近有枪兵守着的工人），工人见到骑兵就往主基地跑；分矿也要留枪兵，别让它在远处没人看守的矿上屠农。
 /** 这个 bot 的打法参数（几个参考 bot 共用下面的写法，只有这里不一样，D-219） */
 const CFG = {
-  workers: 10,
-  workersLate: 14,
+  workers: 12,
+  workersLate: 15,
   barracksAt: 5,
   barracks: 2,
   secondBarracksAt: 7,
   towers: 0,
   walls: 0,
   depotTick: 99999,
-  depotHomeGold: 900,
+  depotHomeGold: 1100,
   farms: 4,
   farmHomeGold: 800,
   farmTick: 99999,
@@ -115,6 +115,25 @@ function pickTarget(u: Entity, list: Entity[]): Entity | undefined {
     if (score < bestScore) {
       best = e
       bestScore = score
+    }
+  }
+  return best
+}
+
+/** 骑兵躲枪兵：绕 u 一圈 6 格远的 12 个点里挑离枪兵最远、离集合点近、不在危险区里的 */
+function fleeSpot(u: Entity, threats: Entity[], rally: Pos, avoid: (p: Pos) => boolean): Pos {
+  let best: Pos = rally
+  let bestScore = -Infinity
+  for (let k = 0; k < 12; k++) {
+    const a = (k / 12) * Math.PI * 2
+    const p = clampPos({ x: u.x + Math.cos(a) * 6, y: u.y + Math.sin(a) * 6 })
+    if (!game.walkable[game.terrain[p.y][p.x]]) continue
+    let away = Infinity
+    for (const t of threats) away = Math.min(away, dist(t, p))
+    const score = away * 3 - dist(p, rally) * 0.5 - (avoid(p) ? 30 : 0)
+    if (score > bestScore) {
+      bestScore = score
+      best = p
     }
   }
   return best
@@ -479,7 +498,7 @@ export function onTick(view: View, cmd: Commands): void {
     } else if (dist(w, base) > 2) order(cmd, w, "move", toward(home, w, 2))
   }
 
-  // ---------- 骚扰队：骑兵专杀采矿的工人，不进主基地射程、不靠近箭塔，见到枪兵就跑 ----------
+  // ---------- 骚扰队：骑兵专杀采矿的工人（也砍落单的弓兵、炮），不靠近箭塔；枪兵在旁边就躲开，只有人数压得住（每个枪兵 3 个骑兵以上）才集火打枪兵 ----------
   for (const id of [...raiders]) if (!army.some((u) => u.id === id)) raiders.delete(id)
   // 血掉到三成五以下的退出骚扰队（不会回血，留在家里守），别拖住整队
   for (const u of army) if (raiders.has(u.id) && u.hp < u.maxHp * 0.35) {
@@ -493,43 +512,64 @@ export function onTick(view: View, cmd: Commands): void {
   const squad = army.filter((u) => raiders.has(u.id))
   if (squad.length > 0) {
     const c = { x: Math.round(squad.reduce((a, u) => a + u.x, 0) / squad.length), y: Math.round(squad.reduce((a, u) => a + u.y, 0) / squad.length) }
-    // 只躲箭塔；主基地射程里可以冲进去砍几下，最多待 80 tick
-    const forbidden = (p: Entity | Pos) => foeTowers.some((b) => dist(b, p) <= 5)
+    // 没建好的塔也躲（过一会儿就建好了）
+    const forbidden = (p: Entity | Pos) => foeBuildings.some((b) => b.type === "tower" && dist(b, p) <= 5)
     const diving = squad.some((u) => dist(u, enemyRect) <= 6)
     if (!diving) diveStart = -1
     else if (diveStart < 0) diveStart = view.tick
-    const spears = foes.filter((e) => (e.type === "spearman" || e.type === "archer") && dist(e, c) <= 6).length
-    const tooLong = diveStart >= 0 && view.tick - diveStart > 80
-    if (!raidHome && (spears * 2 >= squad.length + 1 || tooLong || squad.length < 2)) raidHome = true
+    // 枪兵：骑兵的克星（一下 28）。某个点 5 格内有几个枪兵，骑兵够不够多压得住（每个枪兵 3 个骑兵）
+    const spears = foes.filter((e) => e.type === "spearman")
+    const guardOf = (p: Pos, self?: Entity) => spears.filter((s) => s !== self && dist(s, p) <= 5).length
+    const strong = (n: number) => n * 3 < squad.length
+    const tooLong = diveStart >= 0 && view.tick - diveStart > 120
+    if (!raidHome && (tooLong || squad.length < 2)) raidHome = true
     const myTowers = done("tower")
     const loneCannons = foes.filter((e) => e.type === "cannon" && myTowers.some((t) => dist(t, e) <= 7) && !foes.some((x) => (x.type === "spearman" || x.type === "archer") && dist(x, e) <= 3))
     // 塔爆的骚扰队在离对手最近的自家塔旁集合（塔封主矿，骑兵从这里出去砍副矿）
     const post = rushTowers.filter((t) => !t.construction).sort((a, b) => dist(a, enemyRect) - dist(b, enemyRect))[0]
+    const gather = post ? toward(centerOf(post), home, 2) : toward(home, enemyCenter, 4)
+    // 躲不开的枪兵：压不住的（旁边枪兵太多），或者在对方主基地射程里（冲过去挨主基地的打）
+    // 没有目标时的等候点：对方主基地射程外 16 格，从这里能盯着它家门口
+    const stage = toward(enemyCenter, home, 16)
+    const dangerous = spears.filter((s) => !strong(guardOf(s, s) + 1) || dist(s, enemyRect) <= 9 || forbidden(s))
     if (loneCannons.length) {
       // 有没人护着的炮在拆自家的塔：先去砍炮（骑兵打炮 ×3）
       for (const u of squad) attack(cmd, u, nearest(u, loneCannons)!)
     } else if (raidHome) {
       // 回家集合，凑齐了再出去
-      const gather = post ? toward(centerOf(post), home, 2) : toward(home, enemyCenter, 4)
       for (const u of squad) order(cmd, u, "move", gather)
       if (squad.length >= Math.min(raidCap, CFG.raidMin) && squad.every((u) => dist(u, gather) <= 4)) raidHome = false
     } else {
-      const prey = foes.filter((e) => e.type === "worker" && !forbidden(e))
-      if (prey.length) {
-        // 离对方主基地远的工人优先（少挨主基地的打），一样远挑近的
-        for (const u of squad) {
-          const t = prey.slice().sort((a, b) => dist(a, u) - Math.min(dist(a, enemyRect), 7) * 2 - (dist(b, u) - Math.min(dist(b, enemyRect), 7) * 2))[0]
-          if (t) attack(cmd, u, t)
+      // 能打的目标：工人、弓兵、炮（旁边的枪兵压得住才打）；枪兵（不在主基地射程里、人数压得住）；箭塔射程里的不去
+      const prey = foes.filter((e) => (e.type === "worker" || e.type === "archer" || e.type === "cannon") && !forbidden(e) && strong(guardOf(e)))
+      const spearPrey = spears.filter((s) => !dangerous.includes(s))
+      const preyScore = (u: Entity, e: Entity) => dist(e, u) - Math.min(dist(e, enemyRect), 7) * 2 - (e.type === "worker" ? 0 : e.type === "spearman" ? -12 : 6)
+      const targets = [...prey, ...spearPrey]
+      // 整队的头号目标是枪兵的话，大家一起打它（集火）
+      const lead = targets.slice().sort((a, b) => preyScore({ x: c.x, y: c.y } as Entity, a) - preyScore({ x: c.x, y: c.y } as Entity, b))[0]
+      const focusSpear = lead && lead.type === "spearman" ? lead : undefined
+      const spots = goldmines.filter((m) => dist(m, enemyRect) < dist(m, base) && dist(m, enemyRect) >= 10 && !forbidden(m) && strong(guardOf(m))).sort((a, b) => dist(a, enemyRect) - dist(b, enemyRect))
+      const patrol = spots.length ? spots[raidTarget % spots.length] : undefined
+      if (patrol && squad.every((x) => dist(x, patrol) <= 4)) raidTarget++
+      for (const u of squad) {
+        const near = dangerous.filter((s) => dist(s, u) <= 3)
+        if (near.length) {
+          // 枪兵到身边了：往远离枪兵、朝自家那一边的方向跑
+          const p = fleeSpot(u, near, gather, (q) => forbidden(q) || dist(q, enemyRect) <= 5)
+          order(cmd, u, "move", p)
+          continue
         }
-      } else {
-        // 看不到工人：轮流去对手那一侧的矿（离它主基地远、旁边没有箭塔的）
-        const spots = goldmines.filter((m) => dist(m, enemyRect) < dist(m, base) && !forbidden(m)).sort((a, b) => dist(a, enemyRect) - dist(b, enemyRect))
-        if (spots.length) {
-          const m = spots[raidTarget % spots.length]
-          if (squad.every((u) => dist(u, m) <= 4)) raidTarget++
-          const p = toward(centerOf(m), home, 2)
-          for (const u of squad) order(cmd, u, "move", p)
+        if (focusSpear) {
+          attack(cmd, u, focusSpear)
+          continue
         }
+        const t = targets.slice().sort((a, b) => preyScore(u, a) - preyScore(u, b))[0]
+        if (t) {
+          attack(cmd, u, t)
+          continue
+        }
+        // 没有能打的：轮流去对手那一侧的矿（离它主基地近的先去，旁边没有压不住的枪兵、没有箭塔的）
+        order(cmd, u, "move", patrol ? toward(centerOf(patrol), home, 2) : stage)
       }
     }
   }
