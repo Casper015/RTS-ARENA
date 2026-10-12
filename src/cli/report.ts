@@ -19,8 +19,10 @@ interface PlayerSample {
   alive: boolean
   /** 到这次抽样为止造东西一共花了多少（所有资源加起来） */
   spentSoFar: number
-  /** 单位类型 → 数量、其中闲着的 */
-  units: Map<string, { n: number; idle: number }>
+  /** 单位类型 → 数量、其中闲着的、在耕田的（贴着自己的农田、命令是 idle，D-227） */
+  units: Map<string, { n: number; idle: number; farm: number }>
+  /** 离自己的建筑 NEAR_RES 格内的资源点一共还剩多少（D-227：附近的矿采光以后工人闲着不算问题） */
+  nearRes: number
   /** 建筑类型 → 数量、其中没建好的 */
   buildings: Map<string, { n: number; building: number }>
 }
@@ -86,6 +88,8 @@ function countList(m: Map<string, number>): string {
   return [...m].map(([k, n]) => `${k}×${n}`).join("、") || "无"
 }
 
+/** 离自己的建筑几格以内的矿算「附近的矿」（D-227：附近的矿都采光了，工人闲着不算问题） */
+const NEAR_RES = 12
 /** 闲着超过这么久的工人单独列出来 */
 const LONG_IDLE = 300
 
@@ -119,6 +123,18 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
   const initialIds = new Set(s.ents.keys())
   const spentTotal = new Array<number>(n).fill(0)
   const samples: { t: number; players: PlayerSample[] }[] = []
+  /** 两个实体占地之间的曼哈顿距离（贴着 = 1，和规则包的 ctx.dist 一样） */
+  const gapOf = (a: EntSnap, b: EntSnap) => {
+    const aw = types[a.type]?.w ?? 1, ah = types[a.type]?.h ?? 1, bw = types[b.type]?.w ?? 1, bh = types[b.type]?.h ?? 1
+    return Math.max(0, b.x - (a.x + aw - 1), a.x - (b.x + bw - 1)) + Math.max(0, b.y - (a.y + ah - 1), a.y - (b.y + bh - 1))
+  }
+  // 农田（rulesets/common/farm.ts，D-218）：贴着自己建好的农田、命令是 idle 的工人在耕田，不算闲着（D-227，攻城拓荒试写反馈）
+  const hasFarms = types.farm?.kind === "building"
+  const farmingAt = (st: State, e: EntSnap) => {
+    if (!hasFarms || e.ord !== "idle" || !isWorker(e.type)) return false
+    for (const f of st.ents.values()) if (f.type === "farm" && f.owner === e.owner && f.bp === undefined && gapOf(e, f) <= 1) return true
+    return false
+  }
   const takeSample = (t: number) => {
     const players: PlayerSample[] = s.players.map((ps, p) => ({
       res: { ...ps.resources },
@@ -127,14 +143,20 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       spentSoFar: spentTotal[p],
       units: new Map(),
       buildings: new Map(),
+      nearRes: 0,
     }))
+    const resources: EntSnap[] = []
+    const owned: EntSnap[] = []
     for (const e of s.ents.values()) {
       if (e.owner < 0 || e.owner >= n) continue
       const k = kind(e.type)
       if (k === "unit") {
-        const u = players[e.owner].units.get(e.type) ?? { n: 0, idle: 0 }
+        const u = players[e.owner].units.get(e.type) ?? { n: 0, idle: 0, farm: 0 }
         u.n++
-        if (e.ord === "idle") u.idle++
+        if (e.ord === "idle") {
+          if (farmingAt(s, e)) u.farm++
+          else u.idle++
+        }
         players[e.owner].units.set(e.type, u)
       } else if (k === "building") {
         const b = players[e.owner].buildings.get(e.type) ?? { n: 0, building: 0 }
@@ -142,6 +164,15 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
         if (e.bp !== undefined) b.building++
         players[e.owner].buildings.set(e.type, b)
       }
+    }
+    for (const e of s.ents.values()) {
+      if (kind(e.type) === "resource" && e.hp > 0) resources.push(e)
+      else if (kind(e.type) === "building" && e.owner >= 0 && e.owner < n) owned.push(e)
+    }
+    for (const r of resources) {
+      const near = new Set<number>()
+      for (const b of owned) if (!near.has(b.owner) && gapOf(r, b) <= NEAR_RES) near.add(b.owner)
+      for (const p of near) players[p].nearRes += r.hp
     }
     samples.push({ t, players })
   }
@@ -217,6 +248,9 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
   }
   const startIdle = (id: number, t: number, born: string) => {
     if (idleFrom.has(id)) return
+    // 停在自己农田边上是在耕田（D-227）
+    const e0 = s.ents.get(id)
+    if (e0 && farmingAt(s, e0)) return
     idleFrom.set(id, t)
     const o = lastOrd.get(id)
     const m = o ? /#(\d+)/.exec(o) : null
@@ -481,14 +515,14 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
   out.push("")
 
   out.push(
-    `## 局势（每 ${every} tick；收入是这一段采到的，估算：生产队列里还没造出来的已经扣了钱、还没算进花费，所以偶尔是负数；单位后面括号里是闲着的个数，建筑括号里是没建好的个数）`,
+    `## 局势（每 ${every} tick；收入是这一段采到的，估算：生产队列里还没造出来的已经扣了钱、还没算进花费，所以偶尔是负数；单位后面括号里是闲着的个数（贴着自己农田耕田的另记「耕田」），建筑括号里是没建好的个数）`,
   )
   samples.forEach((smp, i) => {
     for (const p of seatOrder) {
       const ps = smp.players[p]
       const prev = i > 0 ? samples[i - 1].players[p] : null
       const income = prev ? sum(ps.res) - sum(prev.res) + ps.spentSoFar - prev.spentSoFar : 0
-      const units = [...ps.units].map(([k, u]) => `${k}×${u.n}${u.idle ? `（闲 ${u.idle}）` : ""}`).join(" ") || "无"
+      const units = [...ps.units].map(([k, u]) => `${k}×${u.n}${u.idle || u.farm ? `（${[u.idle ? `闲 ${u.idle}` : "", u.farm ? `耕田 ${u.farm}` : ""].filter(Boolean).join("，")}）` : ""}`).join(" ") || "无"
       const blds = [...ps.buildings].map(([k, b]) => `${k}×${b.n}${b.building ? `（${b.building}）` : ""}`).join(" ") || "无"
       const head = p === seatOrder[0] ? `t${smp.t}`.padEnd(7) : "".padEnd(7)
       out.push(`${head} ${who0(p)}${ps.alive ? "" : "（已出局）"}：${fmtRes(ps.res)}${prev ? `（收入 ${income < 0 ? "−" : "+"}${Math.abs(Math.round(income))}）` : ""}，分 ${Math.round(ps.score)} | 单位 ${units} | 建筑 ${blds}`)
@@ -814,9 +848,15 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
   const hintFor = me === undefined ? [...Array(n).keys()] : [me]
   out.push("## 可能的问题")
   let any = false
+  const costOf = (t: (typeof types)[string]) => Object.values(t.cost ?? {}).reduce((a: number, c) => a + (c ?? 0), 0)
+  const cheapest = Math.min(...Object.values(types).map(costOf).filter((c) => c > 0))
+  // 最便宜的兵（D-227，攻城拓荒试写反馈：城墙才 15 金，平均留着 70 就报「囤着」，其实是在攒一个兵的钱）
+  const cheapestArmy = Math.min(...Object.values(types).filter((t) => t.kind === "unit" && !t.worker).map(costOf).filter((c) => c > 0))
   for (const p of hintFor) {
     const hints: string[] = []
     const st = replay.bots[p]
+    const inGame = after.filter((smp) => smp.players[p].alive)
+    const avgBank = inGame.reduce((a, smp) => a + sum(smp.players[p].res), 0) / Math.max(1, inGame.length)
     if (st?.status === "dead") hints.push(`bot 停止运行了：${st.deadReason}`)
     if (st && (st.errors > 0 || st.fuelOuts > 0)) hints.push(`报错 ${st.errors} 次、燃料耗尽 ${st.fuelOuts} 次（那几次的命令全部作废）`)
     const kinds = errorKinds(replay, p)
@@ -825,7 +865,7 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
     // 兵营空着：前 UTIL_T tick 里，能出兵的建筑在场的时间里有多少在出兵
     if (producerTime[p] >= 1000 && armyBuildTime[p] / producerTime[p] < 0.35)
       hints.push(
-        `前 ${UTIL_T} tick 里能出兵的建筑大约只有 ${Math.round((100 * armyBuildTime[p]) / producerTime[p])}% 的时间在出兵（造出来的兵生产用时加起来 ${armyBuildTime[p]} tick，兵营建好后在场的时间加起来 ${producerTime[p]} tick${multiSlot ? "，能同时造几个就乘几" : ""}）：兵营空着的时候钱去哪了（先补了工人、攒着没花，还是钱不够）`,
+        `前 ${UTIL_T} tick 里能出兵的建筑大约只有 ${Math.round((100 * armyBuildTime[p]) / producerTime[p])}% 的时间在出兵（造出来的兵生产用时加起来 ${armyBuildTime[p]} tick，兵营建好后在场的时间加起来 ${producerTime[p]} tick${multiSlot ? "，能同时造几个就乘几" : ""}）${Number.isFinite(cheapestArmy) && avgBank < cheapestArmy ? `：抽样时平均手上只有 ${Math.round(avgBank)}，不够造一个最便宜的兵（${cheapestArmy}），多半是收入跟不上，不是不会花` : "：兵营空着的时候钱去哪了（先补了工人、攒着没花，还是钱不够）"}`,
       )
     // 工人挤在一个矿上排队（站满了不会自己换矿）
     const queued = [...mining.values()].filter((r) => r.owner === p && r.waiting >= 300).sort((a, b) => b.waiting - a.waiting)
@@ -889,26 +929,36 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       if (chance >= 30 && onCounter / chance < 0.4)
         hints.push(`战场上有被自己克的兵时，只有 ${Math.round((100 * onCounter) / chance)}% 的攻击打在它们身上（${chance} 下里 ${onCounter} 下）。自动攻击只挑最近的、不看克制，要用 cmd.attack 自己挑目标（各仗打谁见「战斗」一节的「伤害」行）`)
     }
-    // 工人闲着才算问题（兵在集结点待命是正常的）
-    const idleWorkers = after.map((smp) => [...smp.players[p].units].filter(([t]) => isWorker(t)).reduce((a, [, u]) => a + u.idle, 0))
+    // 工人闲着才算问题（兵在集结点待命是正常的）；附近的矿采光以后（以前有过矿，现在是 0）没矿可采，闲着不算（D-227，试写反馈）
+    let had = (samples[0]?.players[p].nearRes ?? 0) > 0
+    const dryAt = after.map((smp) => {
+      const d = had && smp.players[p].nearRes === 0
+      if (smp.players[p].nearRes > 0) had = true
+      return d
+    })
+    const withRes = after.filter((_, k) => !dryAt[k])
+    const dry = after.length - withRes.length
+    const idleWorkers = withRes.map((smp) => [...smp.players[p].units].filter(([t]) => isWorker(t)).reduce((a, [, u]) => a + u.idle, 0))
     const avgIdle = idleWorkers.reduce((a, b) => a + b, 0) / Math.max(1, idleWorkers.length)
-    if (avgIdle >= 1.5) hints.push(`抽样时平均有 ${avgIdle.toFixed(1)} 个工人闲着（命令是 idle）：没去采集、也没在建造`)
-    const longest = idleSpans.filter((sp) => sp.owner === p).sort((a, b) => b.to - b.from - (a.to - a.from))
+    if (avgIdle >= 1.5) hints.push(`抽样时平均有 ${avgIdle.toFixed(1)} 个工人闲着（命令是 idle）：没去采集、也没在建造${dry ? `（离你的建筑 ${NEAR_RES} 格内的矿采光以后的 ${dry} 次抽样不算）` : ""}`)
+    // 从哪个时刻起附近的矿一直是采光的：那以后才闲下来的不列
+    let dryFrom = Infinity
+    for (let k = after.length - 1; k >= 0 && dryAt[k]; k--) dryFrom = after[k].t
+    const lateIdle = idleSpans.filter((sp) => sp.owner === p && sp.from >= dryFrom).length
+    const longest = idleSpans.filter((sp) => sp.owner === p && sp.from < dryFrom).sort((a, b) => b.to - b.from - (a.to - a.from))
     for (const sp of longest.slice(0, 3))
       hints.push(
         `${sp.type} #${sp.id} 从 t${sp.from} 闲到 t${sp.to}（${sp.to - sp.from} tick），闲下来时在 (${sp.sx}, ${sp.sy})${sp.sx !== sp.x || sp.sy !== sp.y ? `，${sp.to === last ? "最后" : "当时"}在 (${sp.x}, ${sp.y})` : ""}；${sp.before}${sp.zone !== null ? `（站在规则包标出的区域${sp.zone ? `「${sp.zone}」` : ""}里，可能是故意的）` : ""}`,
       )
     if (longest.length > 3) hints.push(`另有 ${longest.length - 3} 段工人闲了 ${LONG_IDLE} tick 以上`)
-    const cheapest = Math.min(...Object.values(types).map((t) => Object.values(t.cost ?? {}).reduce((a: number, c) => a + (c ?? 0), 0)).filter((c) => c > 0))
-    const inGame = after.filter((smp) => smp.players[p].alive)
-    const avgBank = inGame.reduce((a, smp) => a + sum(smp.players[p].res), 0) / Math.max(1, inGame.length)
-    if (Number.isFinite(cheapest) && avgBank >= cheapest * 4) {
+    if (lateIdle) hints.push(`另有 ${lateIdle} 段是附近的矿采光以后（t${dryFrom} 起）才闲下来的，没算进上面`)
+    if (Number.isFinite(cheapest) && avgBank >= Math.max(cheapest * 4, Number.isFinite(cheapestArmy) ? cheapestArmy * 2 : 0)) {
       // 兵营差不多满负荷时钱多是出兵的瓶颈，不是不会花（D-194，试写反馈：这条在兵营利用率 83% 时也出，会误导）
       const util = producerTime[p] >= 1000 ? armyBuildTime[p] / producerTime[p] : 0
       hints.push(
         util >= 0.7
           ? `手上钱多：抽样时平均留着 ${Math.round(avgBank)}，但能出兵的建筑大约 ${Math.round(util * 100)}% 的时间在出兵，已经差不多满负荷，多的钱只能花在别处（多造能出兵的建筑、技能这些，看规则包有什么）`
-          : `钱囤着没花：抽样时平均手上留着 ${Math.round(avgBank)}（最便宜的东西才 ${cheapest}）`,
+          : `钱囤着没花：抽样时平均手上留着 ${Math.round(avgBank)}（最便宜的东西才 ${cheapest}${Number.isFinite(cheapestArmy) && cheapestArmy !== cheapest ? `，最便宜的兵 ${cheapestArmy}` : ""}）`,
       )
     }
     if (firstHitDealt[p] < 0 && firstHitTaken[p] >= 0) hints.push("整局没打到过敌人，只挨了打")

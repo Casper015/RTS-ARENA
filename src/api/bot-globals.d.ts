@@ -30,14 +30,17 @@ declare function buildProblem(view: View, type: TypeName, x: number, y: number):
 /**
  * 在 near 附近找能放 type 的位置（返回左上角）：按离 near 的距离从近到远找到 maxRange 格（默认 8）；
  * 占地四周 margin 格（默认 1）以内不能有建筑和资源点，留出走路的空，免得堵住采矿的路。
- * 找到的位置 buildProblem 一定是 null；找不到返回 null（可能是附近不在视野里，或者都被占了）
+ * 找到的位置 buildProblem 一定是 null；找不到返回 null（可能是附近不在视野里，或者都被占了）。
+ * 一样近的几个位置先挑 x 小的（左边），x 一样先挑 y 大的（下边）：**不按座位镜像**，两个座位找到的位置不对称。
+ * 要两边对称，就把 near 往自己想要的方向偏一点，或者自己按镜像的顺序逐格用 canBuild 试
  */
 declare function findBuildSpot(view: View, type: TypeName, near: Pos, maxRange?: number, margin?: number): Pos | null
 
 /**
  * 按地形走路的距离（隔着墙时比 dist 准）：从 from（一个点、一个实体，或者它们的数组）出发，上下左右走，
  * 绕开不可走的地形和看得见的建筑、资源点（单位不算挡路）。返回数组，下标是 y * game.width + x，值是走到这一格要几步，走不到是 -1。
- * 起点是建筑这类多格实体时，它占的格子是 0、贴着它的格子是 1（和 dist 一样）。
+ * 起点是建筑这类多格实体时，它占的格子是 0、贴着它的格子是 1（和 dist 一样）：pathDistances(view, base) 里 3×3 主基地占的 9 格都是 0；
+ * 传一个点 pathDistances(view, { x, y }) 就只有那一格是 0。
  * 建筑、资源点自己占的格子（起点除外）走不进去，也是 -1：要算走到某个矿、某座建筑要几步，取它四周邻格里最小的那个加 1。
  * 整张图算一遍，燃料不多但也不是白给：存起来反复用（建筑变了再算），别每个单位每次都算。
  * view 写 null 就只看地形（onStart 里还没有 view 时可以先算一遍）

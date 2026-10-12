@@ -162,6 +162,13 @@ test("战报：被拒命令和闲着的单位会提示", () => {
   assert.match(text, /u #\d+ 从 t0 闲到 t400（400 tick）/)
   assert.match(text, /钱囤着没花/)
   assert.match(text, /整局双方没有交过火/)
+  // 贴着自己建好的农田、命令是 idle 的工人在耕田（D-227）：局势里另记「耕田」，不算闲着
+  const farmed: Replay = JSON.parse(JSON.stringify(replay))
+  farmed.types.farm = { kind: "building", w: 2, h: 2, maxHp: 300, moveTicks: 0, cost: { gold: 60 }, look: { shape: "square" } }
+  farmed.initial.entities.push({ id: 9, type: "farm", owner: 0, x: 0, y: 1, hp: 300, ord: "idle" })
+  const ft = buildReport(farmed, { player: 0, every: 100 })
+  assert.match(ft, /u×3（闲 1，耕田 2）/)
+  assert.doesNotMatch(ft, /平均有 [\d.]+ 个工人闲着/)
 })
 
 test("命令行：report 不写 --player 就按自己的 bot 这局坐的座位；自己打自己每局换种子，汇总按座位报胜场", () => {

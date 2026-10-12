@@ -16,7 +16,8 @@ export function farmType(): TypeSpec {
     w: 2,
     h: 2,
     maxHp: 300,
-    cost: { gold: 100 },
+    // D-227：100 → 60（用户；第一轮试写测出种田净亏：回本要 1100 多 tick，多数局 3000～5000 tick 就结束）
+    cost: { gold: 60 },
     buildTicks: 150,
     sight: 3,
     look: { shape: "square", label: "田", name: "农田" },

@@ -720,7 +720,7 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
       .map((group) => [...new Set(group.map((p) => seats[p]))].filter((x) => !seen.has(x) && (seen.add(x), true)))
       .filter((group) => group.length > 0)
     record.push(mode === "mixed" ? { players: seats, ranking, teams: slots } : mode === "same" ? { players: slots.map((s) => s[0]), ranking } : { players: seats, ranking })
-    stats.add(seats, replay)
+    stats.add(seats, replay, index)
     played.push({ index, seed, replay: noReplays ? null : basename(file), tick: replay.result.tick, seats, sideOf: replay.players.map((pl, p) => pl.team ?? p), facts: gameFacts(replay) })
     const won = replay.result.winners ?? []
     let lineup: string
@@ -885,6 +885,8 @@ async function cmdCompare(rules: Ruleset, src: RulesetRef, a: string, b: string,
   /** 每组版本 B 减版本 A 的得分，按对手、组的顺序 */
   const diffs: number[] = new Array(foes.length * perPair).fill(0)
   const saved: { k: number; g: number; foe: string; seed: number; seat: number; sa: number; sb: number; files: string[] }[] = []
+  // 两个版本都没赢的组（D-227，试写反馈：compare 里输的局想拿 run 复现，种子对不上）
+  const bothLost: { k: number; g: number; foe: string; seed: number; seat: number; s: number }[] = []
   const outcome = (s: number) => (s === 1 ? "赢" : s === 0 ? "输" : "平")
   // 每组两局（两个版本各一局），所有局一起分给几个线程打；完成的先后不定，同一组两局都打完了再算
   type CmpJob = GameJob & { k: number; g: number; v: number }
@@ -923,6 +925,7 @@ async function cmdCompare(rules: Ruleset, src: RulesetRef, a: string, b: string,
       diffs[key] = sb - sa
       if (sb > sa) row.better++
       if (sb < sa) row.worse++
+      if (sa === sb && sa < 1) bothLost.push({ k, g, foe: row.name, seed, seat, s: sa })
       row.done++
       groupsDone++
       // --all-replays（D-194，试写反馈：只存胜负不同的组，没法汇总塔这类全局统计）：每组都存
@@ -993,6 +996,18 @@ async function cmdCompare(rules: Ruleset, src: RulesetRef, a: string, b: string,
     if (saved.length > 12) console.log(`  另有 ${saved.length - 12} 组`)
     console.log(`  看某一局：rts-arena report <回放> --player ${saved[0].seat}`)
   }
+  bothLost.sort((x, y) => x.k - y.k || x.g - y.g)
+  if (bothLost.length)
+    console.log(
+      `\n两个版本都没赢的组（${bothLost.length} 组）：${bothLost
+        .slice(0, 12)
+        .map((x) => `对 ${x.foe} 种子 ${x.seed} 坐 P${x.seat}（${outcome(x.s)}）`)
+        .join("；")}${bothLost.length > 12 ? "……" : ""}`,
+    )
+  if (saved.length || bothLost.length)
+    console.log(
+      `复现某一组：rts-arena run ${rules.id} <版本文件> <对手> --seed <种子> --games 2，第 1 局版本坐 P0、第 2 局坐 P1（每组的种子按对手和组号排，不等于 --seed 写的那个数）`,
+    )
 }
 
 /** 自己写的规则包没通过类型检查：只提醒（比赛照打），详情让规则包作者用 check 看 */

@@ -117,6 +117,9 @@ interface BotAgg {
   fuelOuts: number
   rejected: number
   dead: number
+  /** 有报错、燃料耗尽、被拒命令或停止运行的局数，和前 3 局的局号、数字、第一条消息（D-227：表里只有总数，试写时抽查日志对不上） */
+  issueGames?: number
+  issues?: { game: number; errors: number; fuelOuts: number; rejected: number; dead: boolean; first: string }[]
   calls: number
   fuel: number
   fuelMax: number
@@ -162,14 +165,16 @@ export class LeagueStats {
       fuelOuts: 0,
       rejected: 0,
       dead: 0,
+      issueGames: 0,
+      issues: [],
       calls: 0,
       fuel: 0,
       fuelMax: 0,
     }))
   }
 
-  /** seats[p] 是坐在 P{p} 的参赛者编号（同一个 bot 组队时会重复出现，这局按一局算、数据加起来） */
-  add(seats: number[], replay: Replay): void {
+  /** seats[p] 是坐在 P{p} 的参赛者编号（同一个 bot 组队时会重复出现，这局按一局算、数据加起来）；game 是联赛的局号 */
+  add(seats: number[], replay: Replay, game?: number): void {
     const per = gameSeatStats(replay)
     const pts = seatPoints(replay)
     const tick = replay.result.tick
@@ -208,6 +213,11 @@ export class LeagueStats {
         a.fuelOuts += b.fuelOuts
         a.rejected += b.rejected
         if (b.status === "dead") a.dead++
+        if (b.errors || b.fuelOuts || b.rejected || b.status === "dead") {
+          a.issueGames = (a.issueGames ?? 0) + 1
+          const first = replay.frames.find((f) => f.errs?.some((x) => x.p === p))?.errs?.find((x) => x.p === p)?.msg ?? b.deadReason ?? ""
+          if (game !== undefined && (a.issues ??= []).length < 3) a.issues.push({ game, errors: b.errors, fuelOuts: b.fuelOuts, rejected: b.rejected, dead: b.status === "dead", first: first.slice(0, 80) })
+        }
         a.calls += b.calls
         a.fuel += b.fuelTotal
         a.fuelMax = Math.max(a.fuelMax, b.fuelMax)
@@ -257,6 +267,18 @@ export function statsText(stats: LeagueStatsJson, result: LeagueResult): string 
     )
   }
   lines.push("（报错、燃料耗尽、被拒、停止是整个联赛的总数）")
+  // 出在哪几局（D-227）：总数可能全挤在一两局里，去那几局的日志看
+  const troubled = result.table.map((s) => stats.bots[s.index]).filter((b) => b.issueGames)
+  if (troubled.length) {
+    lines.push("出问题的局（局号就是回放、日志文件名里 g 后面的数）：")
+    for (const b of troubled) {
+      const eg = (b.issues ?? []).map(
+        (x) =>
+          `第 ${x.game} 局${[x.errors ? `报错 ${x.errors}` : "", x.fuelOuts ? `燃料耗尽 ${x.fuelOuts}` : "", x.rejected ? `被拒 ${x.rejected}` : "", x.dead ? "停止运行" : ""].filter(Boolean).join("、")}${x.first ? `（${x.first}）` : ""}`,
+      )
+      lines.push(`  ${b.name}：${b.issueGames} 局${eg.length ? `，${eg.join("；")}${(b.issueGames ?? 0) > eg.length ? "……" : ""}` : ""}`)
+    }
+  }
   const order = result.table.map((s) => s.index)
   if (stats.bots.some((b) => (b.ownerGained ?? 0) + (b.ownerLost ?? 0) > 0)) {
     lines.push("", "换主人（规则包 setOwner）每局平均：换到手里的 / 被换走的")

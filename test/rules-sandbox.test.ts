@@ -402,6 +402,13 @@ test("ctx.remove 在回放里记成移除，战报和联赛统计不算死亡；
   assert.deepEqual(json.reasons.map((x) => x.reason).sort(), ["队1先到 N 分", "队2先到 N 分"])
   const games = [{ players: [0, 1], ranking: [[0], [1]] }, { players: [1, 0], ranking: [[1], [0]] }]
   assert.match(statsText(json, leagueStandings(["a", "b"], games)), /规则包统计[^\n]*\n {2}bot +测试\n {2}a +1\.5/)
+  // 出问题的局（D-227）：表里只有总数，下面列出是哪几局、第一条消息
+  assert.doesNotMatch(statsText(json, leagueStandings(["a", "b"], games)), /出问题的局/)
+  const bad = new LeagueStats(["a", "b"])
+  const bots = replay.bots.map((b, p) => (p === 1 ? { ...b, rejected: 3 } : b))
+  bad.add([0, 1], { ...replay, bots, frames: [...replay.frames, { t: 99, errs: [{ p: 1, msg: "命令被拒：单位数已到上限 60" }] }] }, 7)
+  bad.add([1, 0], replay, 8)
+  assert.match(statsText(bad.toJSON(), leagueStandings(["a", "b"], games)), /出问题的局[^\n]*\n {2}b：1 局，第 7 局被拒 3（命令被拒：单位数已到上限 60）/)
   // stats 格式不对
   assert.match(checkResult({ winner: 0, reason: "x", stats: { a: [1] } }, 2, false) ?? "", /2 个数的数组/)
 })
