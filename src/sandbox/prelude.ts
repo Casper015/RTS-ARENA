@@ -121,18 +121,19 @@ export function preludeSource(maxCommands: number, maxLines: number, maxLine: nu
 
   // 在 near 附近找能放 type 的左上角：按离 near 的距离从近到远找到 maxRange 格（默认 8），
   // 占地四周 margin 格（默认 1）以内不能有建筑和资源点（留出走路的空），最后用 buildProblem 确认。找不到返回 null
-  G.findBuildSpot = function (view, type, near, maxRange, margin) {
+  // mirror（D-229）：按中心对称反着找——一样近时先挑 x 大、再挑 y 小，起点也按对称算；两边都在自己那侧找时，结果正好中心对称
+  G.findBuildSpot = function (view, type, near, maxRange, margin, mirror) {
     var g = G.game, d = g.types[type];
     if (!d || d.kind !== "building" || !near) return null;
-    var R = typeof maxRange === "number" ? maxRange : 8, m = typeof margin === "number" ? margin : 1;
+    var R = typeof maxRange === "number" ? maxRange : 8, m = typeof margin === "number" ? margin : 1, sg = mirror ? -1 : 1;
     var statics = [], es = view.entities, i;
     for (i = 0; i < es.length; i++) if (g.types[es[i].type].kind !== "unit") statics.push(es[i]);
-    var x0 = Math.round(near.x) - Math.floor(d.w / 2), y0 = Math.round(near.y) - Math.floor(d.h / 2);
+    var x0 = Math.round(near.x) - (mirror ? Math.ceil(d.w / 2) - 1 : Math.floor(d.w / 2)), y0 = Math.round(near.y) - (mirror ? Math.ceil(d.h / 2) - 1 : Math.floor(d.h / 2));
     for (var r = 0; r <= R; r++)
       for (var ox = -r; ox <= r; ox++) {
         var rest = r - Math.abs(ox), oys = rest === 0 ? [0] : [rest, -rest];
         for (var k = 0; k < oys.length; k++) {
-          var x = x0 + ox, y = y0 + oys[k], ok = true, box = { x: x - m, y: y - m, w: d.w + 2 * m, h: d.h + 2 * m };
+          var x = x0 + sg * ox, y = y0 + sg * oys[k], ok = true, box = { x: x - m, y: y - m, w: d.w + 2 * m, h: d.h + 2 * m };
           for (i = 0; i < statics.length && ok; i++) if (dist(statics[i], box) === 0) ok = false;
           if (ok && buildProblem(view, type, x, y) === null) return { x: x, y: y };
         }

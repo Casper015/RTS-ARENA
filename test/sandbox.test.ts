@@ -369,3 +369,36 @@ test("buildProblem 的顺序和引擎一样（地形、资源点先于视野）�
   assert.deepEqual(c, [{ x: 1, y: 0 }, null, null, { x: 0, y: 1 }])
   b.dispose()
 })
+
+test("findBuildSpot 的 mirror（D-229）：中心对称的地图上，两边在对称的点附近找，一边 mirror 一边不 mirror，找到的位置正好中心对称", async () => {
+  const game = JSON.stringify({
+    me: 0,
+    width: 12,
+    height: 12,
+    fog: false,
+    terrain: Array(12).fill("............"),
+    walkable: { ".": true },
+    types: { hut: { kind: "building", w: 2, h: 2, sight: 1 }, ore: { kind: "resource", w: 1, h: 1, sight: 0 } },
+  })
+  // 两个中心对称的资源点挡在正中间，逼它往外一圈圈找（一样近的有好几个）
+  const view = JSON.stringify({
+    tick: 0,
+    me: 0,
+    players: [{ team: 0 }, { team: 1 }],
+    entities: [
+      { id: 5, type: "ore", owner: -1, x: 3, y: 3, w: 1, h: 1 },
+      { id: 6, type: "ore", owner: -1, x: 8, y: 8, w: 1, h: 1 },
+    ],
+    events: [],
+  })
+  const b = await bot(`
+    export function onTick(view: View, cmd: Commands) {
+      console.log(JSON.stringify([findBuildSpot(view, "hut" as TypeName, { x: 3, y: 3 }), findBuildSpot(view, "hut" as TypeName, { x: 8, y: 8 }, 8, 1, true), findBuildSpot(view, "hut" as TypeName, { x: 8, y: 8 })]))
+    }`)
+  b.start(game)
+  const [[p0, p1, plain]] = b.tick(view).logs.map((l) => JSON.parse(l))
+  // 2×2 的东西在 (x, y)，对面是 (12 - 2 - x, 12 - 2 - y)
+  assert.deepEqual(p1, { x: 10 - p0.x, y: 10 - p0.y })
+  assert.notDeepEqual(plain, p1, "不写 mirror 时右下那边找到的不对称（这个测试才有意义）")
+  b.dispose()
+})

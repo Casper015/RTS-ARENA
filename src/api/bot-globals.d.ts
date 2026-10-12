@@ -31,10 +31,11 @@ declare function buildProblem(view: View, type: TypeName, x: number, y: number):
  * 在 near 附近找能放 type 的位置（返回左上角）：按离 near 的距离从近到远找到 maxRange 格（默认 8）；
  * 占地四周 margin 格（默认 1）以内不能有建筑和资源点，留出走路的空，免得堵住采矿的路。
  * 找到的位置 buildProblem 一定是 null；找不到返回 null（可能是附近不在视野里，或者都被占了）。
- * 一样近的几个位置先挑 x 小的（左边），x 一样先挑 y 大的（下边）：**不按座位镜像**，两个座位找到的位置不对称。
- * 要两边对称，就把 near 往自己想要的方向偏一点，或者自己按镜像的顺序逐格用 canBuild 试
+ * 一样近的几个位置先挑 x 小的（左边），x 一样先挑 y 大的（下边）。**两人地图是中心对称的**，这个顺序却不对称：
+ * 两边都用 near 在自己那侧找，找到的位置不一定正好对称。mirror 写 true 就按中心对称反着找（一样近先挑 x 大、再挑 y 小），
+ * 一边写 false、另一边写 true（比如主基地在地图右下半边的写 true），两边在对称的 near 附近找到的位置就正好中心对称
  */
-declare function findBuildSpot(view: View, type: TypeName, near: Pos, maxRange?: number, margin?: number): Pos | null
+declare function findBuildSpot(view: View, type: TypeName, near: Pos, maxRange?: number, margin?: number, mirror?: boolean): Pos | null
 
 /**
  * 按地形走路的距离（隔着墙时比 dist 准）：从 from（一个点、一个实体，或者它们的数组）出发，上下左右走，

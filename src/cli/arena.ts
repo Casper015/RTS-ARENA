@@ -869,7 +869,7 @@ async function cmdCompare(rules: Ruleset, src: RulesetRef, a: string, b: string,
   const startStamp = stamp()
   say(
     `对比：${la} → ${lb}，对手 ${foes.length} 个（${foes.map(label).join("、")}），每个对手 ${perPair} 组（${Math.ceil(perPair / 2)} 个种子 × 换边），` +
-      `一组是两个版本用同一个种子、坐同一个位置各打一局；共 ${total} 局，种子从 ${baseSeed} 起；${Math.min(threads, total)} 个线程一起打（--jobs 调）`,
+      `一组是两个版本用同一个种子、坐同一个位置各打一局；共 ${total} 局，种子按 --seed ${baseSeed} 和对手的名字算（带哪些对手都不影响同一个对手打的那几局）；${Math.min(threads, total)} 个线程一起打（--jobs 调）`,
   )
   // D-195（第五轮试写：不写 --seed 时每次换一批种子，两次 compare 的同一个版本成绩差很多，误把噪声当成差距）
   if (typeof opt.seed !== "string") say(`（这次的种子是随机的。和别的 compare 结果对着比，要加 --seed ${baseSeed} 用同一批种子，不然同一个版本两次的成绩也会差很多）`)
@@ -891,9 +891,15 @@ async function cmdCompare(rules: Ruleset, src: RulesetRef, a: string, b: string,
   // 每组两局（两个版本各一局），所有局一起分给几个线程打；完成的先后不定，同一组两局都打完了再算
   type CmpJob = GameJob & { k: number; g: number; v: number }
   const jobs: CmpJob[] = []
+  // 每个对手的种子按它的名字从 --seed 算（D-229，第二轮试写反馈：原来按对手在列表里的位置算，多带少带几个对手，同一个对手打的就不是同一批局）
+  const foeKey = (name: string) => {
+    let h = 2166136261
+    for (const c of name) h = Math.imul(h ^ c.codePointAt(0)!, 16777619) >>> 0
+    return h % 997
+  }
   for (const [k, foe] of foes.entries())
     for (let g = 0; g < perPair; g++) {
-      const seed = baseSeed + k * 10000 + Math.floor(g / 2) * 100
+      const seed = baseSeed + foeKey(label(foe)) * 10000 + Math.floor(g / 2) * 100
       // 偶数组版本坐 P0，奇数组换边
       const seat = g % 2
       for (const [v, f] of [fa, fb].entries()) jobs.push({ id: jobs.length + 1, order: seat === 0 ? [f, foe] : [foe, f], seed, k, g, v })
@@ -1006,7 +1012,7 @@ async function cmdCompare(rules: Ruleset, src: RulesetRef, a: string, b: string,
     )
   if (saved.length || bothLost.length)
     console.log(
-      `复现某一组：rts-arena run ${rules.id} <版本文件> <对手> --seed <种子> --games 2，第 1 局版本坐 P0、第 2 局坐 P1（每组的种子按对手和组号排，不等于 --seed 写的那个数）`,
+      `复现某一组：rts-arena run ${rules.id} <版本文件> <对手> --seed <种子> --games 2，第 1 局版本坐 P0、第 2 局坐 P1（每组的种子按 --seed、对手名字和组号算，不等于 --seed 写的那个数）`,
     )
 }
 

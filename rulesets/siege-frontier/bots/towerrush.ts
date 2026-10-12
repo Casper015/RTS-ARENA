@@ -1,5 +1,6 @@
 // 塔爆（封主矿、骑兵砍副矿）：开局留 1 个工人采矿，另外 3～4 个工人绕开对手主基地的射程走到它家门口，站在塔位旁背着它主基地的几格里合力建箭塔（塔离它主基地 7 格以上，罩住它家门口金矿旁采矿的位置，5 格内的矿对方多半当成去不得的矿），封住它的主矿；家里同时先建兵营、出骑兵，对方被逼去分矿，4 个骑兵就从塔边出发去砍那边的工人（不靠近它的箭塔，枪兵围上来就跑），有没人护着的炮来拆塔就先砍炮。塔建好以后建塔的工人回家采矿。第 1500 tick 起转中期：枪、弓、骑 2:2:1 带 2 门炮，凑够 14 个推。
 // 塔位只看地形和已知的建筑、金矿来挑，走到旁边再用 buildProblem 确认；建塔的工人先走到塔位背后 4 格外再笔直走过去，不沿对手主基地射程边走。
+// 对方在塔位旁先建了箭塔（建好的、在建的都算）：塔位和建塔的人都避开它 5 格以内，换一个塔位接着建；一个能用的塔位都没有了就收手，建塔的工人回家采矿。
 // 防它：看到对方工人往你家门口走就拉工人（多拉几个，别只拉两个）和兵去围打建塔的工人，打人不打地基，趁塔没建好围死它们；塔建好了就出炮拆（炮射程 5，塔打不到它），炮要带兵护着；矿被塔盯上就去别的矿、开分矿，分矿要有枪兵守着防骑兵。
 /** 这个 bot 的打法参数（几个参考 bot 共用下面的写法，只有这里不一样，D-219） */
 const CFG = {
@@ -63,6 +64,8 @@ let hadTower = false
 let planned: Pos | null = null
 const skipSpots = new Set<number>()
 let plannedWait = 0
+/** 对方的箭塔离这么近（含）就算罩住了：塔位、建塔的人都不待在这里（箭塔射程 4，多留 1 格） */
+const FOE_TOWER_REACH = 5
 
 function nearest<T extends Pos>(from: Pos, list: T[]): T | undefined {
   let best: T | undefined
@@ -168,7 +171,8 @@ function goCell(cmd: Commands, w: Entity, cell: Pos, eb: { x: number; y: number;
 }
 /** 塔爆的塔位（只看地形和已知的建筑、金矿，不要求现在看得见，走到旁边再用 buildProblem 确认）：
  *  离对手主基地 7 格以上（射程 6，打不到塔和建塔的工人），箭塔射程 4 内盖住对手家门口金矿旁采矿工人能站的格子（还没被已有的塔盖住的）越多越好，盖住的矿越多越好；一样的取离 from 近的 */
-function towerPlan(view: View, from: Pos, eb: { x: number; y: number; w: number; h: number }, towers: Pos[], blockers: Entity[], skip: Set<number>): Pos | null {
+function towerPlan(view: View, from: Pos, eb: { x: number; y: number; w: number; h: number }, towers: Pos[], blockers: Entity[], skip: Set<number>, foeTowers: Entity[] = []): Pos | null {
+  const reached = (p: Pos) => foeTowers.some((t) => dist(t, p) <= FOE_TOWER_REACH)
   const mines = view.entities.filter((e) => e.type === "goldmine" && (e.amount ?? 0) > 0 && dist(e, eb) <= 9)
   const slots: { x: number; y: number; m: number }[] = []
   for (const m of mines)
@@ -192,8 +196,8 @@ function towerPlan(view: View, from: Pos, eb: { x: number; y: number; w: number;
         seenCell.add(key)
         if (!walkAt(x, y) || skip.has(key) || blockers.some((b) => covers(b, x, y))) continue
         const c = { x, y, w: 1, h: 1 }
-        if (dist(c, eb) < 7 || blockers.some((b) => dist(b, c) <= 1)) continue
-        const safe = safeCells(c, eb, blockers).length
+        if (dist(c, eb) < 7 || blockers.some((b) => dist(b, c) <= 1) || reached(c)) continue
+        const safe = safeCells(c, eb, blockers).filter((p) => !reached(p)).length
         if (safe < 2) continue
         const cov = fresh.filter((k) => dist(k, c) <= 4)
         const nm = new Set(cov.map((k) => k.m)).size
@@ -292,13 +296,16 @@ export function onTick(view: View, cmd: Commands): void {
   }
   // 塔爆：建在对手那一侧的塔；塔全被拆了、或者塔够数了就收手，建塔的工人回家
   const rushTowers = buildings.filter((b) => b.type === "tower" && dist(b, enemyRect) < dist(b, base))
+  // 对方的箭塔（建好的、在建的都算）：被它罩住的地基不接着建、塔位要换（D-229，第二轮试写：对方在塔位旁先建一座塔，这边还在原地硬建，人和地基都被打掉）
+  const foeTowerAll = foeBuildings.filter((b) => b.type === "tower")
+  const underFire = (p: Pos) => foeTowerAll.some((t) => dist(t, p) <= FOE_TOWER_REACH)
   if (rushTowers.some((t) => !t.construction)) hadTower = true
   if (engineers.length && ((hadTower && rushTowers.length === 0) || rushTowers.filter((t) => !t.construction).length >= CFG.rushTowers)) {
     console.log(`第 ${view.tick} tick 塔爆收手（对方那边的塔 ${rushTowers.length} 座），${engineers.length} 个建塔的工人回家`)
     engineers = []
   }
   // 给下一座塔留 100 金：第一座马上建；之后要等兵营建好、出了骑兵（先护住第一座再加塔）
-  const nextTower = engineers.length > 0 && !rushTowers.some((t) => t.construction) && rushTowers.length < CFG.rushTowers && (rushTowers.length === 0 || (done("barracks").length > 0 && army.some((u) => u.type === "cavalry")))
+  const nextTower = engineers.length > 0 && !rushTowers.some((t) => t.construction && !underFire(t)) && rushTowers.filter((t) => !t.construction || !underFire(t)).length < CFG.rushTowers && (rushTowers.length === 0 || (done("barracks").length > 0 && army.some((u) => u.type === "cavalry")))
   let gold = view.resources.gold - (nextTower ? 100 : 0)
   let reserve = 0
 
@@ -323,7 +330,7 @@ export function onTick(view: View, cmd: Commands): void {
   // ---------- 塔爆的工人：走到塔位旁（站在离对手主基地射程外的那几格），合力建塔，躲兵，砍没人护着的炮，塔挨炮时离开塔边 ----------
   if (crew.length > 0) {
     const blockers = [...new Map([...view.entities.filter(isBuilding).concat(view.entities.filter((e) => e.type === "goldmine")), ...foeMemory.values()].map((e) => [e.id, e] as const)).values()]
-    const site = rushTowers.find((t) => t.construction)
+    const site = rushTowers.find((t) => t.construction && !underFire(t))
     const lead = crew[0]
     // 只躲兵，不躲工人：对方派工人来打地基时接着建
     const threat = foes.filter((e) => isArmy(e) && e.type !== "cannon")
@@ -331,18 +338,28 @@ export function onTick(view: View, cmd: Commands): void {
     const loneSiege = siege.filter((c) => !threat.some((e) => dist(e, c) <= 3))
     if (site) planned = null
     else if (nextTower) {
+      if (planned && underFire(planned)) {
+        console.log(`第 ${view.tick} tick 塔位 (${planned.x}, ${planned.y}) 被对方的箭塔罩住了，换一个`)
+        skipSpots.add(planned.y * game.width + planned.x)
+        planned = null
+      }
       if (planned && (blockers.some((b) => covers(b, planned!.x, planned!.y)) || skipSpots.has(planned.y * game.width + planned.x))) planned = null
       if (!planned) {
-        planned = towerPlan(view, lead, enemyRect, rushTowers, blockers, skipSpots)
+        planned = towerPlan(view, lead, enemyRect, rushTowers, blockers, skipSpots, foeTowerAll)
         plannedWait = 0
         if (planned) console.log(`第 ${view.tick} tick 塔位 (${planned.x}, ${planned.y})`)
+        else if (foeTowerAll.length) {
+          // 能用的塔位都被对方的塔罩住了：收手，建塔的工人回家采矿（骑兵照样去砍分矿）
+          console.log(`第 ${view.tick} tick 塔位都被对方的箭塔罩住了，塔爆收手，${engineers.length} 个建塔的工人回家`)
+          engineers = []
+        }
       }
     }
     const target: Pos | null = site ?? planned
     // 每个建塔的工人分一个塔旁边的安全格（离对手主基地 7 格以上）
     const cellOf = new Map<number, Pos>()
     if (target) {
-      const cells = safeCells(target, enemyRect, blockers)
+      const cells = safeCells(target, enemyRect, blockers).filter((p) => !underFire(p))
       const taken = new Set<number>()
       const rest = crew.slice()
       while (rest.length && taken.size < cells.length) {
