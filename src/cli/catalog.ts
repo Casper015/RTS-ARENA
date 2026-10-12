@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url"
 import type { Ruleset } from "../core/types.ts"
 import { CODE_EXT, CODE_ROOT, PKG_ROOT } from "../paths.ts"
 import { loadSandboxedRuleset } from "../sandbox/ruleset.ts"
+import { inlineRulesetArt } from "../sandbox/ruleset-art.ts"
 
 /** 平台自带的规则包 */
 export function listRulesets(): string[] {
@@ -52,6 +53,8 @@ export async function importRuleset(id: string): Promise<Ruleset> {
   if (!listRulesets().includes(id)) throw new Error(rulesetHint(id))
   const file = join(CODE_ROOT, "rulesets", id, `index${CODE_EXT}`)
   const mod = (await import(pathToFileURL(file).href)) as { default: Ruleset }
+  // 规则包自带的素材（D-233）：和沙箱加载一样，把 look.art 的 SVG 路径换成内容（素材不编译，从包根目录的 rulesets/ 读）
+  inlineRulesetArt(mod.default.types, join(PKG_ROOT, "rulesets", id))
   return mod.default
 }
 

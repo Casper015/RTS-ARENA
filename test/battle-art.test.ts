@@ -194,3 +194,19 @@ test("quiet video segments show the exact complete map after a bounded return ev
   assert.ok(path[99].zoom>2.7)
   for(let i=122;i<path.length;i++)assert.deepEqual(path[i],{x:28,y:20,zoom:1},"no retained crop during quiet segments")
 })
+
+test("规则包自带的素材（D-233）：base 换平台造型；领主不再是平台造型，没有素材时画成剑盾兵；带素材的头顶多留一点", () => {
+  const art = createBattleArt()
+  assert.equal(art.role({ name: "lord", kind: "unit" }), "soldier")
+  assert.equal(art.role({ name: "lord", kind: "unit", art: { base: "infantry" } }), "infantry")
+  assert.equal(art.role({ name: "gate", kind: "building", art: { base: "tower" } }), "tower")
+  assert.equal(art.attackStyle({ name: "lord", kind: "unit", art: { base: "infantry" } }), "slash")
+  const plain = art.headroom({ name: "lord", kind: "unit", art: { base: "infantry" } })
+  assert.equal(plain, art.headroom({ name: "soldier", kind: "unit" }))
+  assert.ok(Math.abs(art.headroom({ name: "lord", kind: "unit", art: { base: "infantry", over: "<svg/>" } }) - plain - .05) < 1e-9)
+  // Node 里没有 Image：素材画不出来也不报错（视频和网页回放在浏览器里先 prepare 再画）
+  const calls: string[] = []
+  const g = new Proxy({}, { get: (_t, k) => (k === "globalAlpha" ? 1 : (...a: unknown[]) => { calls.push(String(k)); return a }), set: () => true }) as unknown as CanvasRenderingContext2D
+  art.entity(g, { name: "lord", kind: "unit", art: { base: "infantry", under: "<svg viewBox='0 0 1 1'/>", over: "<svg viewBox='0 0 1 1'/>" } }, 0, 0, 1, 1, "#4ea1ff")
+  assert.ok(calls.length > 10 && !calls.includes("drawImage"))
+})

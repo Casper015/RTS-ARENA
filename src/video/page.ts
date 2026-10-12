@@ -1467,10 +1467,16 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     images.set(key, { img, avatar, bust: null })
     return true
   }
-  w.__scene = (s: Any) => {
+  w.__scene = async (s: Any) => {
     scene = s
     terrainLayer = null
     if (s.kind === "replay") fitTile(s)
+    // 规则包自带的素材（D-233）：这一场用到的 SVG 按各家颜色先解码好，第一帧就画得出来
+    const types = [...(s.types ?? []), ...(s.legend ?? []).map((it: Any) => it.art).filter(Boolean)]
+    if (types.some((t: Any) => t.art)) {
+      const colors = [...(s.seats ?? []).map((x: Any) => x.color), ...(s.seatColors ?? []), ...types.map((t: Any) => t.color).filter(Boolean), "#9aa0a6", "#4ea1ff"]
+      await art.prepare(types, colors)
+    }
     return true
   }
   /** 画并编码一批帧：items[k] 是 [场景里第几帧, 回放的局面或 null] */

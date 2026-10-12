@@ -52,7 +52,9 @@ export function lordType(troops: string[], skill: LordSkill = "goldmine"): TypeS
     ],
     auras: [{ name: "领主光环", radius: -1, affects: "own", types: troops, damagePct: 20, defensePct: 20 }],
     passives: [{ kind: "regen", name: "休养生息", delay: 100, every: 10, amount: 10 }],
-    look: { shape: "hex", label: "王", name: "领主" },
+    // 领主的样子是规则包自带的素材（D-233）：没缨的剑盾兵打底，身后披风、身前王冠和金盾。路径相对用到领主的规则包目录，
+    // 用 withLord 的规则包都要在自己目录的 art/ 里放这两张图（现在只有弑君歼灭）
+    look: { shape: "hex", label: "王", name: "领主", art: { base: "infantry", under: "art/lord-cape.svg", over: "art/lord-regalia.svg" } },
   }
 }
 

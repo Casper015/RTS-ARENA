@@ -116,6 +116,18 @@ export function checkRulesetData(d: unknown, callbacks: string[]): string[] {
         if (look.label !== undefined && (typeof look.label !== "string" || [...look.label].length > 2)) bad(`${at}.look.label 最多 2 个字`)
         if (look.color !== undefined && (typeof look.color !== "string" || !/^#[0-9a-fA-F]{6}$/.test(look.color))) bad(`${at}.look.color 要写成 "#rrggbb"`)
         if (look.name !== undefined && (typeof look.name !== "string" || [...look.name].length < 1 || [...look.name].length > 6)) bad(`${at}.look.name 要写 1～6 个字`)
+        // 规则包自带的素材（D-233）：这里只查写法，文件由加载规则包的宿主去读（inlineRulesetArt）
+        const art = look.art
+        if (art !== undefined) {
+          if (!isObj(art)) bad(`${at}.look.art 要写成 { base?, under?, over?, sprite? }`)
+          else {
+            for (const k of Object.keys(art)) if (!["base", "under", "over", "sprite"].includes(k)) bad(`${at}.look.art 只能写 base、under、over、sprite（多了 ${k}）`)
+            if (art.base !== undefined && (typeof art.base !== "string" || !NAME.test(art.base))) bad(`${at}.look.art.base 要写平台造型的名字（小写英文，比如 soldier、cavalry、tower）`)
+            for (const k of ["under", "over", "sprite"])
+              if (art[k] !== undefined && (typeof art[k] !== "string" || !(/\.svg$/i.test(art[k] as string) || /^\s*</.test(art[k] as string))))
+                bad(`${at}.look.art.${k} 要写规则包目录里的 .svg 文件路径（相对规则包目录，比如 "art/lord.svg"）`)
+          }
+        }
       }
     }
   }

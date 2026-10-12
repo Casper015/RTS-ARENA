@@ -132,6 +132,18 @@ export class Renderer {
     this.indexAbilities(replay)
     this.fit()
     this.jump(state)
+    // 规则包自带的素材（D-233）：SVG 解码好以后，把已经按没有素材的样子做好的单位贴图清掉、重摆一遍
+    const artTypes = Object.keys(replay.types).map((k) => this.battleType(k)).filter((t) => t.art)
+    if (artTypes.length) {
+      const hexOf = (owner: number) => "#" + playerColor(owner).toString(16).padStart(6, "0")
+      const colors = [...replay.players.map((_, p) => hexOf(p)), hexOf(-1), ...Object.values(replay.types).flatMap((t) => (t.look?.color ? [t.look.color] : []))]
+      void this.art.prepare(artTypes, colors).then(() => {
+        if (this.replay !== replay || !this.state) return
+        for (const texture of this.skins.values()) texture.destroy(true)
+        this.skins.clear()
+        this.jump(this.state)
+      })
+    }
   }
 
   /** 整理整局的放技能、出生、回血时间（D-190）：冷却环、选中面板按当前 tick 查 */
@@ -344,7 +356,7 @@ export class Renderer {
 
   private battleType(name: string): BattleType {
     const info = this.replay.types[name]
-    return { name, kind: info.kind, label: info.look?.label, shape: info.look?.shape, worker: info.worker, range: info.attack?.range, splash: info.attack?.splash }
+    return { name, kind: info.kind, label: info.look?.label, shape: info.look?.shape, worker: info.worker, range: info.attack?.range, splash: info.attack?.splash, art: info.look?.art }
   }
 
   private skin(e: EntSnap, angle = 0, walk = 0, attack = -1, hit = 0, labor?: BattlePose): { key: string; texture: Texture } {

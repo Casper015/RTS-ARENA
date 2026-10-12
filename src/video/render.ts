@@ -301,7 +301,7 @@ function rulesScene(replay: Replay, ruleset: string, lines: string[], mapNote: s
   const legend = cand
     .filter((x) => kept.has(x.k))
     .sort((a, b) => (order[a.t.kind] ?? 3) - (order[b.t.kind] ?? 3))
-    .map(({ k, t }) => ({ shape: t.look?.shape ?? "circle", label: t.look?.label ?? "", color: t.look?.color ?? null, kind: t.kind, name: typeName(replay, k), detail: typeDetail(t, specs?.[k], (x) => typeName(replay, x)), art: { name: k, kind: t.kind, worker: t.worker, range: t.attack?.range, splash: t.attack?.splash, label: t.look?.label } }))
+    .map(({ k, t }) => ({ shape: t.look?.shape ?? "circle", label: t.look?.label ?? "", color: t.look?.color ?? null, kind: t.kind, name: typeName(replay, k), detail: typeDetail(t, specs?.[k], (x) => typeName(replay, x)), art: { name: k, kind: t.kind, worker: t.worker, range: t.attack?.range, splash: t.attack?.splash, label: t.look?.label, art: t.look?.art } }))
   const chars = lines.reduce((a, l) => a + [...l].length, 0)
   return {
     kind: "rules",
@@ -317,7 +317,7 @@ function rulesScene(replay: Replay, ruleset: string, lines: string[], mapNote: s
     colors: replay.map.colors,
     ents,
     markers: replay.initial.markers?.length ? replay.initial.markers : (replay.frames.find((f) => f.markers?.length)?.markers ?? []),
-    types: typeNames.map((k) => ({ name: k, shape: replay.types[k].look?.shape ?? "circle", label: replay.types[k].look?.label ?? "", color: replay.types[k].look?.color ?? null, kind: replay.types[k].kind, worker: replay.types[k].worker, range: replay.types[k].attack?.range, splash: replay.types[k].attack?.splash })),
+    types: typeNames.map((k) => ({ name: k, shape: replay.types[k].look?.shape ?? "circle", label: replay.types[k].look?.label ?? "", color: replay.types[k].look?.color ?? null, kind: replay.types[k].kind, worker: replay.types[k].worker, range: replay.types[k].attack?.range, splash: replay.types[k].attack?.splash, art: replay.types[k].look?.art })),
     seatColors,
     legend,
     tickNote: `时间单位 tick：1 秒 = ${replay.tickRate} tick，一局最多 ${replay.maxTicks} tick`,
@@ -497,7 +497,7 @@ export function replayScene(
   const baseType = baseTypeOf(replay)
   const types = typeNames.map((name) => {
     const t = replay.types[name]
-    return { name, kind: t.kind, shape: t.look?.shape ?? "circle", label: t.look?.label ?? "", color: t.look?.color ?? null, worker: t.worker === true, base: name === baseType, range: t.attack?.range, splash: t.attack?.splash }
+    return { name, kind: t.kind, shape: t.look?.shape ?? "circle", label: t.look?.label ?? "", color: t.look?.color ?? null, worker: t.worker === true, base: name === baseType, range: t.attack?.range, splash: t.attack?.splash, art: t.look?.art }
   })
   // 实时胜率（D-177）：两方对打、有胜率模型时，每 WIN_STEP tick 一个点；两方各取第一个座位的名字和颜色
   const sides = twoSides(replay)

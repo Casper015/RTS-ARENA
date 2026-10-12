@@ -14,6 +14,29 @@ export interface Look {
   name?: string
   /** 固定颜色；不填按所属玩家上色（中立为灰色） */
   color?: string
+  /**
+   * 规则包自带的素材（D-233）：网页回放和联赛视频里这种东西怎么画。平台素材没有的东西（或者想换个样子）用规则包目录里的 SVG。
+   * under、over、sprite 写相对规则包目录的 .svg 路径（只能是规则包目录里的文件，每个最大 64 KB），加载规则包时平台读出来写进回放；
+   * SVG 里写 currentColor 的地方换成所属玩家的颜色，要有 viewBox：单位以中心为原点、一格是 1（脚底大约在 0.4，头顶在 -0.7 左右），
+   * 建筑和资源点以中心为原点、整个占地是 1（-0.5～0.5）
+   */
+  art?: LookArt
+}
+
+/** 规则包自带的素材（look.art，D-233） */
+export interface LookArt {
+  /**
+   * 打底用平台的哪种造型，不写按类型名猜。单位：worker、soldier（剑盾兵，盔上有本队颜色的缨）、infantry（同样的剑盾兵、盔上没缨，
+   * 给规则包自己加头饰）、spearman、archer、cavalry、scout、cannon、wagon、animal；
+   * 建筑、资源点：平台认的类型名（base、barracks、tower、wall、farm、depot、goldmine……），不认的画成通用建筑
+   */
+  base?: string
+  /** 画在平台造型后面（单位是身体后面，跟着走路、攻击的动作一起动），比如披风 */
+  under?: string
+  /** 画在平台造型前面，比如王冠、旗子 */
+  over?: string
+  /** 整个换成这张图，不画平台造型（under、over 照样画） */
+  sprite?: string
 }
 
 /**

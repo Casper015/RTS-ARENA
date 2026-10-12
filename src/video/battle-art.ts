@@ -7,6 +7,20 @@ export interface BattleType {
   worker?: boolean
   range?: number
   splash?: number
+  /** Artwork shipped with the ruleset (look.art, D-233); the SVG text is already inlined in the replay. */
+  art?: BattleArtLayers
+}
+
+/**
+ * Ruleset-supplied SVG layers (D-233). base picks the platform figure underneath; under/over are drawn behind/in front of it
+ * and sprite replaces it. currentColor becomes the owner's colour. The viewBox is in tiles around the centre of a unit, or in
+ * footprints (-0.5..0.5) around the centre of a building or resource.
+ */
+export interface BattleArtLayers {
+  base?: string
+  under?: string
+  over?: string
+  sprite?: string
 }
 
 export type AttackStyle = "slash" | "thrust" | "arrow" | "shell"
@@ -49,13 +63,14 @@ export function createBattleArt() {
   }
   function role(t: BattleType): string {
     const n = (t.name ?? "").toLowerCase()
+    if (t.art?.base) return t.art.base
     if (t.kind !== "unit") return n
     if (/cannon|catapult|mortar/.test(n)) return "cannon"
     if (/scout/.test(n)) return "scout"
     if (/cavalry|knight|horse/.test(n)) return "cavalry"
     if (/spearman|pike|lancer/.test(n)) return "spearman"
     if (/archer|ranger|bow/.test(n)) return "archer"
-    if (/king|lord|hero/.test(n)) return "lord"
+    // The lord's cape, crown and gold shield ship with the regicide ruleset (look.art, D-233); here it is a plain soldier.
     if (/cow|cattle|sheep|herd/.test(n)) return "animal"
     if (/caravan|wagon/.test(n)) return "wagon"
     if (t.worker || /worker|peasant/.test(n)) return "worker"
@@ -96,6 +111,44 @@ export function createBattleArt() {
   function flag(g: Ink, x: number, y: number, color: string): void {
     line(g, x, y, x, y - 0.53, "#e2ce9e", 0.035)
     polygon(g, [x, y - 0.53, x + 0.32, y - 0.49, x + 0.24, y - 0.32, x, y - 0.35], color)
+  }
+
+  // Ruleset SVG layers (D-233): one image per (svg, colour), decoded once and drawn in tile units.
+  const svgImages = new Map<string, { img: HTMLImageElement; box: number[] }>()
+  function viewBoxOf(svg: string): number[] {
+    const m = /viewBox\s*=\s*["']\s*([-+\d.eE]+)[\s,]+([-+\d.eE]+)[\s,]+([-+\d.eE]+)[\s,]+([-+\d.eE]+)/.exec(svg)
+    return m ? [+m[1], +m[2], +m[3], +m[4]] : [-.5, -.5, 1, 1]
+  }
+  function svgImage(svg: string, color: string): { img: HTMLImageElement; box: number[] } | null {
+    const key = color + "\n" + svg
+    let e = svgImages.get(key)
+    if (!e) {
+      if (typeof Image === "undefined") return null
+      const box = viewBoxOf(svg)
+      // A large intrinsic size keeps the vector crisp after it is scaled down onto the map.
+      const sized = svg.replace(/<svg\b([^>]*)>/, (_m, attrs: string) => `<svg${attrs.replace(/\s(width|height)\s*=\s*("[^"]*"|'[^']*')/g, "")} width="${Math.round(box[2] * 256)}" height="${Math.round(box[3] * 256)}">`)
+      const img = new Image()
+      img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(sized.split("currentColor").join(color))
+      e = { img, box }
+      svgImages.set(key, e)
+    }
+    return e
+  }
+  function svgLayer(g: Ink, svg: string | undefined, color: string): void {
+    if (!svg) return
+    const e = svgImage(svg, color)
+    if (e && e.img.complete && e.img.naturalWidth > 0) g.drawImage(e.img, e.box[0], e.box[1], e.box[2], e.box[3])
+  }
+  /** Decode every ruleset layer for these owner colours before frames are exported (the web viewer just redraws later). */
+  async function prepare(types: BattleType[], colors: string[]): Promise<void> {
+    const waits: Promise<unknown>[] = []
+    for (const t of types)
+      for (const svg of [t.art?.under, t.art?.over, t.art?.sprite])
+        if (svg) for (const c of new Set(colors)) {
+          const e = svgImage(svg, c)
+          if (e) waits.push(e.img.decode().catch(() => undefined))
+        }
+    await Promise.all(waits)
   }
 
   // Three-quarter silhouettes keep the face, clothing, tools and horse readable at game scale.
@@ -214,7 +267,7 @@ export function createBattleArt() {
     g.restore();g.restore()
   }
 
-  function infantry(g: Ink, r: string, color: string, p: BattlePose): void {
+  function infantry(g: Ink, r: string, color: string, p: BattlePose, layers?: BattleArtLayers): void {
     const walk=p.walk??0, a=p.attack??-1
     const strike=a<0?0:Math.sin(Math.PI*clamp(a/.7))
     const skin=(p.hit??0)>.5?"#fff4d0":"#d8b58c"
@@ -225,7 +278,8 @@ export function createBattleArt() {
       line(g,foot-.035,.39,foot+.09,.39,"#30352e",.078)
     }
     g.save();g.translate(strike*.055,Math.abs(walk)*.025)
-    if(r==="lord")polygon(g,[-.17,-.36,-.33,-.27,-.38,.28,-.19,.21,.01,-.13],color)
+    // Ruleset layers move with the upper body: under sits behind the torso (a cape), over in front (a crown).
+    svgLayer(g,layers?.under,color)
     if(r==="archer") {
       // Quiver and the tall bent bow are visible even when the archer is not firing.
       line(g,-.21,-.12,-.28,-.46,"#715239",.105)
@@ -242,18 +296,12 @@ export function createBattleArt() {
       ellipse(g,-.15,-.26,.115,.075,"#8da3a7",ink)
     }
     line(g,-.16,.06,.15,.06,"#63543e",.047)
-    if(r==="lord")box(g,-.03,.035,.065,.045,gold,"")
     ellipse(g,.02,-.445,.115,.137,skin,ink)
     if(r==="archer")polygon(g,[-.10,-.43,-.12,-.56,-.02,-.64,.10,-.53,.105,-.44,.01,-.51],color)
     else {
       polygon(g,[-.11,-.43,-.11,-.56,-.04,-.61,.065,-.59,.135,-.49,.12,-.445,.015,-.48],steel)
       line(g,.09,-.45,.09,-.35,"#4b5755",.037)
-      if(r==="lord") {
-        polygon(g,[-.115,-.54,-.13,-.70,-.055,-.62,.015,-.74,.07,-.62,.12,-.68,.11,-.53],gold)
-        line(g,.035,-.61,.035,-.56,"#fff0bc",.025)
-      } else if(r==="soldier") {
-        polygon(g,[-.075,-.60,-.02,-.73,.08,-.70,.12,-.61,.025,-.62],color)
-      }
+      if(r==="soldier") polygon(g,[-.075,-.60,-.02,-.73,.08,-.70,.12,-.61,.025,-.62],color)
     }
     if(r==="archer") {
       const pull=a<0?.03:a<.28?.04+a/.28*.19:a<.55?.23*(1-(a-.28)/.27):.025
@@ -283,10 +331,11 @@ export function createBattleArt() {
     }
     if(r!=="archer") {
       const sx=r==="spearman"?-.12:-.18
-      polygon(g,[sx-.13,-.27,sx+.14,-.28,sx+.15,-.03,sx+.01,.16,sx-.14,-.02],r==="lord"?"#b8a467":color)
-      line(g,sx,-.22,sx,.065,r==="lord"?"#fff0be":"#e0dac1",.038)
+      polygon(g,[sx-.13,-.27,sx+.14,-.28,sx+.15,-.03,sx+.01,.16,sx-.14,-.02],color)
+      line(g,sx,-.22,sx,.065,"#e0dac1",.038)
       line(g,sx-.09,-.115,sx+.09,-.115,"#e0dac1",.029)
     }
+    svgLayer(g,layers?.over,color)
     g.restore()
   }
 
@@ -343,7 +392,9 @@ export function createBattleArt() {
 
   function headroom(t: BattleType): number {
     const r=role(t)
-    return t.kind!=="unit"?0:r==="cavalry"?.50:r==="scout"?.36:r==="lord"?.40:r==="soldier"?.35:r==="worker"?.25:r==="spearman"||r==="archer"?.30:.10
+    // A ruleset overlay (a crown, a banner) usually sticks out above the platform figure.
+    const extra=t.art?.over||t.art?.sprite?.05:0
+    return t.kind!=="unit"?0:extra+(r==="cavalry"?.50:r==="scout"?.36:r==="soldier"||r==="infantry"?.35:r==="worker"?.25:r==="spearman"||r==="archer"?.30:.10)
   }
 
   /** Coordinates and line widths use map tiles, so the same art works at any output resolution. */
@@ -353,18 +404,34 @@ export function createBattleArt() {
     g.translate(x + w / 2, y + h / 2)
     g.lineCap = "round"
     g.lineJoin = "round"
+    const a = t.art
     if (t.kind === "unit") {
       // All mobile units share an upright side view, fixed ground plane and left/right facing.
-      ellipse(g, .035, .38, ["cavalry","scout","wagon","cannon","animal"].includes(r) ? .56 : .33, .14, "rgba(5,12,12,.35)")
-      if (r === "worker") villager(g,color,pose)
-      else if (r === "scout" || r === "cavalry") scout(g,color,pose,r === "cavalry")
-      else if (r === "cannon" || r === "wagon") vehicle(g,r,color,pose)
-      else if (r === "animal") animal(g,pose)
-      else infantry(g,r,color,pose)
+      const mounted = ["cavalry","scout","wagon","cannon","animal","worker"].includes(r)
+      ellipse(g, .035, .38, mounted && r !== "worker" ? .56 : .33, .14, "rgba(5,12,12,.35)")
+      if (!a?.sprite && !mounted) infantry(g,r,color,pose,a)
+      else {
+        // Other figures (and whole-sprite units) get the ruleset layers outside, facing the same way.
+        const facing = Math.cos(pose.angle ?? 0) < 0 ? -1 : 1
+        if (a?.under) { g.save(); g.scale(facing,1); svgLayer(g,a.under,color); g.restore() }
+        g.save()
+        if (a?.sprite) {
+          const strike = (pose.attack ?? -1) < 0 ? 0 : Math.sin(Math.PI * clamp(pose.attack! / .7))
+          g.scale(facing,1); g.translate(strike*.055, Math.abs(pose.walk ?? 0)*.025)
+          svgLayer(g,a.sprite,color)
+        } else if (r === "worker") villager(g,color,pose)
+        else if (r === "scout" || r === "cavalry") scout(g,color,pose,r === "cavalry")
+        else if (r === "cannon" || r === "wagon") vehicle(g,r,color,pose)
+        else animal(g,pose)
+        g.restore()
+        if (a?.over) { g.save(); g.scale(facing,1); svgLayer(g,a.over,color); g.restore() }
+      }
     } else if (t.kind === "resource") {
       ellipse(g, 0, .17, w * .47, h * .34, "rgba(4,12,12,.30)")
       g.scale(w, h)
-      if (!/gold|mine|ore/.test(r)) {
+      svgLayer(g, a?.under, color)
+      if (a?.sprite) svgLayer(g, a.sprite, color)
+      else if (!/gold|mine|ore/.test(r)) {
         polygon(g, [-.4,.04,-.16,-.35,.22,-.28,.42,.12,.02,.35], color)
         polygon(g, [-.16,-.35,.22,-.28,.07,.02,-.4,.04], "rgba(255,255,255,.28)", "")
         if (t.label) { g.font = "bold .3px sans-serif"; g.textAlign = "center"; g.textBaseline = "middle"; g.fillStyle = "#fff3cd"; g.fillText(t.label, 0, .08) }
@@ -373,6 +440,7 @@ export function createBattleArt() {
         polygon(g, [dx-rr*.65,dy-.13,dx+.02,dy-rr,dx+rr*.4,dy-.07,dx-.04,dy+.04], "#f1cd70", "")
         polygon(g, [dx+.02,dy-rr,dx+rr,dy-.06,dx+rr*.8,dy+.18,dx+rr*.4,dy-.07], "#c59b4b", "")
       }
+      svgLayer(g, a?.over, color)
     } else {
       g.scale(w, h)
       ellipse(g, .035, .13, .49, .42, "rgba(5,12,12,.32)")
@@ -382,7 +450,9 @@ export function createBattleArt() {
         for (let y = y0+.12; y < y0+hh; y+=.13) line(g, x0, y, x0+ww, y, "#6a7164", .015)
         line(g, x0+.025, y0+.025, x0+ww-.025, y0+.025, "#d5ceb0", .025)
       }
-      if (r === "farm") {
+      svgLayer(g, a?.under, color)
+      if (a?.sprite) svgLayer(g, a.sprite, color)
+      else if (r === "farm") {
         box(g, -.47, -.41, .94, .82, "#694e30")
         for (let row = 0; row < 5; row++) {
           const y = -.3 + row * .14
@@ -422,6 +492,7 @@ export function createBattleArt() {
         polygon(g,[-.45,-.28,0,-.46,.45,-.28,.32,-.04,-.32,-.04],color)
         if(t.label) {g.font="bold .32px sans-serif";g.textAlign="center";g.textBaseline="middle";g.fillStyle="#f0e8d0";g.fillText(t.label,0,.17)}
       }
+      svgLayer(g, a?.over, color)
       if(progress<100) {
         for(const x of [-.42,.42])line(g,x,-.45,x,.44,"#d0aa74",.04)
         for(const y of [-.28,.13])line(g,-.45,y,.45,y,"#d0aa74",.035)
@@ -550,5 +621,5 @@ export function createBattleArt() {
     }
     g.restore()
   }
-  return { role, attackStyle, entity, terrain, attack, fallen, headroom }
+  return { role, attackStyle, entity, terrain, attack, fallen, headroom, prepare }
 }

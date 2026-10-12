@@ -14,6 +14,7 @@ import type { Marker, MatchResult, RuleContext, RuleEntity, Ruleset, SetupContex
 import { PKG_ROOT } from "../paths.ts"
 import { clip, compileBot, errorText, newSandboxRuntime } from "./quickjs.ts"
 import { checkResult, checkRulesetData, RULES_HARD } from "./rules-check.ts"
+import { inlineRulesetArt } from "./ruleset-art.ts"
 import { rulesPreludeSource } from "./rules-prelude.ts"
 
 /** 沙箱规则包的上限 */
@@ -560,6 +561,12 @@ export async function loadSandboxedRuleset(dir: string, opts: { onLog?: (tick: n
   const d = desc.d as Omit<Ruleset, "setup" | "onTick" | "objectives" | "result" | "timeUp">
   box.name = d.name
   box.typesJson = JSON.stringify(Object.fromEntries(Object.entries(d.types).map(([k, spec]) => [k, resolveType(k, spec)])))
+  // 规则包自带的素材（D-233）：沙箱读不了文件，宿主按路径读进来写回 look.art（沙箱里的类型表不带素材，回放里带）
+  try {
+    inlineRulesetArt(d.types, abs)
+  } catch (e) {
+    throw new Error(`规则包 ${dir} 的素材有问题：${(e as Error).message}`)
+  }
   logger ??= logToStderr(d.name)
   const result = (v: unknown, n: number, allowNull: boolean, what: string): MatchResult | null => {
     const bad = checkResult(v, n, allowNull)

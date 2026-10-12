@@ -434,3 +434,29 @@ test("区域叠加层可以自定颜色；颜色格式不对被拒", async () =>
   assert.equal((ok.initial.markers[0] as { color?: string }).color, "#ff8800")
   await assert.rejects(play(rules({ setup: `ctx.setMarkers([{ kind: "zone", x: 1, y: 1, w: 2, h: 2, owner: null, color: "red" }])` })), /叠加层格式不对/)
 })
+
+test("规则包自带的素材（D-233）：look.art 的 SVG 由宿主读进来、写进回放；只能是规则包目录里带 viewBox 的 .svg；领主的素材在弑君歼灭规则包里", async () => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-0.5 -0.5 1 1"><rect fill="currentColor" width="0.2" height="0.2"/></svg>'
+  const withArt = (art: string, file?: [string, string]) => {
+    const dir = rules({ types: `{ hq: { kind: "building", maxHp: 100, look: { shape: "square", art: ${art} } } }` })
+    mkdirSync(join(dir, "art"), { recursive: true })
+    if (file) writeFileSync(join(dir, file[0]), file[1])
+    return dir
+  }
+  const replay = await play(withArt(`{ base: "tower", over: "art/flag.svg" }`, ["art/flag.svg", svg]))
+  assert.equal(replay.types.hq.look.art?.base, "tower")
+  assert.equal(replay.types.hq.look.art?.over, svg, "回放里带的是 SVG 内容，不是路径")
+  // 规则包目录外的、不是 svg 的、找不到的、没有 viewBox 的都报错
+  await assert.rejects(play(withArt(`{ over: "../flag.svg" }`)), /素材要放在规则包目录里/)
+  await assert.rejects(play(withArt(`{ over: "art/flag.png" }`)), /要写规则包目录里的 \.svg 文件路径/)
+  await assert.rejects(play(withArt(`{ over: "art/none.svg" }`)), /找不到 art\/none\.svg/)
+  await assert.rejects(play(withArt(`{ sprite: "art/plain.svg" }`, ["art/plain.svg", "<svg></svg>"])), /要写 viewBox/)
+  await assert.rejects(play(withArt(`{ cape: "art/flag.svg" }`, ["art/flag.svg", svg])), /只能写 base、under、over、sprite（多了 cape）/)
+  // 弑君歼灭的领主：没缨的剑盾兵打底，身后披风、身前王冠和金盾，都从规则包目录的 art/ 读进来
+  for (const r of [await importRuleset("regicide-annihilation"), await loadSandboxedRuleset(join(ROOT, "rulesets", "regicide-annihilation"), quiet)]) {
+    const art = r.types.lord.look.art!
+    assert.equal(art.base, "infantry")
+    assert.match(art.under!, /^<svg[\s\S]*currentColor/)
+    assert.match(art.over!, /^<svg[\s\S]*viewBox/)
+  }
+})
