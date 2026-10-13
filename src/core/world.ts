@@ -259,6 +259,8 @@ export class World implements SetupContext, RuleContext {
       resources: Object.fromEntries(rules.resources.map((r) => [r, 0])),
       pending: [],
     }))
+    // 同队共用一份资源（D-245）：队友的 resources 指向同一个对象，扣钱、交货、规则包加钱都算在一起，同一 tick 两个队友也花不超
+    if (rules.sharedResources) for (const p of this.players) p.resources = this.players[this.teams.indexOf(this.teams[p.id])].resources
   }
 
   get maxTicks(): number {

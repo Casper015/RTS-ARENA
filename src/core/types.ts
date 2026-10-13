@@ -328,6 +328,11 @@ export interface Ruleset {
   players: { min: number; max: number }
   /** 是否支持分队（规则包要自己按队伍摆位置、判胜负）；不支持时命令行拒绝 --teams */
   teams?: boolean
+  /**
+   * 分队时同队共用一份资源（D-245）：队友看到的、花的是同一份，谁采的、规则包给谁加的都进这一份；setResources 给任何一个队友设就是设整队的。
+   * 默认 false（各管各的，D-116）
+   */
+  sharedResources?: boolean
   /** 一局最多多少 tick */
   maxTicks: number
   /** 回放每秒播放多少 tick（只影响观看） */
@@ -583,6 +588,8 @@ export interface Replay {
   types: Record<string, { kind: TypeDef["kind"]; w: number; h: number; maxHp: number; moveTicks: number; sight?: number; cost?: TypeDef["cost"]; worker?: boolean; /** D-145 起记下（vs 是克制倍数，D-166） */ attack?: { damage: number; range: number; cooldown: number; vs?: Partial<Record<string, number>>; splash?: number }; /** D-148 起记下：能不能采集、能建什么 */ gather?: boolean; builds?: string[]; /** D-167 起记下：生产用时、能生产什么（战报算兵营利用率） */ buildTicks?: number; produces?: string[]; /** D-196 起记下（不是 1 才写）：同时造几个 */ parallel?: number; /** D-186 起记下（有才写）：技能、光环、被动 */ skills?: SkillDef[]; auras?: AuraDef[]; passives?: PassiveDef[]; look: Look }>
   /** 有没有战争迷雾（老回放没有） */
   fog?: boolean
+  /** 同队共用一份资源（D-245 起记下，有才写）：每个队友记的资源都是整队的 */
+  sharedResources?: true
   initial: Snapshot
   frames: Frame[]
   result: MatchResult & { tick: number }

@@ -72,6 +72,13 @@ export function gameSeatStats(replay: Replay): SeatGameStats[] {
     }
   }
   s.players.forEach((p, i) => (out[i].income = Object.values(p.resources).reduce((a, b) => a + b, 0) - startRes[i] + spent[i]))
+  // 同队共用一份资源（D-245）：每个队友记的都是整队的钱，整队的采集（整队现在的钱 - 开局 + 全队花的）平分给队友
+  if (replay.sharedResources)
+    for (const t of new Set(replay.players.map((p) => p.team))) {
+      const seats = replay.players.map((p, i) => (p.team === t ? i : -1)).filter((i) => i >= 0)
+      const total = Object.values(s.players[seats[0]].resources).reduce((a, b) => a + b, 0) - startRes[seats[0]] + seats.reduce((a, i) => a + spent[i], 0)
+      for (const i of seats) out[i].income = total / seats.length
+    }
   return out
 }
 

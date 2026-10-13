@@ -38,6 +38,7 @@ export function checkRulesetData(d: unknown, callbacks: string[]): string[] {
   if (!isObj(players) || !isInt(players.min, 1, RULES_HARD.players) || !isInt(players.max, 1, RULES_HARD.players) || players.min > players.max)
     bad(`players 要写成 { min, max }，1 ≤ min ≤ max ≤ ${RULES_HARD.players}`)
   if (d.teams !== undefined && typeof d.teams !== "boolean") bad("teams 要是 true / false")
+  if (d.sharedResources !== undefined && typeof d.sharedResources !== "boolean") bad("sharedResources 要是 true / false")
   if (!isInt(d.maxTicks, 1, RULES_HARD.maxTicks)) bad(`maxTicks 要是 1～${RULES_HARD.maxTicks} 的整数`)
   if (typeof d.tickRate !== "number" || !(d.tickRate >= 1 && d.tickRate <= 120)) bad("tickRate 要是 1～120 的数")
   if (!isInt(d.decisionInterval, 1, 1000)) bad("decisionInterval 要是 1～1000 的整数")

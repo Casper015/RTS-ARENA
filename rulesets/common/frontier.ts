@@ -1,9 +1,12 @@
 // 拓荒（frontier）和科技（tech）共用：地图、开局、单位、击杀价值、胜负判定。
 // 科技规则包在拓荒的基础上加科技建筑（D-154），这里的东西两边一模一样
 import type { MatchResult, RuleContext, SetupContext, TypeSpec } from "../../src/core/types.ts"
+import { seatCorners } from "./corners.ts"
 import {
   baseStarts,
   randomSymmetricMap,
+  rotateK,
+  rotationalTerrain,
   spawnMirrored,
   STANDARD_HOME,
   STANDARD_OBSTACLE_CHARS,
@@ -117,10 +120,10 @@ export function killValueOf(types: Record<string, TypeSpec>, type: string, finis
   return types[type].kind === "building" && finished ? cost * 2 : cost
 }
 
-/** 读这一 tick 的死亡事件，给击杀者加击杀价值（拆自己的地基不算）；ignore 里的类型打死的不算（攻城拓荒：主基地开火打死的，D-217） */
+/** 读这一 tick 的死亡事件，给击杀者加击杀价值（拆自己的地基、盟友的不算）；ignore 里的类型打死的不算（攻城拓荒：主基地开火打死的，D-217） */
 export function scoreKills(ctx: RuleContext, types: Record<string, TypeSpec>, ignore: string[] = []): void {
   for (const ev of ctx.events) {
-    if (ev.kind === "died" && ev.killer >= 0 && ev.owner >= 0 && ev.killer !== ev.owner && !ignore.includes(ev.killerType ?? "")) ctx.addScore(ev.killer, killValueOf(types, ev.type, !ev.unfinished))
+    if (ev.kind === "died" && ev.killer >= 0 && ev.owner >= 0 && ev.killer !== ev.owner && !ctx.isAlly(ev.killer, ev.owner) && !ignore.includes(ev.killerType ?? "")) ctx.addScore(ev.killer, killValueOf(types, ev.type, !ev.unfinished))
   }
 }
 
@@ -151,4 +154,80 @@ export function frontierTimeUp(ctx: RuleContext): MatchResult {
   const hb = baseHp(ctx, 1)
   if (ha !== hb) return { winner: ha > hb ? 0 : 1, reason: `时间到，击杀价值相同，主基地剩余生命 ${ha} : ${hb}` }
   return { winner: null, reason: "时间到，击杀价值和主基地生命都相同，平局" }
+}
+
+// ---------- 3～4 人的四角地图（D-244，攻城拓荒） ----------
+
+export const CORNERS_SIZE = 64
+/** 左上角那一家的开局（主基地、5 个工人），其他角转过去；和两人图的家一样 */
+const CORNER_HOME: { type: string; x: number; y: number }[] = [
+  { type: "base", x: 3, y: 3 },
+  { type: "worker", x: 6, y: 3 },
+  { type: "worker", x: 6, y: 4 },
+  { type: "worker", x: 6, y: 5 },
+  { type: "worker", x: 3, y: 6 },
+  { type: "worker", x: 4, y: 6 },
+]
+/** 每个角的矿（没人坐的角也有）：家门口 4 个、往下绕过石墙的分矿 3 个（600），地图正中转四次是一个 2×2 的矿群（700） */
+const CORNER_MINES: { x: number; y: number; amount?: number }[] = [
+  { x: 1, y: 9 },
+  { x: 3, y: 9 },
+  { x: 5, y: 9 },
+  { x: 9, y: 1 },
+  { x: 2, y: 22, amount: 600 },
+  { x: 4, y: 23, amount: 600 },
+  { x: 2, y: 25, amount: 600 },
+  { x: 31, y: 31, amount: 700 },
+]
+/** 把分矿和家隔开的石墙（同两人图） */
+const CORNER_WALL = { ch: "#", x: 0, y: 15, w: 7, h: 2 }
+/** 随机地图生成不出来时的经典布局 */
+const CORNER_CLASSIC = [
+  { ch: "#", x: 14, y: 0, w: 2, h: 8 },
+  { ch: "#", x: 22, y: 6, w: 4, h: 3 },
+  { ch: "#", x: 11, y: 22, w: 3, h: 4 },
+  { ch: "~", x: 24, y: 24, w: 4, h: 3 },
+]
+
+/** 玩家 p 的主基地开局左上角（按 seatCorners 的座位转过去） */
+export function cornerBaseStart(corner: number): { x: number; y: number } {
+  const r = rotateK(CORNERS_SIZE, { x: 3, y: 3, w: 3, h: 3 }, corner)
+  return { x: r.x, y: r.y }
+}
+
+/**
+ * 3～4 人的开局（D-244）：64×64 四重旋转对称的随机地图，每家坐一角（分队时队友坐相邻的角），家、分矿和两人图一样；
+ * 两家之间每局随机一对矿（每个 600）。extra 是规则包自己加的东西（比如侦察兵），按左上角那家写，其他角转过去；
+ * 开局每人 300 金，shared（规则包 sharedResources，同队共用一份）时整队 300 × 队伍人数
+ */
+export function frontierCornersSetup(ctx: SetupContext, types: Record<string, TypeSpec>, extra: { type: string; x: number; y: number }[] = [], shared = false): void {
+  const S = CORNERS_SIZE
+  const map = randomSymmetricMap(ctx.rng, {
+    width: S,
+    height: S,
+    symmetry: "rot4",
+    base: rotationalTerrain(S, ".", [CORNER_WALL]),
+    terrain: STANDARD_TERRAIN,
+    solid: CORNER_MINES.map((m) => ({ x: m.x, y: m.y, w: 1, h: 1 })),
+    keepClear: [STANDARD_HOME, { x: 0, y: 19, w: 9, h: 10 }, { x: 28, y: 28, w: 8, h: 8 }],
+    obstacles: { count: [6, 8], shapes: STANDARD_SHAPES, chars: STANDARD_OBSTACLE_CHARS },
+    mines: [{ region: { x: 14, y: 10, w: 12, h: 10 }, offsets: [{ x: 0, y: 0 }, { x: 2, y: 0 }] }],
+    connect: [{ x: 7, y: 7 }, { x: 6, y: 23 }, { x: 30, y: 30 }],
+  })
+  ctx.setTerrain(map?.terrain ?? rotationalTerrain(S, ".", [CORNER_WALL, ...CORNER_CLASSIC]))
+  const size = (type: string) => ({ w: types[type].w ?? 1, h: types[type].h ?? 1 })
+  const mines = map ? CORNER_MINES : [...CORNER_MINES, { x: 18, y: 12, amount: 600 }, { x: 20, y: 12, amount: 600 }]
+  for (const m of mines)
+    for (let k = 0; k < 4; k++) {
+      const r = rotateK(S, { x: m.x, y: m.y, w: 1, h: 1 }, k)
+      ctx.spawn("goldmine", -1, r.x, r.y, m.amount ? { amount: m.amount } : undefined)
+    }
+  if (map) for (const m of map.mines) ctx.spawn("goldmine", -1, m.x, m.y, { amount: 600 })
+  seatCorners(ctx.teams).forEach((corner, p) => {
+    for (const it of [...CORNER_HOME, ...extra]) {
+      const r = rotateK(S, { x: it.x, y: it.y, ...size(it.type) }, corner)
+      ctx.spawn(it.type, p, r.x, r.y)
+    }
+    ctx.setResources(p, { gold: 300 * (shared ? ctx.teams.filter((t) => t === ctx.teams[p]).length : 1) })
+  })
 }

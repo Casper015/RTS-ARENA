@@ -46,6 +46,7 @@ const ruleset: Ruleset = {
   summary: "一句话说清楚玩什么（最多 60 字），rts-arena list 里显示",
   players: { min: 2, max: 2 },
   teams: false,            // 支持 --teams 分队时写 true，并且自己按队伍摆位置、判胜负
+  sharedResources: false,  // 分队时同队共用一份资源：交货、扣钱、addResource 都算整队的，setResources 给任何一个队友设就是设整队（默认各管各的）
   maxTicks: 4000,
   tickRate: 10,            // 回放每秒播多少 tick
   decisionInterval: 5,     // 每几个 tick 调一次 bot

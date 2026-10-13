@@ -151,3 +151,36 @@ test("混战 2v2：按队伍判胜负，什么都不做的队友也算赢", asyn
     [0, 0, 1, 1],
   )
 })
+
+test("攻城拓荒 3～4 人（D-244、D-245）：64×64 四角，2v2 队友坐相邻的角、共用一份金子（开局整队 600），各自为战每人 300", async () => {
+  const idle = join(ROOT, "bots", "idle.ts")
+  const baseline = join(ROOT, "rulesets", "siege-frontier", "bots", "baseline.ts")
+  const team = runMatch({
+    ruleset: { ...siegeFrontier, maxTicks: 600 },
+    seed: 3,
+    teams: [0, 0, 1, 1],
+    bots: [await load(siegeFrontier, baseline, 0), await load(siegeFrontier, idle, 1), await load(siegeFrontier, idle, 2), await load(siegeFrontier, idle, 3)],
+  })
+  assert.equal(team.map.width, 64)
+  assert.equal(team.sharedResources, true)
+  const bases = team.initial.entities.filter((e) => e.type === "base").sort((a, b) => a.owner - b.owner)
+  assert.deepEqual(bases.map((b) => [b.x, b.y]), [[3, 3], [3, 58], [58, 58], [58, 3]], "队友（P0、P1）坐左边相邻的两个角")
+  assert.deepEqual(team.initial.players.map((p) => p.resources.gold), [600, 600, 600, 600])
+  // 只有 P0 在花钱、采矿：队友 P1 的金子一直跟着变，另一队不动
+  let moved = false
+  for (const f of team.frames) {
+    if (!f.players) continue
+    assert.equal(f.players[0].resources.gold, f.players[1].resources.gold, `第 ${f.t} tick 队友的金子不一样`)
+    if (f.players[0].resources.gold !== 600) moved = true
+    assert.equal(f.players[2].resources.gold, 600)
+  }
+  assert.ok(moved)
+  const ffa = runMatch({
+    ruleset: { ...siegeFrontier, maxTicks: 50 },
+    seed: 3,
+    bots: await Promise.all([0, 1, 2, 3].map((p) => load(siegeFrontier, idle, p))),
+  })
+  assert.equal(ffa.sharedResources, true)
+  assert.deepEqual(ffa.initial.players.map((p) => p.resources.gold), [300, 300, 300, 300])
+  assert.equal(ffa.initial.entities.filter((e) => e.type === "scout").length, 4)
+})

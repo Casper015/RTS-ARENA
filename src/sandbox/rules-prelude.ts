@@ -184,7 +184,7 @@ export function rulesPreludeSource(maxLines: number, maxLine: number): string {
   }
 
   var R = null;
-  var KEYS = ["id", "name", "summary", "players", "teams", "maxTicks", "tickRate", "decisionInterval", "fuel", "unitCap", "fog", "resources", "terrain", "types"];
+  var KEYS = ["id", "name", "summary", "players", "teams", "sharedResources", "maxTicks", "tickRate", "decisionInterval", "fuel", "unitCap", "fog", "resources", "terrain", "types"];
   var FNS = ["setup", "onTick", "objectives", "result", "timeUp", "buildCheck", "onCast"];
 
   G.__rules = {

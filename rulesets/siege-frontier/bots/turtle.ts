@@ -179,7 +179,8 @@ export function onTick(view: View, cmd: Commands): void {
   const mine = view.entities.filter((e) => e.owner === me)
   const base = mine.find((e) => e.type === "base")
   if (!base) return
-  const foes = view.entities.filter((e) => e.owner >= 0 && e.owner !== me)
+  // 盟友（同队）不算敌人（3～4 人分队局，D-244）
+  const foes = view.entities.filter((e) => e.owner >= 0 && e.owner !== me && game.teams[e.owner] !== game.teams[me])
   const foeArmy = foes.filter(isArmy)
   const visible = new Set(foes.map((e) => e.id))
   for (const b of foes.filter(isBuilding)) {
@@ -212,8 +213,11 @@ export function onTick(view: View, cmd: Commands): void {
   const buildings = mine.filter(isBuilding)
   const done = (t: TypeName) => buildings.filter((b) => b.type === t && !b.construction)
   const all = (t: TypeName) => buildings.filter((b) => b.type === t)
-  const eb = view.objectives.enemyBases[0]
-  const enemyRect = { x: eb.x, y: eb.y, w: 3, h: 3 }
+  // 目标是离自己最近的、还在场的敌方主基地（两人局就是对手那个）；离哪个敌方主基地比离自己近的矿都算对手那一侧
+  const enemyRects = view.objectives.enemyBases.map((b) => ({ x: b.x, y: b.y, w: 3, h: 3 }))
+  if (!enemyRects.length) return
+  const enemyRect = enemyRects.reduce((a, r) => (dist(r, base) < dist(a, base) ? r : a))
+  const eb = enemyRect
   const enemyCenter = { x: eb.x + 1, y: eb.y + 1 }
   const home = centerOf(base)
   const drops = buildings.filter((b) => game.types[b.type].dropOff && !b.construction)
@@ -221,7 +225,7 @@ export function onTick(view: View, cmd: Commands): void {
   const homeGold = goldmines.filter((m) => dist(m, base) <= 10 && !foeBuildings.some((e) => e.type === "tower" && dist(e, m) <= 5)).reduce((a, m) => a + (m.amount ?? 0), 0)
   /** 去不得的矿：在对手那一侧、旁边有敌兵、在箭塔射程边上，或者从交货点走过去要经过箭塔射程（沿直线每格查一下） */
   const unsafe = (m: Entity) => {
-    if (dist(m, base) > dist(m, enemyRect) || foes.some((e) => isArmy(e) && dist(e, m) <= 6) || foeTowers.some((t) => dist(t, m) <= 5)) return true
+    if (enemyRects.some((r) => dist(m, base) > dist(m, r)) || foes.some((e) => isArmy(e) && dist(e, m) <= 6) || foeTowers.some((t) => dist(t, m) <= 5)) return true
     if (foeTowers.length === 0) return false
     const d = nearest(m, drops)
     if (!d) return false
