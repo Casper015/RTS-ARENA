@@ -9,7 +9,7 @@ import { gameSeatStats, type SeatGameStats } from "../cli/league-stats.ts"
 import { buildReport } from "../cli/report.ts"
 import type { Replay } from "../core/types.ts"
 import { contestantNames, factTags, PLAYER_PAGE_CHARS, PLAYER_PAGE_MIN, readSeries, RULES_PAGE_CHARS, SCRIPT_LIMITS, videoBrief, type VideoBrief, type VideoScript } from "./brief.ts"
-import { gameReasons, PALETTE_NAMES, tidy } from "./render.ts"
+import { colorName, gameReasons, tidy, videoColors } from "./render.ts"
 
 export const VIDEO_CONFIG = "arena-video.json"
 
@@ -189,6 +189,8 @@ function videoPrompt(
   const L = SCRIPT_LIMITS
   const rs = brief.ruleset.name
   const own = new Set(contestantNames(series))
+  // 整片视频每个选手一种颜色（D-253）：参赛选手的颜色不随放哪几局变
+  const colors = videoColors(series, [])
   const out: string[] = []
   out.push(`# 联赛视频脚本说明（「${rs}」联赛，${brief.players.length} 位选手，${brief.league.games} 局）`)
   out.push("")
@@ -199,7 +201,7 @@ function videoPrompt(
   out.push("脚本只管文字，排版、配色、动画、回放都是平台做的。没有配音。按顺序：")
   out.push("")
   out.push("1. **开场阵容**（2.5 秒，抓住前 3 秒）：第一帧就是全体参赛选手的立绘阵容（按 `players` 的顺序），上面压一句大字（`hook.text`，30 字以内；不写就是\"<人数> 位选手的<规则包>联赛，谁能夺冠？\"），最下面一行小字是平台署名和仓库地址（自动加，去不掉）。这一帧也当封面，不从黑屏淡入。")
-  out.push(`2. **规则介绍**：左边是你写的 \`rules\`（1～${L.rulesLines} 句，逐句出现），右边上面列出这场联赛的陪练（平台自带的参考 bot：名字和你写在 \`sparring\` 里的一句话介绍，${L.sparring} 字以内，照下面「联赛数据」里它的打法说明缩写；不写就用打法说明冒号前的标签），下面是单位图例（兵种造型、名字、造价、生命、近战还是射程几格），最下面一行小字是平台署名和仓库地址（自动加，去不掉）。\`rules\` 不写就只显示规则包的一句话简介${series.ruleset.summary ? `："${series.ruleset.summary}"` : ""}。`)
+  out.push(`2. **规则介绍**：左边是你写的 \`rules\`（1～${L.rulesLines} 句，逐句出现），右边上面列出规则包自带的陪练（参考 bot，不管进没进这场联赛）：名字和你写在 \`sparring\` 里的一句话介绍（${L.sparring} 字以内，照下面「陪练」一节里它的打法说明缩写；不写就用打法说明冒号前的标签），下面是单位图例（兵种造型、名字、造价、生命、近战还是射程几格），最下面一行小字是平台署名和仓库地址（自动加，去不掉）。\`rules\` 不写就只显示规则包的一句话简介${series.ruleset.summary ? `："${series.ruleset.summary}"` : ""}。`)
   out.push("3. **每个参赛选手：介绍页，紧接着整局放他的一局高光对局**，**按联赛名次倒着出场**：最后一名先上、冠军压轴（`players` 的顺序只管开场阵容和片尾名单）。**只介绍参赛选手**，平台自带的参考 bot（陪练）没有介绍页（只在规则页列一句话、最后的联赛排名里标灰），`players` 里不用写它们。")
   out.push("   - 介绍页：左边是 `displayName`、`byline`（小字）、`tagline`（一句话定位，醒目）、`intro`（逐句出现）；背后是这个选手形象图的半透明半身像（`portrait`）；右上是平台算的**能力雷达图**（6 项，都从这场联赛的对局数据算：经济＝每局采集、生产＝每局造的单位、战斗＝击杀占比（击杀 ÷（击杀＋损失），旁边标杀伤比）、进攻＝每局拆的建筑、克制＝打在被自己克的兵上的伤害占比（没有克制的规则包换成速胜＝赢的局平均多快结束）、防守＝每局丢的建筑和工人越少越高，丢得最多的是 0；其余几项和全联赛最好的比），右下是代码指标和联赛战绩。雷达图的数字观众看得到，`intro` 里不用逐项复述，挑最突出的一两项讲原因。")
   out.push("   - 高光对局：哪一局由 `players[].highlight` 定（联赛的局号，这局要有他；模板里已经按联赛挑的精彩对局给每人挑好了一局，可以换）；不写就从 `highlights` 和联赛挑的精彩对局里找第一局有他、还没给别人用过的，都没有就从他打过的局里挑（赢过挑结束最快的，没赢过挑撑得最久的）。回放顶上一行小字是「<选手> 的高光对局」，后面是这局在 `highlights` 里的 `title` 和 `commentary`（没写就只有对阵双方），所以**每个选手那局都要写进 `highlights`**，换了 `highlight` 的局号也要跟着改 `highlights`。")
@@ -278,6 +280,12 @@ function videoPrompt(
   for (const p of [...brief.players].sort((a, b) => (a.standing?.rank ?? 99) - (b.standing?.rank ?? 99)))
     out.push(`| ${p.standing?.rank ?? "-"} | ${p.name} | ${p.standing?.wins ?? 0} | ${p.standing?.draws ?? 0} | ${p.standing?.losses ?? 0} | ${pct(p.standing?.rate ?? 0)} | ${p.standing?.elo ?? "-"} |`)
   out.push("")
+  if (brief.sparring.length) {
+    out.push("### 陪练（规则包自带的参考 bot，规则页上列出来，一句话介绍写在 `sparring` 里）")
+    out.push("")
+    for (const b of brief.sparring) out.push(`- \`${b.name}\`：${b.about}`)
+    out.push("")
+  }
   out.push("### 选手")
   out.push("")
   out.push("代码指标是数出来的：")
@@ -286,11 +294,11 @@ function videoPrompt(
   out.push("- 写法特征里：`cmd.xxx` 是调用这个命令的地方有几处；\"自己寻路\"是 bfs、astar、path、flowField 之类的词出现几次；\"状态机模式\"是 `mode =` / `mode:` 出现几次；\"实测或调参注释\"是\"实测、调参、调出来、回放数据\"出现几次；\"版本号\"是 v3、v1.2、VERSION 这类出现几次")
   out.push("")
   brief.players.forEach((p, i) => {
-    out.push(`#### ${p.name}${own.has(p.name) ? "" : "（平台自带的参考 bot，陪练：没有介绍页，规则页上列一句话介绍，写在 `sparring` 里）"}`)
+    out.push(`#### ${p.name}${own.has(p.name) ? "" : "（平台自带的参考 bot，陪练：没有介绍页）"}`)
     out.push("")
-    if (p.about) out.push(`- 打法说明（代码第一行，规则页的一句话介绍照它缩写）：${p.about}`)
     out.push(`- 代码：\`${botFile.get(p.name) ?? "（没找到文件）"}\`；文件名拆开：${p.fileNameParts.map((x) => `"${x}"`).join(" / ")}`)
-    out.push(`- 视频里的颜色：${PALETTE_NAMES[i % PALETTE_NAMES.length]}色（选手页、回放里都是这个颜色）`)
+    // 整片视频一种颜色（D-253）；陪练的颜色看视频里放哪几局，不写
+    if (own.has(p.name)) out.push(`- 视频里的颜色：${colorName(colors.get(p.name)!)}色（开场阵容、选手页、回放、排名里都是这个颜色）`)
     out.push(`- 对每个对手（胜-平-负）：${Object.entries(p.headToHead).map(([k, v]) => `${k} ${v}`).join("；")}`)
     if (p.perGame) out.push(`- 每局平均：${Object.entries(p.perGame).map(([k, v]) => `${k} ${v}`).join("，")}`)
     // 规则包看点（D-249）：选手页上自动显示，写介绍时可以顺着说

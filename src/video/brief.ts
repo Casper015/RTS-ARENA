@@ -4,7 +4,7 @@
 // 平台署名（片头、片尾）由渲染器固定加上，脚本去不掉
 import { existsSync, readFileSync } from "node:fs"
 import { basename, dirname, join, resolve } from "node:path"
-import { botAbout } from "../cli/catalog.ts"
+import { referenceBots } from "../cli/catalog.ts"
 import { finalScores } from "../cli/highlights.ts"
 import type { Replay, SpotlightItem } from "../core/types.ts"
 import { PKG_ROOT } from "../paths.ts"
@@ -131,14 +131,14 @@ export interface VideoBrief {
     headToHead: Record<string, string>
     /** 每局平均：采集、造单位、损失、击杀 */
     perGame: Record<string, number> | null
-    /** 陪练（平台自带的参考 bot）代码第一行的打法说明（D-252，规则页的一句话介绍照它缩写）；参赛选手是 null */
-    about: string | null
     /** 规则包的选手页看点（D-249）：每项的每局平均、在参赛选手里排第几；规则包没写看点、参考 bot 是 null */
     spotlight: SpotlightRow[] | null
     trouble: { errors: number; fuelOuts: number; rejected: number }
     code: CodeFacts | null
   }[]
   highlights: NonNullable<SeriesFile["summary"]>["highlights"]
+  /** 规则包自带的陪练和代码第一行的打法说明（D-252，规则页的一句话介绍照它缩写） */
+  sparring: { name: string; about: string }[]
   /** 待填的脚本（把 "待填" 都换掉，写好后用 rts-arena video <汇总> --script <脚本> 渲染） */
   scriptTemplate: VideoScript
   rules: string[]
@@ -246,10 +246,15 @@ export function contestantNames(series: SeriesFile): string[] {
   return own.length ? own : all
 }
 
-/** 陪练的名字（D-252，规则页列出来）：联赛里平台自带的参考 bot；全是参考 bot 时它们都算参赛选手，没有陪练 */
-export function sparringNames(series: SeriesFile): string[] {
-  const own = new Set(contestantNames(series))
-  return series.participants.map((p) => p.name).filter((n) => !own.has(n))
+/**
+ * 规则包自带的陪练（D-252，规则页列出来）：规则包 bots/ 里的参考 bot（baseline 在前，不含平台通用的 idle）和代码第一行的打法说明。
+ * 规则页是在介绍规则包，和这些 bot 进没进这场联赛无关（用户：陪练不一定会进联赛）
+ */
+export function sparringBots(series: SeriesFile): { name: string; about: string }[] {
+  const dir = series.ruleset.dir && existsSync(series.ruleset.dir) ? series.ruleset.dir : join(PKG_ROOT, "rulesets", series.ruleset.id)
+  return referenceBots(dir)
+    .filter((b) => b.name !== "idle")
+    .map((b) => ({ name: b.name, about: b.about }))
 }
 
 /**
@@ -291,12 +296,12 @@ export function checkScript(s: unknown, series: SeriesFile): string[] {
   }
   // 陪练的一句话介绍（D-252）
   if (o.sparring !== undefined) {
-    const spar = sparringNames(series)
+    const spar = sparringBots(series).map((b) => b.name)
     if (!Array.isArray(o.sparring)) errs.push("sparring 要是数组，每个陪练一项：{ name, text }")
     else
       (o.sparring as Record<string, unknown>[]).forEach((x, j) => {
         if (!x || typeof x !== "object") return errs.push(`sparring[${j}] 要写成 { name, text }`)
-        if (typeof x.name !== "string" || !spar.includes(x.name)) errs.push(`sparring[${j}].name 要是这场联赛的陪练之一：${spar.join("、") || "（这场联赛没有陪练，删掉 sparring）"}`)
+        if (typeof x.name !== "string" || !spar.includes(x.name)) errs.push(`sparring[${j}].name 要是规则包自带的陪练之一：${spar.join("、") || "（这个规则包没有陪练，删掉 sparring）"}`)
         str(x.text, `sparring[${j}].text`, L.sparring, true)
       })
   }
@@ -534,7 +539,6 @@ export function videoBrief(seriesFile: string): VideoBrief {
       headToHead: h2h,
       perGame: b ? { 采集: avg(b.income), 造单位: avg(b.produced), 损失单位: avg(b.lostUnits), 损失工人: avg(b.lostWorkers ?? 0), 击杀单位: avg(b.killedUnits), 拆建筑: avg(b.killedBuildings), 每局时长: avg(b.ticks) } : null,
       spotlight: own.includes(p.name) ? spotlightFor(s, own, p.name) : null,
-      about: !own.includes(p.name) && file ? botAbout(file) : null,
       trouble: { errors: b?.errors ?? 0, fuelOuts: b?.fuelOuts ?? 0, rejected: b?.rejected ?? 0 },
       code: file ? codeFacts(readFileSync(file, "utf8")) : null,
     }
@@ -543,7 +547,7 @@ export function videoBrief(seriesFile: string): VideoBrief {
   const scriptTemplate: VideoScript = {
     hook: { text: "待填：开场的一句大字（30 字以内，可删）" },
     rules: ["待填：怎么赢（照 RULES.md 写给没玩过的观众）", "待填：最关键的机制或特别的单位"],
-    ...(sparringNames(s).length ? { sparring: sparringNames(s).map((name) => ({ name, text: "待填：一句话介绍（30 字以内，照它的打法说明缩写）" })) } : {}),
+    ...(sparringBots(s).length ? { sparring: sparringBots(s).map((b) => ({ name: b.name, text: "待填：一句话介绍（30 字以内，照它的打法说明缩写）" })) } : {}),
     players: own.map((name) => ({ name, displayName: "待填", byline: "待填", tagline: "待填", award: "待填：称号（8 字以内，可删）", intro: ["待填", "待填", "待填", "待填"], ...(games.get(name) ? { highlight: games.get(name)! } : {}) })),
     highlights: [...games.values()].filter((x): x is number => x !== null).map((index) => ({ index, title: "待填（可删）", commentary: "待填（可删）" })),
     outro: "待填：一句话总结",
@@ -553,6 +557,7 @@ export function videoBrief(seriesFile: string): VideoBrief {
     league: { games: s.games, startedAt: s.startedAt, size: s.size ?? 2, teams: s.teams ?? null, seriesFile: resolve(seriesFile) },
     players,
     highlights: sum.highlights ?? [],
+    sparring: sparringBots(s),
     scriptTemplate,
     rules: [
       "介绍要有依据：文件名、代码（开头的注释、写法特征、参数）和联赛成绩里看得到的才写，不编造没发生的事",

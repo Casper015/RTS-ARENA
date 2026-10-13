@@ -6,7 +6,7 @@ import { basename, dirname, join, resolve } from "node:path"
 import { applyFrame, ReplayModel, type State } from "../core/replay-model.ts"
 import type { Replay } from "../core/types.ts"
 import { findBrowser, launchBrowser } from "./browser.ts"
-import { checkScript, codeFacts, botTag, contestantNames, highlightPlayerWarnings, sparringNames, spotlightFor, playerGames, PLAYER_PAGE_CHARS, PLAYER_PAGE_MIN, readSeries, resolveBotFile, RULES_PAGE_CHARS, SCRIPT_LIMITS, scriptWarnings, type SeriesFile, type VideoScript } from "./brief.ts"
+import { checkScript, codeFacts, botTag, contestantNames, highlightPlayerWarnings, sparringBots, spotlightFor, playerGames, PLAYER_PAGE_CHARS, PLAYER_PAGE_MIN, readSeries, resolveBotFile, RULES_PAGE_CHARS, SCRIPT_LIMITS, scriptWarnings, type SeriesFile, type VideoScript } from "./brief.ts"
 import { installVideoPage, type ReplayFrame, type SceneData } from "./page.ts"
 import { createBattleArt, type BattleAttack } from "./battle-art.ts"
 import { FACTION_COLORS, FACTION_COLOR_NAMES } from "./battle-colors.ts"
@@ -14,7 +14,7 @@ import { faceToward, farmWorkers, homeFacing, legacySplashEffects, trainingQueue
 import { battleCameraTrack } from "./battle-camera.ts"
 import { excitement, gameFacts } from "../cli/highlights.ts"
 import { fighterTest, groupBattles, isRout } from "../cli/battles.ts"
-import { botAbout, importRuleset, listRulesets } from "../cli/catalog.ts"
+import { importRuleset, listRulesets } from "../cli/catalog.ts"
 import { analyzeLeague, baseTypeOf, twoSides, winCurve, type LeagueAnalysis } from "./analysis.ts"
 import { PKG_ROOT } from "../paths.ts"
 
@@ -42,23 +42,34 @@ export function colorGap(a: string, b: string): number {
   const [p, q] = [lab(a), lab(b)]
   return Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2])
 }
-/** 一局里两家的颜色差得比这还少就算分不清（D-230：绿和草绿 40、黄和橙 26、黄和草绿 38，用户：不知道哪个兵是谁家的） */
+/** 两家的颜色差得比这还少就算分不清（D-230：绿和草绿 40、黄和橙 26、黄和草绿 38，用户：不知道哪个兵是谁家的；现在的阵营色里红橙 45、黄橙 44、紫粉 48） */
 const CLOSE_COLORS = 50
-/** 换色用的备选：鲜明阵营色，再加白色用于人数很多的对局。 */
+/** 备选色：阵营色，再加白色（人多时用） */
 const SPARE_COLORS = [...PALETTE, "#ffffff"]
+/** 颜色叫什么（PROMPT.md 里告诉写脚本的大模型） */
+export function colorName(c: string): string {
+  const k = PALETTE.indexOf(c)
+  return k >= 0 ? PALETTE_NAMES[k] : c === "#ffffff" ? "白" : c
+}
 /**
- * 一局里每个参赛者（编号）用什么颜色（D-230）：keep 那个用自己的颜色，其余的按出现的顺序，和前面已经定下的颜色太近（或者撞色）就换成
- * 和它们都差得最多的备选色。只在这一局里换，选手页、片尾还是原来的颜色
+ * 整片视频里每个参赛者（联赛里的名字）用什么颜色（D-253，用户：别的 AI 做的视频里同一个选手前后颜色不一样）。原来按参赛顺序轮流取
+ * 阵营色，一局回放里两家颜色太近（红橙、黄橙、紫粉，或者超过 8 个人轮回来撞色）就只在这一局给对手换一个（D-230），所以同一个选手
+ * 在不同段落颜色不一样。现在整片先分好、从头到尾不变：参赛选手按参赛顺序，先试自己的默认色（第几个参赛就是第几个阵营色），和前面的选手
+ * 分不清就换成第一个和他们都分得清的；陪练要和所有选手分得清，还要和视频里同一局回放出现的陪练分得清（shownGames 是视频里放的局号），
+ * 能挑还没人用的就挑没人用的（排名页上挨着列出来）。实在分不清（人太多）就挑和它们差得最多的
  */
-export function contrastColors(ids: number[], keep: number): Map<number, string> {
-  const out = new Map<number, string>()
-  for (const id of [keep, ...ids]) {
-    if (out.has(id)) continue
-    const own = PALETTE[id % PALETTE.length]
-    const used = [...out.values()]
-    const clash = used.some((c) => colorGap(c, own) < CLOSE_COLORS)
-    const best = clash ? SPARE_COLORS.filter((c) => !used.includes(c)).sort((x, y) => Math.min(...used.map((u) => colorGap(u, y))) - Math.min(...used.map((u) => colorGap(u, x))))[0] : own
-    out.set(id, best ?? own)
+export function videoColors(series: SeriesFile, shownGames: number[]): Map<string, string> {
+  const names = series.participants.map((p) => p.name)
+  const own = new Set(contestantNames(series))
+  const shown = series.results.filter((r) => shownGames.includes(r.index))
+  const together = (a: string, b: string) => shown.some((g) => g.names.includes(a) && g.names.includes(b))
+  const out = new Map<string, string>()
+  for (const n of [...names.filter((x) => own.has(x)), ...names.filter((x) => !own.has(x))]) {
+    const rivals = [...out].filter(([m]) => own.has(m) || together(m, n)).map(([, c]) => c)
+    const gapTo = (c: string) => Math.min(Infinity, ...rivals.map((r) => colorGap(r, c)))
+    const cands = [PALETTE[names.indexOf(n) % PALETTE.length], ...SPARE_COLORS]
+    const used = new Set(out.values())
+    out.set(n, cands.find((c) => gapTo(c) >= CLOSE_COLORS && !used.has(c)) ?? cands.find((c) => gapTo(c) >= CLOSE_COLORS) ?? [...cands].sort((x, y) => gapTo(y) - gapTo(x))[0])
   }
   return out
 }
@@ -133,7 +144,6 @@ export function buildScenes(
 ): Scene[] {
   const sum = series.summary!
   const names = series.participants.map((p) => p.name)
-  const color = (i: number) => PALETTE[i % PALETTE.length]
   const sp = (name: string) => script.players.find((p) => p.name === name)
   const display = (name: string) => sp(name)?.displayName || name
   /** 把文字里的联赛名字换成显示名 */
@@ -155,22 +165,34 @@ export function buildScenes(
   const picks: { index: number; title?: string; commentary?: string }[] = script.highlights?.length
     ? script.highlights
     : (sum.highlights ?? []).slice(0, 3).map((h) => ({ index: h.index }))
+  // 只介绍参赛 bot，平台自带的参考 bot（陪练）没有介绍页（D-221；D-252 起在规则页列一句话）
+  const own = new Set(contestantNames(series))
+  // 选手按联赛名次倒着出场，最后一名先上、冠军压轴（D-181，用户要求）；名次一样的按脚本里的顺序
+  const rankOf = (name: string) => sum.standings.find((x) => x.index === names.indexOf(name))?.rank ?? names.length
+  const byRank = script.players
+    .filter((p) => own.has(p.name))
+    .map((p, k) => ({ p, k }))
+    .sort((a, b) => rankOf(b.p.name) - rankOf(a.p.name) || a.k - b.k)
+  // 每个选手接着放的那局高光对局
+  const games = playerGames(series, byRank.map(({ p }) => p), picks.map((x) => x.index))
+  // 整片视频每个参赛者一种颜色（D-253），回放里也不换
+  const colors = videoColors(series, [...games.values()].filter((x): x is number => x !== null && x !== undefined))
+  const color = (i: number) => colors.get(names[i])!
   /** 一局高光对局要用的东西：回放、结果、标题、解说、座位 */
-  const hlData = (pick: { index: number; title?: string; commentary?: string }, focus?: string) => {
+  const hlData = (pick: { index: number; title?: string; commentary?: string }) => {
     const g = series.results.find((r) => r.index === pick.index)!
     const replay = loadReplay(g.replay)
-    // 每个座位是哪个参赛者；颜色太近的这一局里换（D-230），这局是谁的高光对局，谁保留自己的颜色
+    // 每个座位是哪个参赛者；颜色整片视频一样（D-253，原来 D-230 颜色太近的这一局里换）
     const seatOf = g.names.map((n) => names.indexOf(n))
-    const shown = contrastColors(seatOf, focus !== undefined && names.includes(focus) ? names.indexOf(focus) : seatOf[0])
     const sides = [...new Set(g.teams)].map((t) => {
       const seats = g.teams.map((tt, p) => (tt === t ? p : -1)).filter((p) => p >= 0)
-      return { name: [...new Set(seats.map((p) => display(g.names[p])))].join("+"), color: shown.get(seatOf[seats[0]])! }
+      return { name: [...new Set(seats.map((p) => display(g.names[p])))].join("+"), color: color(seatOf[seats[0]]) }
     })
     const winners = [...new Set(g.winners.map((p) => display(g.names[p])))]
     const result = tidy(winners.length ? `${winners.join("、")} 获胜` : "平局")
     const title = pick.title || sides.map((s) => s.name).join(" 对 ")
     const commentary = pick.commentary || null
-    const seats = seatOf.map((i, p) => ({ name: display(g.names[p]), color: shown.get(i)!, avatar: imageOf(g.names[p]), crop: avatarOf(g.names[p]), team: g.teams[p] }))
+    const seats = seatOf.map((i, p) => ({ name: display(g.names[p]), color: color(i), avatar: imageOf(g.names[p]), crop: avatarOf(g.names[p]), team: g.teams[p] }))
     return { g, replay, result, title, commentary, seats }
   }
   // 开场阵容（D-179 加、D-221 删，D-230 用户要求加回来）：第一帧就是全体参赛选手的立绘阵容和一句大字（不从黑屏淡入，也当封面），
@@ -194,22 +216,10 @@ export function buildScenes(
   if (mapGame) {
     const replay = loadReplay(mapGame.replay)
     const seatOf = mapGame.names.map((n) => names.indexOf(n))
-    const shown = contrastColors(seatOf, seatOf[0])
-    // 陪练：联赛里平台自带的参考 bot，脚本写的一句话介绍，不写用打法说明冒号前的标签
-    const sparring = sparringNames(series).map((name) => {
-      const file = resolveBotFile(series.participants[names.indexOf(name)].file, seriesFile)
-      return { name, color: color(names.indexOf(name)), text: script.sparring?.find((x) => x.name === name)?.text || (file ? botTag(botAbout(file)) : "") }
-    })
-    scenes.push({ label: "规则介绍", data: rulesScene(replay, series.ruleset.name, rulesLines, sparring, seatOf.map((i) => shown.get(i)!), fps, specs) })
+    // 陪练：规则包自带的参考 bot（不管进没进这场联赛），脚本写的一句话介绍，不写用打法说明冒号前的标签
+    const sparring = sparringBots(series).map((b) => ({ name: b.name, text: script.sparring?.find((x) => x.name === b.name)?.text || botTag(b.about) }))
+    scenes.push({ label: "规则介绍", data: rulesScene(replay, series.ruleset.name, rulesLines, sparring, seatOf.map(color), fps, specs) })
   }
-  // 只介绍参赛 bot，平台自带的参考 bot（陪练）不进视频（D-221 只出现在排名页，D-225 排名页也删了）
-  const own = new Set(contestantNames(series))
-  // 选手按联赛名次倒着出场，最后一名先上、冠军压轴（D-181，用户要求）；名次一样的按脚本里的顺序
-  const rankOf = (name: string) => sum.standings.find((x) => x.index === names.indexOf(name))?.rank ?? names.length
-  const byRank = script.players
-    .filter((p) => own.has(p.name))
-    .map((p, k) => ({ p, k }))
-    .sort((a, b) => rankOf(b.p.name) - rankOf(a.p.name) || a.k - b.k)
   const playerScene = (p: VideoScript["players"][number]): Scene => {
     const i = names.indexOf(p.name)
     const st = sum.standings.find((s) => s.index === i)
@@ -253,18 +263,17 @@ export function buildScenes(
   }
   const players = byRank.map(({ p }) => playerScene(p))
   // 每个参赛选手：介绍，紧接着整局放他的高光对局（D-183 竖屏这样排，D-221 横屏也一样，没有标题卡；回放顶上写「<选手>的高光对局」、标题和解说）
-  const games = playerGames(series, byRank.map(({ p }) => p), picks.map((x) => x.index))
   byRank.forEach(({ p }, k) => {
     scenes.push(players[k])
     const idx = games.get(p.name)
     if (idx === null || idx === undefined) return
-    const { g, replay, result, title, commentary, seats } = hlData(picks.find((x) => x.index === idx) ?? { index: idx }, p.name)
+    const { g, replay, result, title, commentary, seats } = hlData(picks.find((x) => x.index === idx) ?? { index: idx })
     const label = tidy(`${p.displayName || p.name} 的高光对局`)
     const rs = replayScene(replay, k + 1, title, commentary, seats, result, fps, analysis?.weights ?? null)
     scenes.push({ label: `${label} 回放（第 ${g.index} 局）`, ...rs, data: { ...rs.data, kicker: label } as SceneData })
   })
   // 联赛排名（D-237，片尾之前）
-  scenes.push({ label: "联赛排名和对阵胜负", data: standingsScene(series, display, own, fps) })
+  scenes.push({ label: "联赛排名和对阵胜负", data: standingsScene(series, display, own, (n) => colors.get(n)!, fps) })
   // 片尾名单：参赛选手，按脚本里的顺序
   const credits = script.players.filter((s) => own.has(s.name)).map((s) => `${s.displayName || s.name}${s.byline ? ` · ${s.byline}` : ""}`)
   scenes.push({ label: "总结、片尾署名和选手名单", data: { kind: "brandClose", frames: sec(fps, 6.5 / BRISK), speed: BRISK, outro: script.outro || null, credits: [...credits, "比赛、回放、精彩对局和这段视频都由平台自动生成"] } })
@@ -277,7 +286,7 @@ export function buildScenes(
  * 联赛排名页（D-237，用户：结尾仓库介绍之前再把联赛同款的互相胜败的排名加回去）：和联赛命令行一样的排行榜（名次、胜-平-负、得分率），
  * 每行后面接这个 bot 对每个对手的胜负（D-223 的对战胜负表，行、列都按名次）；平台自带的参考 bot 也列上、标「陪练」。时长按人数算，3.5～6 秒
  */
-function standingsScene(series: SeriesFile, display: (name: string) => string, own: Set<string>, fps: number): SceneData {
+function standingsScene(series: SeriesFile, display: (name: string) => string, own: Set<string>, colorOf: (name: string) => string, fps: number): SceneData {
   const sum = series.summary!
   const m = sum.matrix
   const order = [...sum.standings].sort((a, b) => a.rank - b.rank)
@@ -291,7 +300,7 @@ function standingsScene(series: SeriesFile, display: (name: string) => string, o
     speed: HALF,
     title: "联赛排名",
     sub: tidy(`${order.length} 个 bot · ${series.results.length} 局 · 右边是${what}，绿色是赢多输少${order.some((x) => !own.has(x.name)) ? " · 灰色的是平台自带的陪练" : ""}`),
-    rows: order.map((st) => ({ name: display(st.name), color: PALETTE[st.index % PALETTE.length], rank: st.rank, record: `${st.wins}-${st.draws}-${st.losses}`, rate: st.rate, ref: !own.has(st.name) })),
+    rows: order.map((st) => ({ name: display(st.name), color: colorOf(st.name), rank: st.rank, record: `${st.wins}-${st.draws}-${st.losses}`, rate: st.rate, ref: !own.has(st.name) })),
     cells: order.map((a) =>
       order.map((b) => {
         const c = a === b ? null : m[a.index]?.[b.index]
@@ -325,7 +334,7 @@ function typeDetail(t: Replay["types"][string], spec?: TypeSpecs[string], nameOf
 }
 
 /** 规则介绍的画面：文字 + 陪练的一句话介绍 + 单位图例（D-252 去掉了开局地图）；replay 只用来取单位类型 */
-function rulesScene(replay: Replay, ruleset: string, lines: string[], sparring: { name: string; color: string; text: string }[], seatColors: string[], fps: number, specs?: TypeSpecs): SceneData {
+function rulesScene(replay: Replay, ruleset: string, lines: string[], sparring: { name: string; text: string }[], seatColors: string[], fps: number, specs?: TypeSpecs): SceneData {
   const typeNames = Object.keys(replay.types)
   const order = { building: 0, unit: 1, resource: 2 } as Record<string, number>
   // 最多 12 项（两栏 6 行）；放不下时先留单位和资源，建筑按定义的顺序从后往前删（科技规则包有 12 种）

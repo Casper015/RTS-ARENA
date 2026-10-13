@@ -40,8 +40,8 @@ export type SceneData = (
       ruleset: string
       /** 脚本写的规则介绍（不写就是规则包的一句话简介） */
       lines: string[]
-      /** 陪练（D-252，平台自带的参考 bot）：名字、颜色、一句话介绍；联赛里没有陪练就是空的 */
-      sparring: { name: string; color: string; text: string }[]
+      /** 规则包自带的陪练（D-252，参考 bot）：名字、一句话介绍 */
+      sparring: { name: string; text: string }[]
       seatColors: string[]
       legend: { shape: string; label: string; color: string | null; kind: string; name: string; detail: string; art?: BattleType }[]
       /** 左下角的小字：1 秒 = 多少 tick */
@@ -543,48 +543,56 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
    * 一句话介绍，下面是单位图例（兵种造型、名字、造价和数值），都排在 (x0, y0) 起 width 宽、不超过 bottom 的地方
    */
   function rulesSide(s: Any, i: number, x0: number, y0: number, width: number, bottom: number): void {
+    const spar = (s.sparring ?? []) as { name: string; text: string }[]
+    const n = s.legend.length
+    // 陪练多时（攻城拓荒 7 个）行高、字号、图标一起缩，最多缩到 78%，图例尽量还是一栏（两栏时说明要截断）
+    const need = (spar.length ? 46 + spar.length * 34 + 12 : 0) + 24 + (n - 1) * 34 + 12
+    const k = Math.max(0.78, Math.min(1, (bottom - y0) / need))
+    const px = (v: number) => Math.round(v * k)
     let y = y0
-    const spar = (s.sparring ?? []) as { name: string; color: string; text: string }[]
     if (spar.length) {
-      g.save();g.globalAlpha=ease((i - 8) / 18);dataHeading("陪练：平台自带的参考 bot，也在联赛里",x0,y+14,width);g.restore()
-      y += 46
-      g.font = font(18, true)
+      // 标题不写「也在联赛里」（用户：陪练不一定会进联赛）；名字统一一种颜色（用户：这里只是介绍规则包，不管它们参赛时什么颜色）
+      g.save();g.globalAlpha=ease((i - 8) / 18);dataHeading("陪练：规则包自带的参考 bot",x0,y+14,width);g.restore()
+      y += px(46)
+      g.font = font(px(18), true)
       const nameW = Math.min(width * 0.35, Math.max(...spar.map((b) => g.measureText(b.name).width)))
-      spar.forEach((b, k) => {
-        const a = ease((i - 12 - k * 3) / 12)
+      spar.forEach((b, j) => {
+        const a = ease((i - 12 - j * 3) / 12)
         g.globalAlpha = a
-        g.fillStyle = b.color
+        g.fillStyle = C.accent
         g.beginPath()
-        g.arc(x0 + 6, y - 6, 5, 0, Math.PI * 2)
+        g.arc(x0 + 6, y - px(6), px(5), 0, Math.PI * 2)
         g.fill()
         g.globalAlpha = 1
-        fitLines(b.name, x0 + 20, y, 18, 12, nameW, 1, b.color, { bold: true, alpha: a })
-        fitLines(b.text, x0 + 34 + nameW, y, 17, 12, width - 34 - nameW, 1, C.text, { alpha: a })
-        y += 34
+        fitLines(b.name, x0 + 20, y, px(18), 12, nameW, 1, C.accent, { bold: true, alpha: a })
+        fitLines(b.text, x0 + 34 + nameW, y, px(17), 12, width - 34 - nameW, 1, C.text, { alpha: a })
+        y += 34 * k
       })
-      y += 12
+      y += 12 * k
     }
     // 单位图例：排一栏放得下（不超过 bottom）就排一栏，否则排两栏；说明超出栏宽就截断
-    const ly = y + 24
-    const cols = ly + (s.legend.length - 1) * 34 <= bottom ? 1 : 2
+    const row = 34 * k
+    const ly = y + 24 * k
+    const cols = ly + (n - 1) * row <= bottom ? 1 : 2
     const colW = width / cols
-    s.legend.forEach((it: Any, k: number) => {
-      const col = k % cols
+    const icon = px(22)
+    s.legend.forEach((it: Any, j: number) => {
+      const col = j % cols
       const lx = x0 + col * colW
-      const yy = ly + Math.floor(k / cols) * 34
-      const a = ease((i - 20 - k * 3) / 12)
+      const yy = ly + Math.floor(j / cols) * row
+      const a = ease((i - 20 - j * 3) / 12)
       g.globalAlpha = a
-      g.save(); g.translate(lx, yy - 18); g.scale(22, 22)
+      g.save(); g.translate(lx, yy - icon * 0.82); g.scale(icon, icon)
       art.entity(g, it.art ?? it, 0, 0, 1, 1, it.color ?? (it.kind === "resource" ? "#e0b53a" : s.seatColors[0] ?? "#4ea1ff"))
       g.restore()
       g.globalAlpha = 1
-      text(it.name, lx + 32, yy - 1, 18, C.text, { bold: true, alpha: a })
-      g.font = font(18, true)
+      text(it.name, lx + icon + 10, yy - 1, px(18), C.text, { bold: true, alpha: a })
+      g.font = font(px(18), true)
       const nw = g.measureText(it.name).width
-      g.font = font(14)
+      g.font = font(px(14))
       let detail = it.detail as string
-      while (detail && 40 + nw + g.measureText(detail).width > colW - 12) detail = detail.slice(0, -1)
-      text(detail + (detail.length < it.detail.length ? "…" : ""), lx + 40 + nw, yy - 1, 14, C.muted, { alpha: a })
+      while (detail && icon + 18 + nw + g.measureText(detail).width > colW - 12) detail = detail.slice(0, -1)
+      text(detail + (detail.length < it.detail.length ? "…" : ""), lx + icon + 18 + nw, yy - 1, px(14), C.muted, { alpha: a })
     })
   }
 
