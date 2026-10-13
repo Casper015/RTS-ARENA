@@ -14,6 +14,9 @@ import { faceToward, farmWorkers, homeFacing, legacySplashEffects, trainingQueue
 import { battleCameraTrack } from "./battle-camera.ts"
 import { excitement, gameFacts } from "../cli/highlights.ts"
 import { fighterTest, groupBattles, isRout } from "../cli/battles.ts"
+import { BIG_BATTLE, deathsOf, FIGHT_SPEED, fightTicks, fightWindows } from "./fights.ts"
+// 测试和别的模块原来从这里拿（D-255 挪到 fights.ts）
+export { fightWindows }
 import { importRuleset, listRulesets } from "../cli/catalog.ts"
 import { analyzeLeague, baseTypeOf, twoSides, winCurve, type LeagueAnalysis } from "./analysis.ts"
 import { PKG_ROOT } from "../paths.ts"
@@ -360,23 +363,13 @@ function rulesScene(replay: Replay, ruleset: string, lines: string[], sparring: 
   }
 }
 
-/** 战斗前后多放几 tick：交火往往在第一个死亡之前就开始了 */
-const BATTLE_LEAD = 40
-const BATTLE_TAIL = 20
 /** 没动静的地方一共最多放几秒（快进至少 4 倍速） */
 const QUIET_SECONDS = 10
 const QUIET_MIN_SPEED = 4
-/**
- * 有单位倒下的交战按几倍速放：D-172 大战 2 倍速（用户看了一倍速说太慢），D-174 小冲突 4 倍速（用户：快进太快不知道发生了什么），
- * D-225 大战也 4 倍速（用户嫌节奏慢），D-226 不再分大战、小冲突（用户：都是 4 倍速没区别）
- */
-const FIGHT_SPEED = 4
 /** 被击退的单位滑到落点要几帧（D-226，30 帧一秒：0.6 秒，4 倍速下也看得出谁被推走了） */
 const KNOCK_FRAMES = 18
 /** 眩晕在回放里跟增益记在一起（recorder.ts），视频里不画金圈（D-226：被击退的敌人套着金圈，像吃了增益） */
 const STUN = "眩晕"
-/** 两段交火中间只空了这么几 tick 就不快进了，免得快进一闪而过 */
-const SKIRMISH_GAP = 40
 
 /** 最后一仗打完以后，还剩整局的这么多才结束，就算「后半局挂机」 */
 const IDLE_TAIL = 0.3
@@ -424,47 +417,6 @@ export function idleHighlightWarnings(script: VideoScript, seriesFile: string): 
 export type PaceMode = "fight" | "quiet"
 
 /**
- * 回放里的交火时段（D-172、D-174）：同一套切分里，死 BIG_BATTLE 个以上、又不是一边倒的是大战（和视频侧栏标「大战」的一样），
- * 其余有单位倒下的（哪怕只死一个、一边倒的屠杀）是小冲突。每段从第一个死亡前 BATTLE_LEAD tick 到最后一个死亡后
- * BATTLE_TAIL tick，挨着的合并；小冲突和大战重叠的部分算大战
- */
-/** 回放里每个单位、建筑的死亡（不算资源和规则包移除的），和战报「战斗」一节同一套 */
-function deathsOf(replay: Replay): { t: number; x: number; y: number; owner: number; fighter: boolean; unit: boolean }[] {
-  const s = new ReplayModel(replay).initialState()
-  const fighter = fighterTest(replay.types)
-  const deaths: { t: number; x: number; y: number; owner: number; fighter: boolean; unit: boolean }[] = []
-  for (const f of replay.frames) {
-    const removed = new Set(f.removed ?? [])
-    for (const id of f.die ?? []) {
-      const e = s.ents.get(id)
-      if (!e || removed.has(id) || replay.types[e.type]?.kind === "resource") continue
-      deaths.push({ t: f.t, x: e.x, y: e.y, owner: e.owner, fighter: fighter(e.type), unit: replay.types[e.type]?.kind === "unit" })
-    }
-    applyFrame(s, f)
-  }
-  return deaths
-}
-
-export function fightWindows(replay: Replay): { battles: [number, number][]; skirmishes: [number, number][] } {
-  const T = Math.max(1, replay.result.tick)
-  const team = (p: number) => replay.players[p]?.team ?? p
-  const deaths = deathsOf(replay)
-  const big = (b: (typeof deaths)[number][]) => b.length >= BIG_BATTLE && !isRout(b, team)
-  const merged = (bs: (typeof deaths)[number][][]) => {
-    const out: [number, number][] = []
-    const wins = bs.map((b): [number, number] => [Math.max(0, b[0].t - BATTLE_LEAD), Math.min(T, b[b.length - 1].t + BATTLE_TAIL)]).sort((a, b) => a[0] - b[0])
-    for (const w of wins) {
-      const last = out[out.length - 1]
-      if (last && w[0] <= last[1]) last[1] = Math.max(last[1], w[1])
-      else out.push([w[0], w[1]])
-    }
-    return out
-  }
-  const groups = groupBattles(deaths)
-  return { battles: merged(groups.filter(big)), skirmishes: merged(groups.filter((b) => !big(b))) }
-}
-
-/**
  * 回放每帧对应的 tick（D-171、D-172、D-174、D-225、D-226，用户定）：有单位倒下的交战（大战、小冲突）按 FIGHT_SPEED 倍速放
  * （1 秒 = FIGHT_SPEED × 规则包的 tickRate 个 tick），没动静的时间快进，加起来最多 QUIET_SECONDS 秒、至少 QUIET_MIN_SPEED 倍速。
  * 返回一共放多少帧
@@ -491,16 +443,8 @@ export function zoomFrames(replay: Replay, pace: { mode: (i: number) => PaceMode
 export function pacing(replay: Replay, fps: number): { playFrames: number; tickOf: (i: number) => number; mode: (i: number) => PaceMode; speed: (i: number) => number } {
   const T = Math.max(1, replay.result.tick)
   const rate = Math.max(1, replay.tickRate || 10)
-  const { battles, skirmishes } = fightWindows(replay)
-  // 每个 tick 归哪一类：0 没动静、1 交战
-  const cls = new Uint8Array(T)
-  for (const [x, y] of [...skirmishes, ...battles]) cls.fill(1, x, y)
-  for (let t = 0; t < T; ) {
-    let e = t
-    while (e < T && cls[e] === cls[t]) e++
-    if (cls[t] === 0 && t > 0 && e < T && e - t < SKIRMISH_GAP) cls.fill(1, t, e)
-    t = e
-  }
+  // 每个 tick 归哪一类：0 没动静、1 交战（fights.ts，网页的导播视角也用它）
+  const cls = fightTicks(replay)
   const quietTicks = cls.reduce((a, c) => a + (c === 0 ? 1 : 0), 0)
   const quietSpeed = Math.max(QUIET_MIN_SPEED, quietTicks / (rate * QUIET_SECONDS))
   const MODES: PaceMode[] = ["quiet", "fight"]
@@ -856,8 +800,6 @@ export function relabelSeats(s: string, seats: { name: string }[], sentence = tr
 /** 胜率曲线每隔几 tick 一个点 */
 const WIN_STEP = 20
 
-/** 侧栏里算"大战"的门槛：一场死 6 个以上 */
-const BIG_BATTLE = 6
 
 /**
  * 回放里的大事：第一次交火、失去建筑、大战、出局。返回"到第 t tick 为止该显示哪些"。

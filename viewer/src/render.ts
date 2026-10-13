@@ -2,6 +2,7 @@
 import { Application, CanvasSource, Container, Graphics, Sprite, Text, Texture } from "pixi.js"
 import type { EntSnap, Marker, Replay } from "../../src/core/types.ts"
 import { createBattleArt, type BattleAttack, type BattlePose, type BattleType } from "../../src/video/battle-art.ts"
+import type { BattleCamera } from "../../src/video/battle-camera.ts"
 import { FACTION_COLORS } from "../../src/video/battle-colors.ts"
 import { faceToward, farmWorkers, homeFacing, legacySplashEffects, trainingQueue, workerPose } from "../../src/video/visual-state.ts"
 import type { Delta, State } from "./model.ts"
@@ -50,6 +51,10 @@ interface EntView {
 export class Renderer {
   readonly app = new Application()
   private camera = new Container()
+  /** 导播镜头（D-255）：第 t 个是第 t tick 的；null 是不跟（自己拖动、缩放） */
+  private director: BattleCamera[] | null = null
+  /** 导播时手动拖动、缩放了：导播停下，main.ts 把视角下拉框改回全图 */
+  onManualCamera: (() => void) | null = null
   private terrainLayer = new Container()
   private terrainTexture: Texture | null = null
   private art = createBattleArt()
@@ -245,6 +250,33 @@ export class Renderer {
     canvas.getContext("2d")!.putImageData(image, 0, 0)
     texture.source.update()
     this.fogLayer.visible = true
+  }
+
+  /** 开、关导播：关的时候回到全图 */
+  setDirector(track: BattleCamera[] | null): void {
+    this.director = track
+    if (!track) this.fit()
+  }
+
+  /** 按导播镜头摆相机（视频同款的交战缩放）：zoom 是相对铺满全图的倍数，x、y 是画面中心（格）；两个 tick 之间按小数部分插值 */
+  private followDirector(now: number): void {
+    const d = this.director!
+    const t = Math.max(0, Math.min(d.length - 1, now))
+    const k = Math.floor(t), f = t - k
+    const a = d[k], b = d[Math.min(d.length - 1, k + 1)]
+    const x = a.x + (b.x - a.x) * f, y = a.y + (b.y - a.y) * f, zoom = a.zoom + (b.zoom - a.zoom) * f
+    const { width, height } = this.replay.map
+    const sw = this.app.screen.width, sh = this.app.screen.height
+    const scale = Math.min(sw / (width * TILE), sh / (height * TILE)) * 0.96 * zoom
+    this.camera.scale.set(scale)
+    this.camera.position.set(sw / 2 - x * TILE * scale, sh / 2 - y * TILE * scale)
+  }
+
+  /** 手动拖动、缩放：导播停下（相机留在当前位置接着拖） */
+  private manualCamera(): void {
+    if (!this.director) return
+    this.director = null
+    this.onManualCamera?.()
   }
 
   fit(): void {
@@ -448,6 +480,7 @@ export class Renderer {
   /** 每个画面帧调用；now 是带小数的 tick */
   draw(now: number): void {
     if (!this.replay || !this.state) return
+    if (this.director) this.followDirector(now)
     // 光环波纹、金环呼吸、冷却环发光按真实时间动（暂停时也在动）；放技能、回血的特效按 tick 走
     const wall = performance.now() / 1000
     const farms = farmWorkers(this.replay,this.state.ents)
@@ -695,7 +728,10 @@ export class Renderer {
       const dx = ev.clientX - drag.x
       const dy = ev.clientY - drag.y
       if (Math.abs(dx) + Math.abs(dy) > 4) drag.moved = true
-      if (drag.moved) this.camera.position.set(drag.cx + dx, drag.cy + dy)
+      if (drag.moved) {
+        this.manualCamera()
+        this.camera.position.set(drag.cx + dx, drag.cy + dy)
+      }
     })
     host.addEventListener("pointerup", (ev) => {
       if (drag && !drag.moved) this.pick(ev, host)
@@ -705,6 +741,7 @@ export class Renderer {
       "wheel",
       (ev) => {
         ev.preventDefault()
+        this.manualCamera()
         const rect = host.getBoundingClientRect()
         const mx = ev.clientX - rect.left
         const my = ev.clientY - rect.top

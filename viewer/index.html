@@ -21,17 +21,17 @@
     <header>
       <a class="brand" href="./" aria-label="RTS Arena 首页"><img id="brand-logo" width="188" height="44" alt="RTS Arena · 战术竞技场" /></a>
       <nav class="tabs">
-        <button data-tab="replay" class="on"><svg class="ui-icon" aria-hidden="true"><use href="#i-replay"/></svg>回放</button>
-        <button data-tab="arena"><svg class="ui-icon" aria-hidden="true"><use href="#i-arena"/></svg>对战</button>
+        <button data-tab="arena" class="on"><svg class="ui-icon" aria-hidden="true"><use href="#i-arena"/></svg>对战</button>
+        <button data-tab="replay"><svg class="ui-icon" aria-hidden="true"><use href="#i-replay"/></svg>回放</button>
       </nav>
-      <span class="replay-only replay-library">
+      <span class="replay-only replay-library" hidden>
         <select id="replay-select" title="选择回放"></select>
         <button id="refresh" title="刷新回放列表">刷新</button>
         <label class="file-btn">打开文件<input id="file-input" type="file" accept=".json" hidden /></label>
       </span>
       <span class="header-note">RTS ARENA <b>观战控制台</b></span>
     </header>
-    <main id="replay-page">
+    <main id="replay-page" hidden>
       <section class="battle-shell">
         <div id="stage">
         <div id="result-banner" hidden></div>
@@ -61,7 +61,7 @@
         </details>
       </aside>
     </main>
-    <section id="arena-page" hidden>
+    <section id="arena-page">
       <div class="panel arena-setup">
         <div class="setup-heading"><span class="eyebrow">MATCH SETUP</span><div class="heading-row"><h1>创建比赛</h1><span class="tool-row"><button id="ar-template" title="下载选定规则包的空 bot 目录（和 rts-arena init 建的一样）">生成 bot 模板</button><span class="help" tabindex="0" aria-label="怎么用 bot 模板">?<span class="help-pop"><b>怎么用 bot 模板训练 bot</b><ol><li>解压到一个空目录，这就是 bot 目录：<code>PROMPT.md</code> 是玩法和接口说明，<code>bot.ts</code> 是最简单的起点，<code>arena.d.ts</code> 给编辑器补全。</li><li>装好 rts-arena 命令行（见仓库 README「安装」），在 bot 目录里打开 AI 编程工具（Claude Code、Codex 等），让它读 <code>PROMPT.md</code>、改 <code>bot.ts</code>。</li><li>每改一版都要真的打：<code>rts-arena check</code>、<code>rts-arena run --games 10</code>、<code>rts-arena league</code>，看 <code>rts-arena report</code> 的战报再改，好的版本存进 <code>versions/</code>。</li><li>写好的 <code>bot.ts</code> 在「参赛阵容」里选「从电脑选文件…」上传，就能和别的 bot 开比赛、打联赛。</li></ol><p>可以把上面的话发给你的 agent，让 AI 自动处理。</p></span></span></span></div><p>选好阵容，让策略在战场上见分晓。</p></div>
         <fieldset class="setup-group"><legend><span>01</span> 赛制与规则</legend>
@@ -106,7 +106,7 @@
         </div>
       </div>
     </section>
-    <footer id="replay-footer">
+    <footer id="replay-footer" hidden>
       <div class="timeline"><span class="eyebrow">对局进程<small id="activity-label">战斗强度</small></span><div class="timeline-track"><div id="combat-activity" aria-hidden="true"></div><input id="slider" aria-label="对局进度" type="range" min="0" max="0" value="0" /></div><span id="tick-label">0 / 0</span></div>
       <div class="transport"><div class="transport-buttons">
       <button id="to-start" aria-label="回到开头" title="回到开头 (Home)">⏮</button>

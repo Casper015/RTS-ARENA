@@ -5,6 +5,8 @@ import { initArena } from "./arena.ts"
 import { playerColor, Renderer } from "./render.ts"
 import { createBattleArt } from "../../src/video/battle-art.ts"
 import { trainingQueue } from "../../src/video/visual-state.ts"
+import type { BattleCamera } from "../../src/video/battle-camera.ts"
+import { directorTrack } from "../../src/video/fights.ts"
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T
 $("brand-logo").setAttribute("src", new URL("../../assets/brand/logo.svg", import.meta.url).href)
@@ -25,6 +27,9 @@ let playing = false
 let logFilter: number | null = null
 /** 按哪一队的视野看；null 是全图 */
 let pov: number | null = null
+/** 导播视角开着没有（D-255）；镜头按回放缓存 */
+let director = false
+let directorCache: { replay: Replay; track: BattleCamera[] } | null = null
 let lastLogDraw = 0
 
 /** 回放文件可能是别人给的，拼进 HTML 的值一律转义 */
@@ -257,13 +262,39 @@ function drawPov(): void {
     teams.set(t, [...(teams.get(t) ?? []), i])
   })
   const label = (ps: number[]) => ps.map((i) => `P${i} ${r.players[i].name}`).join("、")
-  const opts = [html`<option value="">视角：全图</option>`]
+  const opts = [html`<option value="">视角：全图</option>`, html`<option value="director">视角：导播（跟着交战放大）</option>`]
   for (const [t, ps] of teams) opts.push(html`<option value="${t}">视角：${ps.length > 1 ? `队${t + 1}（${label(ps)}）` : label(ps)}</option>`)
   povSel.innerHTML = html`${opts}`.s
   povSel.disabled = !renderer.canPerspective
   if (!renderer.canPerspective) povSel.title = "这份回放是老版本生成的，没有视野信息"
   const want = new URLSearchParams(location.search).get("pov")
   setPov(want !== null && want !== "" && teams.has(Number(want)) && renderer.canPerspective ? Number(want) : null)
+  setDirector(want === "director")
+}
+
+/**
+ * 导播视角（D-255，用户：视频同款的交战缩放）：看全图的视野，镜头按 directorTrack 跟着交战放大、平移；每份回放算一次（整局约 0.1 秒）。
+ * 手动拖动、缩放就退出，回到全图视角
+ */
+function setDirector(on: boolean): void {
+  director = on && !!model
+  if (director && model) {
+    if (directorCache?.replay !== model.replay) directorCache = { replay: model.replay, track: directorTrack(model.replay) }
+    renderer.setDirector(directorCache.track)
+  } else renderer.setDirector(null)
+  povSel.value = director ? "director" : pov === null ? "" : String(pov)
+  const url = new URL(location.href)
+  if (director) url.searchParams.set("pov", "director")
+  else if (pov === null) url.searchParams.delete("pov")
+  history.replaceState(null, "", url)
+}
+
+renderer.onManualCamera = () => {
+  director = false
+  povSel.value = pov === null ? "" : String(pov)
+  const url = new URL(location.href)
+  if (pov === null) url.searchParams.delete("pov")
+  history.replaceState(null, "", url)
 }
 
 function setPov(team: number | null): void {
@@ -281,7 +312,9 @@ function setPov(team: number | null): void {
 
 povSel.addEventListener("change", () => {
   if (!model) return
-  setPov(povSel.value === "" ? null : Number(povSel.value))
+  const pick = povSel.value
+  setPov(pick === "" || pick === "director" ? null : Number(pick))
+  setDirector(pick === "director")
   drawFilter()
   updateUI(true)
 })
@@ -361,7 +394,12 @@ $("step-fwd").addEventListener("click", () => {
     updateUI(true)
   }
 })
-$("fit").addEventListener("click", () => model && renderer.fit())
+// 「全图」：导播时先退出导播
+$("fit").addEventListener("click", () => {
+  if (!model) return
+  if (director) setDirector(false)
+  else renderer.fit()
+})
 slider.addEventListener("input", () => seek(Number(slider.value)))
 select.addEventListener("change", () => loadByName(select.value))
 $("refresh").addEventListener("click", () => refreshList(select.value || undefined))
@@ -397,8 +435,13 @@ window.addEventListener("keydown", (ev) => {
 
 // ---------- 页签 ----------
 
+/** 切页签；回放页记在网址里（?tab=replay），刷新后还在回放页，默认是对战页（D-255，用户） */
 function showTab(tab: "replay" | "arena"): void {
   for (const b of document.querySelectorAll<HTMLButtonElement>(".tabs button")) b.classList.toggle("on", b.dataset.tab === tab)
+  const url = new URL(location.href)
+  if (tab === "replay") url.searchParams.set("tab", "replay")
+  else url.searchParams.delete("tab")
+  history.replaceState(null, "", url)
   $("replay-page").hidden = tab !== "replay"
   $("replay-footer").hidden = tab !== "replay"
   for (const el of document.querySelectorAll<HTMLElement>(".replay-only")) el.hidden = tab !== "replay"
@@ -425,6 +468,7 @@ initArena({
 // ---------- 主循环 ----------
 
 await renderer.init($("stage"))
+showTab(new URLSearchParams(location.search).get("tab") === "replay" ? "replay" : "arena")
 new ResizeObserver(()=>requestAnimationFrame(()=>{if(model)renderer.fit()})).observe($("stage"))
 renderer.app.ticker.add((tk) => {
   if (model && state && playing) {
