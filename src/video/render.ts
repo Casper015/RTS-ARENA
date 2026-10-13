@@ -9,6 +9,7 @@ import { findBrowser, launchBrowser } from "./browser.ts"
 import { checkScript, codeFacts, contestantNames, highlightPlayerWarnings, playerGames, PLAYER_PAGE_CHARS, PLAYER_PAGE_MIN, readSeries, resolveBotFile, RULES_PAGE_CHARS, SCRIPT_LIMITS, scriptWarnings, type SeriesFile, type VideoScript } from "./brief.ts"
 import { installVideoPage, type ReplayFrame, type SceneData } from "./page.ts"
 import { createBattleArt, type BattleAttack } from "./battle-art.ts"
+import { FACTION_COLORS, FACTION_COLOR_NAMES } from "./battle-colors.ts"
 import { faceToward, farmWorkers, homeFacing, legacySplashEffects, trainingQueue, workerPose } from "./visual-state.ts"
 import { battleCameraTrack } from "./battle-camera.ts"
 import { excitement, gameFacts } from "../cli/highlights.ts"
@@ -24,9 +25,9 @@ export function gameReasons(replay: Replay, seatNames: string[]): string[] {
   return excitement(f, null, sideName).reasons
 }
 
-export const PALETTE = ["#66b5d0", "#de806b", "#8cbc84", "#e4c278", "#b398d1", "#72c9bc", "#e2a36a", "#aab75e"]
+export const PALETTE = FACTION_COLORS
 /** 每个选手在视频里的颜色（按参赛顺序），写在 PROMPT.md 里 */
-export const PALETTE_NAMES = ["蓝", "红", "绿", "黄", "紫", "青", "橙", "草绿"]
+export const PALETTE_NAMES = FACTION_COLOR_NAMES
 
 /** 两个颜色看上去差多少（CIE Lab 空间里的距离，D-230） */
 export function colorGap(a: string, b: string): number {
@@ -43,8 +44,8 @@ export function colorGap(a: string, b: string): number {
 }
 /** 一局里两家的颜色差得比这还少就算分不清（D-230：绿和草绿 40、黄和橙 26、黄和草绿 38，用户：不知道哪个兵是谁家的） */
 const CLOSE_COLORS = 50
-/** 换色用的备选：调色板加一个粉色 */
-const SPARE_COLORS = [...PALETTE, "#ff7eb6"]
+/** 换色用的备选：鲜明阵营色，再加白色用于人数很多的对局。 */
+const SPARE_COLORS = [...PALETTE, "#ffffff"]
 /**
  * 一局里每个参赛者（编号）用什么颜色（D-230）：keep 那个用自己的颜色，其余的按出现的顺序，和前面已经定下的颜色太近（或者撞色）就换成
  * 和它们都差得最多的备选色。只在这一局里换，选手页、片尾还是原来的颜色

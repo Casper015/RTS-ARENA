@@ -2,12 +2,13 @@
 import { Application, CanvasSource, Container, Graphics, Sprite, Text, Texture } from "pixi.js"
 import type { EntSnap, Marker, Replay } from "../../src/core/types.ts"
 import { createBattleArt, type BattleAttack, type BattlePose, type BattleType } from "../../src/video/battle-art.ts"
+import { FACTION_COLORS } from "../../src/video/battle-colors.ts"
 import { faceToward, farmWorkers, homeFacing, legacySplashEffects, trainingQueue, workerPose } from "../../src/video/visual-state.ts"
 import type { Delta, State } from "./model.ts"
 import { Vision } from "./vision.ts"
 
 export const TILE = 16
-export const PLAYER_COLORS = [0x66b5d0, 0xde806b, 0x8cbc84, 0xe4c278, 0xb398d1, 0x72c9bc]
+export const PLAYER_COLORS = FACTION_COLORS.map(color => parseInt(color.slice(1), 16))
 const NEUTRAL = 0x9aa0a6
 
 export function playerColor(owner: number | null | undefined): number {

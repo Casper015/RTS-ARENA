@@ -254,9 +254,11 @@ test("场景编排（D-221、D-225、D-230、D-237）：开场阵容 → 规则�
   const tl = timelineOf(scenes, 10)
   assert.equal(tl[0].label, "开场阵容")
   assert.equal(tl[1].label, "规则介绍")
-  const shown = contrastColors([2, 7], 7)
-  assert.equal(shown.get(7), PALETTE[7])
-  assert.ok(shown.get(2) !== PALETTE[2] && colorGap(shown.get(2)!, PALETTE[7]) >= 50, String(shown.get(2)))
+  // Saturated red and orange still need separation in the same game.
+  assert.ok(colorGap(PALETTE[1], PALETTE[6]) < 50)
+  const shown = contrastColors([1, 6], 6)
+  assert.equal(shown.get(6), PALETTE[6])
+  assert.ok(shown.get(1) !== PALETTE[1] && colorGap(shown.get(1)!, PALETTE[6]) >= 50, String(shown.get(1)))
   // 本来就分得清的不换
   assert.deepEqual([...contrastColors([0, 1], 0).values()], [PALETTE[0], PALETTE[1]])
   assert.ok(tl.every((x, k) => x.label && (k === 0 || x.from === tl[k - 1].to)))

@@ -52,9 +52,9 @@ export interface BattleAttack {
 export function createBattleArt() {
   type Ink = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D
   const TAU = Math.PI * 2
-  const ink = "#182123"
-  const steel = "#c9d9da"
-  const gold = "#e3b969"
+  const ink = "#10191f"
+  const steel = "#dde8ef"
+  const gold = "#f0c35a"
   const clamp = (v: number) => Math.max(0, Math.min(1, v))
   const noise = (x: number, y: number, n = 0) => {
     let h = Math.imul(x + 113, 374761393) ^ Math.imul(y + 71, 668265263) ^ Math.imul(n + 7, 1274126177)
@@ -169,7 +169,8 @@ export function createBattleArt() {
     polygon(g, [-.14,-.28,.10,-.28,.18,.08,.09,.18,-.18,.12], "#d3c2a0")
     polygon(g, [-.075,-.21,.105,-.18,.13,.15,-.11,.14], color)
     line(g, -.15, .035, .14, .035, "#665039", .055)
-    polygon(g, [-.09,.07,.1,.07,.12,.24,-.12,.21], "#b9a785")
+    polygon(g, [-.09,.07,.1,.07,.12,.24,-.12,.21], color)
+    line(g,-.10,.20,.11,.23,"#e8d9b6",.025)
     line(g, -.13,-.19,-.22,-.035,"#e2c69e",.105)
     ellipse(g, .025, -.405, .12, .145, (p.hit ?? 0) > .5 ? "#fff4d0" : "#deb58a", ink)
     polygon(g, [-.09,-.43,-.09,-.54,.03,-.57,.12,-.49,.11,-.435,.015,-.47], "#624536")
@@ -342,7 +343,7 @@ export function createBattleArt() {
   function vehicle(g: Ink, r: string, color: string, p: BattlePose): void {
     const a=p.attack??-1, recoil=a<0?0:Math.sin(Math.PI*clamp(a/.6))*.14, walk=p.walk??0
     g.scale(Math.cos(p.angle??0)<0?-1:1,1)
-    polygon(g,[-.48,.20,.31,.20,.48,.05,-.34,.02],"#8e714a")
+    polygon(g,[-.48,.20,.31,.20,.48,.05,-.34,.02],r==="cannon"?color:"#8e714a")
     if(r==="wagon") {
       box(g,-.38,-.31,.67,.43,"#bca173")
       for(const y of [-.22,-.08,.065])line(g,-.35,y,.26,y,"#796341",.03)
@@ -350,26 +351,31 @@ export function createBattleArt() {
       for(const x of [-.26,.14])line(g,x,-.49,x,-.30,color,.08)
       line(g,.30,.13,.68,.25,"#9c7e50",.055)
     } else {
-      polygon(g,[-.21,-.19,.07,-.19,.20,.14,-.32,.14],"#746547")
-      line(g,-.17,-.12,-.25,.09,"#b99a66",.04)
+      // Broad painted carriage and barrel panels remain visible at a single tile in an overview.
+      polygon(g,[-.29,-.21,.13,-.21,.29,.15,-.40,.15],color)
+      line(g,-.26,-.16,-.34,.10,steel,.035)
+      line(g,-.31,.10,.22,.10,"#142731",.045)
       g.save();g.translate(-recoil,-.14)
-      polygon(g,[-.35,-.16,.53,-.21,.65,-.14,.65,.025,-.34,.03],"#697b79")
-      line(g,-.26,-.115,.55,-.155,"#c4d2c3",.035)
-      polygon(g,[.46,-.215,.62,-.23,.69,-.16,.69,.04,.48,.06],"#b19b6b")
+      polygon(g,[-.35,-.16,.53,-.21,.65,-.14,.65,.025,-.34,.03],color)
+      polygon(g,[-.34,-.015,.64,-.06,.65,.025,-.34,.03],"#284350","",0)
+      line(g,-.26,-.125,.53,-.17,"#edf5f8",.03)
+      polygon(g,[-.17,-.17,-.08,-.176,-.08,.023,-.17,.025],steel)
+      polygon(g,[.28,-.197,.36,-.201,.36,.025,.28,.025],steel)
+      polygon(g,[.46,-.215,.62,-.23,.69,-.16,.69,.04,.48,.06],"#8eabb9")
       ellipse(g,.655,-.08,.042,.096,"#263330",ink)
       ellipse(g,-.31,-.065,.09,.135,"#465856",ink)
       g.restore()
-      box(g,-.37,.02,.21,.15,color)
-      line(g,-.37,.10,-.61,.30,"#a98853",.09)
+      box(g,-.40,-.015,.40,.17,color)
+      line(g,-.37,.10,-.61,.30,color,.105)
     }
     for(const x of [-.26,.29]) {
-      ellipse(g,x,.24,.175,.175,"#4c4838",ink)
-      ellipse(g,x,.24,.127,.127,"#b39664")
+      ellipse(g,x,.24,.175,.175,r==="cannon"?"#151f28":"#4c4838",ink)
+      ellipse(g,x,.24,.133,.133,r==="cannon"?color:"#b39664")
       for(let n=0;n<3;n++) {
         const angle=n*Math.PI/3+walk*.5
-        line(g,x+Math.cos(angle)*.12,.24+Math.sin(angle)*.12,x-Math.cos(angle)*.12,.24-Math.sin(angle)*.12,"#67523a",.028)
+        line(g,x+Math.cos(angle)*.12,.24+Math.sin(angle)*.12,x-Math.cos(angle)*.12,.24-Math.sin(angle)*.12,r==="cannon"?"#193340":"#67523a",.028)
       }
-      ellipse(g,x,.24,.039,.039,"#d3bc8b",ink)
+      ellipse(g,x,.24,.044,.044,r==="cannon"?steel:"#d3bc8b",ink)
     }
   }
 
