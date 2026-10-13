@@ -546,7 +546,7 @@ export function videoBrief(seriesFile: string): VideoBrief {
   const games = playerGames(s, own.map((name) => ({ name })), [])
   const scriptTemplate: VideoScript = {
     hook: { text: "待填：开场的一句大字（30 字以内，可删）" },
-    rules: ["待填：怎么赢（照 RULES.md 写给没玩过的观众）", "待填：最关键的机制或特别的单位"],
+    rules: ["待填：怎么赢、到时间按什么判（照 RULES.md 写给没玩过的观众）", "待填：最关键的机制或特别的单位"],
     ...(sparringBots(s).length ? { sparring: sparringBots(s).map((b) => ({ name: b.name, text: "待填：一句话介绍（30 字以内，照它的打法说明缩写）" })) } : {}),
     players: own.map((name) => ({ name, displayName: "待填", byline: "待填", tagline: "待填", award: "待填：称号（8 字以内，可删）", intro: ["待填", "待填", "待填", "待填"], ...(games.get(name) ? { highlight: games.get(name)! } : {}) })),
     highlights: [...games.values()].filter((x): x is number => x !== null).map((index) => ({ index, title: "待填（可删）", commentary: "待填（可删）" })),

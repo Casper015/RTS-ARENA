@@ -65,6 +65,8 @@ export type SceneData = (
       /** team：队伍编号（D-248，分队时阵营卡片按队分组）；不分队时每人一队 */
       seats: { name: string; color: string; avatar?: string | null; team?: number }[]
       result: string
+      /** 结束原因（D-256）：规则包给的原因，座位换成名字、比分标上是谁的；结尾写在获胜方下面 */
+      reason?: string
       /** 实时胜率：curve 是每 step tick 一个点的、sides[0] 那方赢的概率；不是两方对打或没有模型时 null（D-177） */
       win: { step: number; ticks: number; curve: number[]; sides: { name: string; color: string }[] } | null
     }
@@ -1426,10 +1428,12 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     text(mode,MX,by-8,12,C.accent,{bold:true})
     text("第 "+f.t+" tick",MX+mapW,by-8,12,C.muted,{align:"right",mono:true})
     if(f.final) {
-      const rw=Math.min(mapW-32,480),rx=MX+(mapW-rw)/2,ry=MY+mapH/2-57
-      broadcastCard(rx,ry,rw,114,C.accent)
+      // 获胜方下面写结束原因（D-256，用户：时间到按分数赢的看着莫名其妙）
+      const rh=s.reason?160:114,rw=Math.min(mapW-32,s.reason?600:480),rx=MX+(mapW-rw)/2,ry=MY+mapH/2-rh/2
+      broadcastCard(rx,ry,rw,rh,C.accent)
       text("对局结束",rx+rw/2,ry+30,13,C.muted,{align:"center"})
       fitLines(s.result,rx+rw/2,ry+76,30,18,rw-38,1,C.accent,{bold:true,align:"center"})
+      if(s.reason)fitLines(s.reason,rx+rw/2,ry+114,17,12,rw-38,2,C.text,{align:"center",wrapFirst:true})
     }
     watermark()
   }
@@ -1475,8 +1479,10 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     g.restore()
     fieldFrame(SX,oy,SW,viewH)
     if(f.final) {
-      roundRect(SX+16,oy+viewH/2-48,SW-32,96,12,"rgba(11,18,25,.92)",C.accent)
-      fitLines(s.result,VW/2,oy+viewH/2+12,34,20,SW-60,1,C.accent,{bold:true,align:"center"})
+      const rh=s.reason?150:96
+      roundRect(SX+16,oy+viewH/2-rh/2,SW-32,rh,12,"rgba(11,18,25,.92)",C.accent)
+      fitLines(s.result,VW/2,oy+viewH/2+(s.reason?-14:12),34,20,SW-60,1,C.accent,{bold:true,align:"center"})
+      if(s.reason)fitLines(s.reason,VW/2,oy+viewH/2+26,20,13,SW-60,2,C.text,{align:"center",wrapFirst:true})
     }
     const by = oy + viewH + 34
     progressRail(SX,by,SW,f.progress??0)
