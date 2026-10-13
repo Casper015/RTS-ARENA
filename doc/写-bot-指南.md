@@ -82,7 +82,7 @@ export function onTick(view: View, cmd: Commands): void {
 
 - **命令会一直执行**，直到完成、失效或被新命令替换。只在需要改变时下命令，不用每次给每个单位重下。给单位下和它现在完全一样的命令没有任何影响。
 - **`view` 是调用开始时的快照**。同一次调用里 `produce` 之后，`view.resources` 不会变少，要自己记账。
-- **所有人同时下命令**，你在第 t tick 下的命令，推进到第 t+1 tick 时最先执行。各家的命令有先后：这次调用用的燃料少的先执行，一样多的随机排。两家抢同一格放地基、共用资源的队友同时花钱时，先执行的成功。
+- **所有人同时下命令**，你在第 t tick 下的命令，推进到第 t+1 tick 时最先执行。
 - **自动攻击**：`idle` 和 `attackMove` 状态、能攻击的单位会打射程内最近的敌人；`move`、`gather`、`build` 状态的不还手。中立实体（野怪之类）不会被自动攻击，要 `cmd.attack` 点名打，或者 `attackMove` 加 `{ neutral: true }`。`attack` 状态的单位只打自己的目标，清野怪时对手的兵来了也不还手；一边清一边防偷袭用 `attackMove` 加 `{ neutral: true }`。
 - **不合法的命令不会让 bot 崩溃**，只会被拒，下次在 `view.events` 里看到 `rejected` 和原因。
 
