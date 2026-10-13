@@ -1359,11 +1359,13 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     vBackground()
     broadcastBrand(SX,32)
     fitLines(s.kicker??"精彩对局 "+s.no,SX+SW,32,16,12,SW-210,1,C.accent,{bold:true,align:"right"})
-    const seats=(s.seats as Any[]).slice(0,2),gap=12,colW=(SW-gap)/2
-    seats.forEach((st,k)=>teamCard(st,f.counts?.[k]??{army:0,workers:0,buildings:0,score:0,alive:true},SX+k*(colW+gap),72,colW,116,k))
-    const top = 203
-    const title = layoutLines(s.title, 34, 25, SW, 2, true)
-    const note = s.commentary ? layoutLines(s.commentary, 22, 17, SW, 2, false) : null
+    // 阵营卡片两家一行；三四家排两行、卡片变矮，标题和解说跟着缩小（D-243，用户：竖屏顶部也显示全部阵营卡片）
+    const seats=s.seats as Any[],gap=12,colW=(SW-gap)/2,rows=Math.ceil(seats.length/2)
+    const teamH=rows<=1?116:rows===2?80:Math.max(44,(170-(rows-1)*8)/rows)
+    seats.forEach((st,k)=>teamCard(st,f.counts?.[k]??{army:0,workers:0,buildings:0,score:0,alive:true},SX+(k%2)*(colW+gap),72+Math.floor(k/2)*(teamH+8),colW,teamH,k))
+    const top = 72 + rows*teamH + (rows-1)*8 + 15, many = rows > 1
+    const title = layoutLines(s.title, many ? 26 : 34, many ? 19 : 25, SW, 2, true)
+    const note = s.commentary ? layoutLines(s.commentary, many ? 17 : 22, many ? 13 : 17, SW, 2, false) : null
     let y = top
     for(const l of title.lines) { y += title.size * 1.23; text(l,VW/2,y,title.size,C.text,{bold:true,align:"center"}) }
     if(note) { y += 8; for(const l of note.lines) { y += note.size * 1.3; text(l,VW/2,y,note.size,C.muted,{align:"center"}) } }
