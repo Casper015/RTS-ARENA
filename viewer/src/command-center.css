@@ -142,3 +142,18 @@ aside { gap:12px; padding:0 2px 0 0; }
 @media(max-width:1150px) { main { grid-template-columns:minmax(0,1fr) 310px; gap:12px; padding:12px; } header { padding:12px 18px; gap:14px; } .brand { padding-right:14px; } #arena-page { grid-template-columns:340px minmax(0,1fr); padding:16px; gap:14px; } .arena-setup,.arena-results>.panel { padding:16px; } .launch-controls { bottom:-16px; } .run-numbers>div { padding:10px; } }
 @media(max-width:760px) { header { padding:14px 14px 12px; gap:13px; } .brand { border:0; padding:0; } .brand img { width:170px; } .tabs { gap:2px; } .tabs button { padding:8px 10px; gap:5px; font-size:12px; } .tabs .ui-icon { width:15px; } .replay-library { gap:6px; } .replay-library>* { font-size:11px; padding:7px 9px; } main { grid-template-columns:minmax(0,1fr); } .battle-shell { height:auto; min-height:240px; max-height:60svh; aspect-ratio:var(--map-aspect,1.4); } .panel { padding:14px; } .match-details h1 { font-size:19px; } #players { max-height:none; gap:9px; } .player-card { padding:13px 9px 10px; } .player-name { font-size:13px; } .player-score { font-size:23px; } .player-metrics { gap:4px; } .player-metrics div { padding:8px 5px 6px; } .player-metrics .ui-icon { display:none; } .player-metrics b { font-size:18px; } #replay-footer { padding:9px 12px 12px; } .timeline { gap:10px; } .timeline-track { height:23px; } #tick-label { min-width:86px; font-size:9px; } .transport { gap:6px; } #pov { max-width:128px; } #play { min-width:82px; } #arena-page { grid-template-columns:minmax(0,1fr); grid-template-rows:auto auto; padding:14px 12px; gap:14px; } .arena-setup { padding:18px; overflow:visible; } .arena-results { overflow:visible; } .launch-controls { position:static; box-shadow:none; } .arena-results>.panel { padding:16px; } .arena-empty { min-height:260px; } .duel-emblem>span { width:62px; height:70px; } .empty-steps { gap:6px; font-size:10px; } .empty-steps span { padding:5px 6px; } .run-numbers { gap:6px; } .run-numbers>div { padding:9px; } .run-numbers strong { font-size:23px; } }
 @media(prefers-reduced-motion:reduce) { button:active:not(:disabled) { transform:none; } }
+/* 生成 bot 模板、导出联赛包和旁边的「?」说明（D-254）：说明框固定定位（面板会滚动，绝对定位会被裁掉），位置由 arena.ts 按「?」算 */
+.heading-row { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+.tool-row { display:inline-flex; align-items:center; gap:7px; }
+.tool-row[hidden] { display:none; }
+.tool-row button { min-height:28px; padding:4px 11px; font-size:12px; letter-spacing:0; }
+.help { display:inline-grid; place-items:center; width:20px; height:20px; border:1px solid #2d526e; border-radius:50%; color:#65d5f2; background:#12304b60; font:600 11px/1 ui-monospace,Consolas,monospace; cursor:help; }
+.help:hover,.help:focus-visible { border-color:#58ccec; outline:none; }
+.help-pop { display:none; position:fixed; z-index:50; width:380px; padding:12px 14px; border:1px solid #2d526e; border-radius:8px; background:#0c1a2e; color:#cfe1f7; font:12px/1.65 system-ui,"Microsoft YaHei",sans-serif; letter-spacing:0; text-align:left; white-space:normal; box-shadow:0 12px 30px #000a; cursor:auto; }
+.help:hover .help-pop,.help:focus .help-pop,.help:focus-within .help-pop { display:block; }
+.help-pop b { color:#eaf5ff; font-size:13px; font-weight:600; }
+.help-pop ol { margin:6px 0 0; padding-left:18px; }
+.help-pop li { margin:4px 0; }
+.help-pop code { font:11px ui-monospace,Consolas,monospace; color:#8ee6ff; background:#12304b80; padding:1px 4px; border-radius:3px; }
+.history-tools { margin:4px 0 12px; }
+.help-pop p { margin:8px 0 0; padding-top:8px; border-top:1px solid #23415f; color:#9fd8ff; }

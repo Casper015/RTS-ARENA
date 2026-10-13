@@ -11,6 +11,7 @@ import { botName, displayFile, makeBots } from "./play.ts"
 import { defaultJobs, runGames, runInOrder, type GameJob } from "./game-pool.ts"
 import { botTsconfig, buildDts, buildPrompt, lineups, mapSection, setupWorld, typecheck, typecheckRuleset } from "./docgen.ts"
 import { serveViewer } from "./serve.ts"
+import { initBotDir, writeDocs } from "./bot-dir.ts"
 import {
   findRuleset,
   importRuleset,
@@ -233,14 +234,6 @@ async function target(pos: string[], command: string): Promise<{ rules: Ruleset;
     )
   if (!existsSync(ws.bot)) fail(`${WORKSPACE_FILE} 里写的 bot 文件 ${ws.bot} 不存在`)
   return { ...(await loadRuleset(ws.ruleset)), bots: [ws.bot, ...pos], mine: true }
-}
-
-/** rulesDir 是规则包目录，out 是写到哪 */
-function writeDocs(rules: Ruleset, rulesDir: string, out: string): void {
-  mkdirSync(out, { recursive: true })
-  const dts = buildDts(rules, rulesDir)
-  writeFileSync(join(out, "arena.d.ts"), dts)
-  writeFileSync(join(out, "PROMPT.md"), buildPrompt(rules, rulesDir, dts))
 }
 
 /** 一组 bot 的显示名；不同文件同名时带上所在目录（如 koth/baseline 和 annihilation/baseline） */
@@ -1386,20 +1379,6 @@ async function cmdCheckRules(src: RulesetRef, opt: Record<string, string | true>
 const CHECK_TICKS = 300
 const IDLE_CODE = "export function onTick() {}"
 
-const BOT_TEMPLATE = `// 一个最简单的 bot：闲着的采集单位去采最近的资源点。从这里改起（还不会生产，也不会打仗）。
-// 每改一版都要在这个目录里运行 rts-arena check、rts-arena league 真的打几局，看结果再改（见 PROMPT.md 开头）。
-
-export function onTick(view: View, cmd: Commands): void {
-  const mine = view.entities.filter((e) => e.owner === view.me)
-  const resources = view.entities.filter((e) => game.types[e.type].kind === "resource")
-  for (const u of mine) {
-    if (u.order?.kind !== "idle" || !game.types[u.type].gather || resources.length === 0) continue
-    const target = resources.reduce((a, b) => (dist(u, a) <= dist(u, b) ? a : b))
-    cmd.gather(u, target)
-  }
-}
-`
-
 /** 建 bot 目录，或者在已有的 bot 目录里更新说明书 */
 async function cmdInit(pos: string[]): Promise<void> {
   let ref = pos[0]
@@ -1411,20 +1390,7 @@ async function cmdInit(pos: string[]): Promise<void> {
     dir = "."
   }
   const { rules, src } = await loadRuleset(ref)
-  mkdirSync(dir, { recursive: true })
-  const wsFile = join(dir, WORKSPACE_FILE)
-  const old = existsSync(wsFile) ? (JSON.parse(readFileSync(wsFile, "utf8")) as Partial<Workspace>) : {}
-  const bot = old.bot ?? "bot.ts"
-  // 自己写的规则包记相对 bot 目录的路径（正斜杠，换台机器、换系统也能用）
-  const rulesetField = src.builtin ? rules.id : relative(resolve(dir), src.dir).split(sep).join("/") || "."
-  writeFileSync(wsFile, JSON.stringify({ ruleset: looksLikePath(rulesetField) || src.builtin ? rulesetField : `./${rulesetField}`, bot }, null, 2) + "\n")
-  writeDocs(rules, src.dir, dir)
-  writeFileSync(join(dir, "tsconfig.json"), botTsconfig(["arena.d.ts", bot]))
-  const created = !existsSync(join(dir, bot))
-  if (created) writeFileSync(join(dir, bot), BOT_TEMPLATE)
-  if (!existsSync(join(dir, ".gitignore"))) writeFileSync(join(dir, ".gitignore"), "replays/\n")
-  // 每一版存一份的地方（说明书「版本、能看什么、交付」一节）
-  mkdirSync(join(dir, "versions"), { recursive: true })
+  const { bot, created } = initBotDir(rules, src, dir)
   const where = dir === "." ? "当前目录" : ` ${dir} `
   if (created) {
     const at = dir === "." ? "" : `在 ${dir} 里`

@@ -1,9 +1,13 @@
 // 播放器页面用的本机接口：读回放、读日志、列出规则包和 bot、在后台跑比赛（调用命令行 run --json）。
 // rts-arena view 和 Vite 开发服务器（npm run viewer）共用。只该监听 127.0.0.1。
 import { spawn, type ChildProcess } from "node:child_process"
-import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { createReadStream, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import type { IncomingMessage, ServerResponse } from "node:http"
+import { tmpdir } from "node:os"
 import { basename, join, relative, resolve, sep } from "node:path"
+import { initBotDir } from "./bot-dir.ts"
+import { packLeague } from "./league-package.ts"
+import { ZipWriter } from "./zip.ts"
 import { BOT_EXPORT, discoverBots, uploadNameProblem } from "./bot-finder.ts"
 import { leagueTables, teamSplits } from "./league.ts"
 import { findRuleset, knownBots, listRulesets, loadRulesetRef, localBots, readWorkspaceIn, referenceBots, type RulesetRef } from "./catalog.ts"
@@ -227,6 +231,53 @@ export function createArenaApi(opts: ArenaApiOptions): (req: IncomingMessage, re
       return true
     }
 
+    // 生成 bot 模板（D-254）：和 rts-arena init 建的 bot 目录一样（arena.json、bot.ts、PROMPT.md、arena.d.ts、tsconfig.json），打成 zip 下载
+    if (path === "/api/arena/template" && req.method === "GET") {
+      const src = rulesetRefs().refs.find((r) => r.ref === url.searchParams.get("ruleset"))
+      if (!src) return send(res, 404, { error: "没有这个规则包" }), true
+      // 自己写的规则包要在 arena.json 里记相对 bot 目录的路径，解压到哪里事先不知道
+      if (!src.builtin) return send(res, 400, { error: `自己写的规则包请在命令行里建 bot 目录：rts-arena init ${src.ref} <bot 目录>` }), true
+      const rules = await loadRulesetRef(src)
+      const tmp = mkdtempSync(join(tmpdir(), "rts-arena-bot-"))
+      try {
+        initBotDir(rules, src, tmp)
+        const chunks: Buffer[] = []
+        const zip = new ZipWriter((c) => chunks.push(c))
+        const folder = `${rules.id}-bot`
+        const walk = (dir: string, rel: string) => {
+          for (const e of readdirSync(dir, { withFileTypes: true })) {
+            if (e.isDirectory()) {
+              zip.dir(`${rel}/${e.name}`)
+              walk(join(dir, e.name), `${rel}/${e.name}`)
+            } else zip.file(`${rel}/${e.name}`, readFileSync(join(dir, e.name)))
+          }
+        }
+        walk(tmp, folder)
+        zip.end()
+        sendZip(res, `${rules.name}-bot模板.zip`, Buffer.concat(chunks))
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+      return true
+    }
+
+    // 导出联赛包（D-254）：联赛汇总、每局回放、参赛 bot 的代码和参赛报告（本机路径都换掉），解压后 rts-arena video-init 就能做视频
+    if (path === "/api/arena/package" && req.method === "GET") {
+      const name = url.searchParams.get("series") ?? ""
+      const file = /\.series\.json$/.test(name) ? fileIn(name, /\.series\.json$/) : null
+      if (!file) return send(res, 404, { error: "没有这场比赛的记录" }), true
+      const chunks: Buffer[] = []
+      try {
+        const zip = new ZipWriter((c) => chunks.push(c))
+        const folder = packLeague(file, cwd, zip)
+        zip.end()
+        sendZip(res, `联赛包-${folder}.zip`, Buffer.concat(chunks))
+      } catch (e) {
+        send(res, 400, { error: (e as Error).message })
+      }
+      return true
+    }
+
     if (path === "/api/arena/run" && req.method === "GET") {
       if (!run) return send(res, 200, { running: false }), true
       send(res, 200, { running: run.exitCode === null, exitCode: run.exitCode, cancelled: run.cancelled, args: run.args, events: run.events, stderr: run.stderr.slice(-4000) })
@@ -328,6 +379,15 @@ export function createArenaApi(opts: ArenaApiOptions): (req: IncomingMessage, re
     send(res, 404, { error: "没有这个接口" })
     return true
   }
+}
+
+/** 下载一个 zip：文件名可以有中文（按 RFC 5987 写） */
+function sendZip(res: ServerResponse, name: string, data: Buffer): void {
+  res.statusCode = 200
+  res.setHeader("Content-Type", "application/zip")
+  res.setHeader("Content-Length", data.length)
+  res.setHeader("Content-Disposition", `attachment; filename="${name.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "")}"; filename*=UTF-8''${encodeURIComponent(name)}`)
+  res.end(data)
 }
 
 function readBody(req: IncomingMessage, max = 100_000): Promise<string> {

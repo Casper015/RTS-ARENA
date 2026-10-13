@@ -63,7 +63,7 @@
     </main>
     <section id="arena-page" hidden>
       <div class="panel arena-setup">
-        <div class="setup-heading"><span class="eyebrow">MATCH SETUP</span><h1>创建比赛</h1><p>选好阵容，让策略在战场上见分晓。</p></div>
+        <div class="setup-heading"><span class="eyebrow">MATCH SETUP</span><div class="heading-row"><h1>创建比赛</h1><span class="tool-row"><button id="ar-template" title="下载选定规则包的空 bot 目录（和 rts-arena init 建的一样）">生成 bot 模板</button><span class="help" tabindex="0" aria-label="怎么用 bot 模板">?<span class="help-pop"><b>怎么用 bot 模板训练 bot</b><ol><li>解压到一个空目录，这就是 bot 目录：<code>PROMPT.md</code> 是玩法和接口说明，<code>bot.ts</code> 是最简单的起点，<code>arena.d.ts</code> 给编辑器补全。</li><li>装好 rts-arena 命令行（见仓库 README「安装」），在 bot 目录里打开 AI 编程工具（Claude Code、Codex 等），让它读 <code>PROMPT.md</code>、改 <code>bot.ts</code>。</li><li>每改一版都要真的打：<code>rts-arena check</code>、<code>rts-arena run --games 10</code>、<code>rts-arena league</code>，看 <code>rts-arena report</code> 的战报再改，好的版本存进 <code>versions/</code>。</li><li>写好的 <code>bot.ts</code> 在「参赛阵容」里选「从电脑选文件…」上传，就能和别的 bot 开比赛、打联赛。</li></ol><p>可以把上面的话发给你的 agent，让 AI 自动处理。</p></span></span></span></div><p>选好阵容，让策略在战场上见分晓。</p></div>
         <fieldset class="setup-group"><legend><span>01</span> 赛制与规则</legend>
         <label class="field">方式 <select id="ar-mode">
           <option value="series">对局 · 固定阵容</option>
@@ -97,7 +97,7 @@
       </div>
       <div class="arena-results">
         <div class="panel live-match">
-          <h3><span><span class="section-dot"></span> 当前比赛</span><span id="ar-progress" class="run-status" aria-live="polite"></span></h3>
+          <h3><span><span class="section-dot"></span> 当前比赛</span><span id="ar-progress" class="run-status" aria-live="polite"></span><span id="ar-export-row" class="tool-row" hidden><button id="ar-export" title="下载做联赛视频要的联赛汇总、回放和 bot 代码">导出联赛包</button><span class="help" tabindex="0" aria-label="怎么用联赛包做视频">?<span class="help-pop end"><b>怎么用联赛包做视频</b><ol><li>解压：里面是联赛汇总（<code>*.series.json</code>）、每局回放、参赛 bot 的代码和参赛报告，本机路径都已去掉。</li><li>运行 <code>rts-arena video-init &lt;解压出的目录&gt; my-video</code> 建视频目录；有选手形象图就加 <code>--portraits &lt;形象图目录&gt;</code>。</li><li>在 <code>my-video</code> 里打开 AI 编程工具，让它读 <code>PROMPT.md</code>、写好 <code>script.json</code>（选手介绍、称号、陪练介绍、高光对局解说）。</li><li>在 <code>my-video</code> 里运行 <code>rts-arena video --lint</code> 核对字数，<code>rts-arena video --preview auto</code> 看预览，<code>rts-arena video --check auto</code> 出视频（要装 Chrome 或 Edge；加 <code>--vertical</code> 出竖屏）。</li></ol><p>可以把上面的话发给你的 agent，让 AI 自动处理。</p></span></span></span></h3>
           <div id="ar-current" class="muted">还没开始</div>
         </div>
         <div class="panel match-history">

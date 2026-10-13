@@ -148,6 +148,8 @@ interface StartEvent {
   seed: number
   teams: string | null
   participants: { name: string; file: string }[]
+  /** 联赛汇总的文件名（导出联赛包用） */
+  series?: string
 }
 
 interface RunState {
@@ -176,6 +178,8 @@ interface Series {
   participants: { name: string; file: string }[]
   results: GameEvent[]
   summary: Summary | null
+  /** 跑的时候加了 --no-replays 就是 false */
+  replays?: boolean
 }
 
 const PATH = "__path__"
@@ -224,6 +228,22 @@ function compositions(n: number): string[] {
   return out.sort((a, b) => a.split("v").length - b.split("v").length || (a < b ? 1 : -1))
 }
 
+/** 下载接口给的文件（D-254：bot 模板、联赛包）；出错时抛出接口给的原因 */
+async function download(path: string): Promise<void> {
+  const res = await fetch(path)
+  if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `下载失败：${res.status}`)
+  const cd = res.headers.get("Content-Disposition") ?? ""
+  const name = decodeURIComponent(/filename\*=UTF-8''([^;]+)/.exec(cd)?.[1] ?? "") || "download.zip"
+  const url = URL.createObjectURL(await res.blob())
+  const a = document.createElement("a")
+  a.href = url
+  a.download = name
+  document.body.append(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 10_000)
+}
+
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, { ...init, headers: { "Content-Type": "application/json", "X-Arena": "1", ...(init?.headers ?? {}) } })
   const body = await res.json().catch(() => ({}))
@@ -236,6 +256,8 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
   let seats: string[] = []
   let timer: number | null = null
   let running = false
+  /** 打完的联赛的汇总文件名（能导出联赛包时） */
+  let exportSeries: string | null = null
 
   const rulesetSel = $<HTMLSelectElement>("ar-ruleset")
   const modeSel = $<HTMLSelectElement>("ar-mode")
@@ -712,7 +734,9 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
       const st = s.summary?.standings && s.summary.matrix ? { table: s.summary.standings, matrix: s.summary.matrix } : s.standings
       const full = st && (s.summary?.partnersMatrix || s.standings?.partners) ? { ...st, partners: s.summary?.partnersMatrix ?? s.standings?.partners, confidence: s.standings?.confidence } : st && { ...st, confidence: s.standings?.confidence }
       const multi = (s.size ?? 2) > 2 || s.partners === "mixed"
-      return highlightsHtml(s.summary?.highlights) + (full ? standingsHtml(full, multi) + partnersHtml(full) + statsHtml(s.summary?.stats ?? s.stats, full) : "") + leagueGames(s.results, false, !!s.teams)
+      // 打完、存了回放的联赛可以导出联赛包（D-254）
+      const pack = s.summary && s.replays !== false && s.name ? `<div class="history-tools tool-row"><button data-package="${esc(s.name)}">导出联赛包</button></div>` : ""
+      return pack + highlightsHtml(s.summary?.highlights) + (full ? standingsHtml(full, multi) + partnersHtml(full) + statsHtml(s.summary?.stats ?? s.stats, full) : "") + leagueGames(s.results, false, !!s.teams)
     }
     const teamed = s.teams !== null
     return s.results.map((g) => gameRow(g, teamed)).join("") + (s.summary ? summaryTable(s.summary) : "")
@@ -757,7 +781,10 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
     const summary = events.find((e) => e.type === "summary") as Summary | undefined
     const errors = events.filter((e) => e.type === "error").map((e) => String(e.message))
     const warnings = events.filter((e) => e.type === "warning").map((e) => String(e.message))
-    $("ar-progress").textContent = r.running ? `进行中 ${games.length}/${start?.games ?? "?"}` : r.cancelled ? "已停止" : summary ? "已完成" : errors.length ? "出错" : ""
+    // 联赛打完：「已完成」换成导出联赛包的按钮（D-254）
+    exportSeries = !r.running && !r.cancelled && summary && start?.league && start.series ? start.series : null
+    $("ar-export-row").hidden = exportSeries === null
+    $("ar-progress").textContent = r.running ? `进行中 ${games.length}/${start?.games ?? "?"}` : r.cancelled ? "已停止" : exportSeries ? "" : summary ? "已完成" : errors.length ? "出错" : ""
     $("ar-progress").dataset.state = running ? "running" : errors.length ? "error" : "ready"
     const head = start
       ? start.league
@@ -793,6 +820,39 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
       msg.textContent = (e as Error).message
     }
   }
+
+  // 生成 bot 模板、导出联赛包（D-254）
+  // 「?」说明框：固定定位，按「?」的位置放在它下面、右边对齐，超出窗口就挪进来（放不下就放到上面）
+  for (const h of document.querySelectorAll<HTMLElement>("#arena-page .help")) {
+    const pop = h.querySelector<HTMLElement>(".help-pop")!
+    const place = () => {
+      const r = h.getBoundingClientRect()
+      const w = Math.min(380, window.innerWidth - 24)
+      pop.style.width = `${w}px`
+      pop.style.left = `${Math.max(12, Math.min(window.innerWidth - w - 12, r.right - w + 10))}px`
+      pop.style.top = `${r.bottom + 8}px`
+      requestAnimationFrame(() => {
+        const ph = pop.offsetHeight
+        if (r.bottom + 8 + ph > window.innerHeight - 8 && r.top - 8 - ph > 8) pop.style.top = `${r.top - 8 - ph}px`
+      })
+    }
+    h.addEventListener("mouseenter", place)
+    h.addEventListener("focusin", place)
+  }
+  const fetchFile = async (btn: HTMLButtonElement, path: string) => {
+    msg.textContent = ""
+    msg.classList.remove("ok")
+    btn.disabled = true
+    try {
+      await download(path)
+    } catch (e) {
+      msg.textContent = (e as Error).message
+    } finally {
+      btn.disabled = false
+    }
+  }
+  $<HTMLButtonElement>("ar-template").addEventListener("click", (e) => fetchFile(e.currentTarget as HTMLButtonElement, `/api/arena/template?ruleset=${encodeURIComponent(rulesetSel.value)}`))
+  $<HTMLButtonElement>("ar-export").addEventListener("click", (e) => exportSeries && fetchFile(e.currentTarget as HTMLButtonElement, `/api/arena/package?series=${encodeURIComponent(exportSeries)}`))
 
   $("ar-start").addEventListener("click", async () => {
     msg.textContent = ""
@@ -832,6 +892,9 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
   $("arena-page").addEventListener("click", (ev) => {
     const b = (ev.target as HTMLElement).closest("[data-replay]") as HTMLElement | null
     if (b) opts.openReplay(b.dataset.replay!)
+    // 比赛记录里的「导出联赛包」
+    const p = (ev.target as HTMLElement).closest("[data-package]") as HTMLButtonElement | null
+    if (p) fetchFile(p, `/api/arena/package?series=${encodeURIComponent(p.dataset.package!)}`)
   })
 
   // ---------- 启动 ----------
