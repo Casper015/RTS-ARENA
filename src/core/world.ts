@@ -178,6 +178,8 @@ export class World implements SetupContext, RuleContext {
   terrain: string[] = []
   /** 规则包 remove 掉、回放还没记下的实体 id（回放用它区分"移除"和"打死"） */
   readonly removed = new Set<number>()
+  /** 每个玩家采到的：自己的工人交的货 + 规则包 addResource 给的（D-248；同队共用一份资源时靠它分清是谁挣的） */
+  readonly gathered: Record<string, number>[] = []
   /** setup 时的提醒（spawnNear 没找到空位），rts-arena check 打印 */
   readonly notes: string[] = []
   /** 地形能否通行 */
@@ -259,6 +261,7 @@ export class World implements SetupContext, RuleContext {
       resources: Object.fromEntries(rules.resources.map((r) => [r, 0])),
       pending: [],
     }))
+    for (let p = 0; p < this.players.length; p++) this.gathered.push(Object.fromEntries(rules.resources.map((r) => [r, 0])))
     // 同队共用一份资源（D-245）：队友的 resources 指向同一个对象，扣钱、交货、规则包加钱都算在一起，同一 tick 两个队友也花不超
     if (rules.sharedResources) for (const p of this.players) p.resources = this.players[this.teams.indexOf(this.teams[p.id])].resources
   }
@@ -630,6 +633,7 @@ export class World implements SetupContext, RuleContext {
   addResource(player: number, resource: string, n: number): void {
     if (!this.rules.resources.includes(resource)) throw new Error(`未定义的资源 "${resource}"`)
     this.players[player].resources[resource] += n
+    if (n > 0) this.gathered[player][resource] += n
   }
 
   spawnNear(type: string, owner: number, x: number, y: number, opts?: { amount?: number }): number | null {

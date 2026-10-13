@@ -265,6 +265,12 @@ test("精彩对局：落后又反超算逆转，主基地差点被拆算险胜�
   // 两边都伤得重才算看点：一方被打光、另一方几乎没损失的不算
   assert.ok(!excitement({ ...f, sideLoss: [0.05, 0.9] }, null, (s) => names[s]).reasons.some((r) => r.includes("伤得重")))
   assert.ok(excitement({ ...f, sideLoss: [0.5, 0.6] }, null, (s) => names[s]).reasons.includes("两边都伤得重：乙 损失 60%，甲 损失 50%"))
+  // 三方以上（各自为战）：「几家都伤得重」，比分写上是谁和谁（D-248）
+  const ffa = { ...f, sides: [0, 1, 2], sideLoss: [0.5, 0.6, 0.2], winner: 0, finalScores: { winner: 500, foe: 480, foeSide: 2 }, winnerBaseMin: null }
+  const three = ["甲", "乙", "丙"]
+  const exFfa = excitement(ffa, null, (s) => three[s]).reasons
+  assert.ok(exFfa.includes("几家都伤得重：乙 损失 60%，甲 损失 50%"), exFfa.join("；"))
+  assert.ok(exFfa.includes("比分咬得很紧：甲 500 : 丙 480"), exFfa.join("；"))
   // bot 出错扣分
   assert.ok(excitement({ ...f, trouble: true }, null, (s) => names[s]).score < ex.score - 25)
   // 每项都没到写出来的门槛（几样都沾一点）：往后排，看点写占分最多那项的实际数字，不空着

@@ -27,7 +27,8 @@ export interface GameFacts {
   /** 赢家的主建筑（开局最大生命的建筑）最低剩多少血（比例）；没有主建筑时 null */
   winnerBaseMin: number | null
   /** 最后的分数：赢家和最高的对手（规则包有分数时） */
-  finalScores: { winner: number; foe: number } | null
+  /** foeSide：比分最接近赢家的那一方（D-248，三方以上时写比分要说是谁） */
+  finalScores: { winner: number; foe: number; foeSide?: number } | null
   /** 有 bot 报错、燃料耗尽或停止运行 */
   trouble: boolean
 }
@@ -141,8 +142,8 @@ export function gameFacts(replay: Replay): GameFacts {
       const best = foes.sort((a, b) => b[0] - a[0])[0]
       if (best && best[0] - x.score[w] > (scoreLow ? scoreLow.theirs - scoreLow.mine : 0)) scoreLow = { t: x.t, mine: x.score[w], theirs: best[0], foe: sides[best[1]] }
     }
-    const foe = Math.max(...finalScore.filter((_, i) => i !== w))
-    finalScores = { winner: finalScore[w], foe }
+    const foeIdx = finalScore.map((v, i) => [v, i]).filter(([, i]) => i !== w).sort((a, b) => b[0] - a[0])[0][1]
+    finalScores = { winner: finalScore[w], foe: finalScore[foeIdx], foeSide: sides[foeIdx] }
   }
 
   // 大战：切分规则见 battles.ts（和战报、联赛视频一样），一边倒的（兵冲进矿区杀工人这类）不算
@@ -193,7 +194,8 @@ export function excitement(f: GameFacts, upset: { level: number; text: string } 
   const hurt = f.sideLoss.map((v, i) => ({ v, side: f.sides[i] })).sort((a, b) => b.v - a.v)
   const both = hurt[1]?.v ?? 0
   const hurtText = hurt.slice(0, 2).map((x) => `${name(x.side)} 损失 ${Math.round(x.v * 100)}%`).join("，")
-  parts.push({ v: 15 * Math.min(both / 0.5, 1), text: both >= 0.3 ? `两边都伤得重：${hurtText}` : null })
+  // 三方以上（各自为战）说「几家」（D-248）
+  parts.push({ v: 15 * Math.min(both / 0.5, 1), text: both >= 0.3 ? `${f.sides.length > 2 ? "几家" : "两边"}都伤得重：${hurtText}` : null })
   parts.push({ v: 10 * (Math.min(f.battles, 5) / 5), text: f.battles >= 2 ? `${f.battles} 场大战（最大一场死了 ${f.biggestBattle} 个）` : null })
   // 险胜：赢家的主建筑差点被拆，或者比分咬得很紧
   const baseClose = f.winnerBaseMin === null ? 0 : 1 - f.winnerBaseMin
@@ -207,7 +209,9 @@ export function excitement(f: GameFacts, upset: { level: number; text: string } 
       f.winner === null
         ? null
         : scoreClose >= baseClose && scoreClose >= 0.85
-          ? `比分咬得很紧：${Math.round(f.finalScores!.winner)} : ${Math.round(f.finalScores!.foe)}`
+          ? f.sides.length > 2 && f.finalScores!.foeSide !== undefined
+            ? `比分咬得很紧：${W} ${Math.round(f.finalScores!.winner)} : ${name(f.finalScores!.foeSide)} ${Math.round(f.finalScores!.foe)}`
+            : `比分咬得很紧：${Math.round(f.finalScores!.winner)} : ${Math.round(f.finalScores!.foe)}`
           : baseClose >= 0.5
             ? `险胜：${W} 的主基地一度只剩 ${Math.round(f.winnerBaseMin! * 100)}% 血`
             : null,
@@ -231,7 +235,7 @@ export function excitement(f: GameFacts, upset: { level: number; text: string } 
       f.leadChanges > 0 ? `优势换手 ${f.leadChanges} 次` : null,
       both > 0 ? hurtText : null,
       f.battles > 0 ? `${f.battles} 场大战（最大一场死了 ${f.biggestBattle} 个）` : null,
-      f.winner === null ? null : scoreClose >= baseClose && fs0 ? `比分 ${Math.round(fs0.winner)} : ${Math.round(fs0.foe)}` : baseClose > 0 ? `${W} 的主基地一度只剩 ${Math.round(f.winnerBaseMin! * 100)}% 血` : null,
+      f.winner === null ? null : scoreClose >= baseClose && fs0 ? (f.sides.length > 2 && fs0.foeSide !== undefined ? `比分 ${W} ${Math.round(fs0.winner)} : ${name(fs0.foeSide)} ${Math.round(fs0.foe)}` : `比分 ${Math.round(fs0.winner)} : ${Math.round(fs0.foe)}`) : baseClose > 0 ? `${W} 的主基地一度只剩 ${Math.round(f.winnerBaseMin! * 100)}% 血` : null,
     ]
     const best = soft.map((text, i) => ({ text, v: parts[i].v })).filter((p) => p.text && p.v > 0).sort((a, b) => b.v - a.v)[0]
     if (best) reasons.push(best.text!)

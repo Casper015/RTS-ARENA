@@ -5,6 +5,7 @@ import { test } from "node:test"
 import { referenceBots } from "../src/cli/catalog.ts"
 import { buildDts, buildPrompt, rulesetDir, typecheck } from "../src/cli/docgen.ts"
 import { runMatch } from "../src/core/match.ts"
+import { gameSeatStats } from "../src/cli/league-stats.ts"
 import type { Ruleset } from "../src/core/types.ts"
 import { compileBot, createBot } from "../src/sandbox/quickjs.ts"
 import annihilation from "../rulesets/annihilation/index.ts"
@@ -175,6 +176,11 @@ test("攻城拓荒 3～4 人（D-244、D-245）：64×64 四角，2v2 队友坐�
     assert.equal(f.players[2].resources.gold, 600)
   }
   assert.ok(moved)
+  // 每人采到的分开记（D-248）：只有 P0 的工人在采，钱算 P0 的；联赛统计的采集也按它
+  assert.ok(team.gathered && team.gathered[0].gold > 0 && team.gathered[1].gold === 0, JSON.stringify(team.gathered))
+  const seatStats = gameSeatStats(team)
+  assert.equal(seatStats[0].income, team.gathered![0].gold)
+  assert.equal(seatStats[1].income, 0)
   const ffa = runMatch({
     ruleset: { ...siegeFrontier, maxTicks: 50 },
     seed: 3,

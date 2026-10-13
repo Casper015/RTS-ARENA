@@ -68,7 +68,8 @@ export type SceneData = (
       /** base：主基地（选手有形象图时画成头像） */
       types: (BattleType & { name: string; kind: string; shape: string; label: string; color: string | null; worker: boolean; base: boolean })[]
       /** 每个座位的名字和颜色；avatar 是形象图的名字（没有就 null） */
-      seats: { name: string; color: string; avatar?: string | null }[]
+      /** team：队伍编号（D-248，分队时阵营卡片按队分组）；不分队时每人一队 */
+      seats: { name: string; color: string; avatar?: string | null; team?: number }[]
       result: string
       /** 实时胜率：curve 是每 step tick 一个点的、sides[0] 那方赢的概率；不是两方对打或没有模型时 null（D-177） */
       win: { step: number; ticks: number; curve: number[]; sides: { name: string; color: string }[] } | null
@@ -1200,6 +1201,29 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     for(let k=0;k<3;k++){g.beginPath();g.moveTo(x+width-15-k*5,y+height-4);g.lineTo(x+width-13-k*5,y+height-8);g.stroke()}
     g.restore()
   }
+  /** 座位按队伍分组（D-248）：同队的挨着、队按第一个座位的先后；不分队时每人一组 */
+  function teamGroups(seats:Any[]):number[][] {
+    const out:number[][]=[]
+    seats.forEach((st,k)=>{const t=st.team??k;const gr=out.find((x)=>(seats[x[0]].team??x[0])===t);if(gr)gr.push(k);else out.push([k])})
+    return out
+  }
+  /**
+   * 各家兵力对比（D-248）：三方以上各自为战没有胜率折线（模型只支持两方），竖屏底部改画每家作战部队的横条，
+   * 条长按场上最多的那家算，出局的灰掉
+   */
+  function drawForces(s:Any,f:Any,bx:number,y:number,bw:number,px:number):void {
+    text("各家兵力",bx,y-2,px,C.muted,{bold:true})
+    const counts=(s.seats as Any[]).map((_,k)=>f.counts?.[k]??{army:0,alive:true})
+    const most=Math.max(1,...counts.map((c:Any)=>c.army))
+    const rowH=Math.min(18,56/Math.max(1,counts.length)+4),top=y+Math.round(px*0.55)
+    counts.forEach((c:Any,k:number)=>{
+      const ry=top+k*rowH,col=c.alive?s.seats[k].color:"#5d6b70"
+      g.fillStyle=col;g.beginPath();g.arc(bx+5,ry+rowH/2,4,0,Math.PI*2);g.fill()
+      roundRect(bx+16,ry+rowH/2-4,bw-70,8,4,"rgba(255,255,255,0.06)")
+      if(c.army>0)roundRect(bx+16,ry+rowH/2-4,Math.max(8,(bw-70)*c.army/most),8,4,col)
+      text(c.alive?String(c.army):"出局",bx+bw,ry+rowH/2+5,13,c.alive?C.text:C.muted,{bold:true,align:"right"})
+    })
+  }
   function dataHeading(label:string,x:number,y:number,width:number):void {
     g.save();g.fillStyle=C.accent
     g.fillRect(x,y-9,3,9);g.fillRect(x+5,y-12,3,12)
@@ -1246,11 +1270,14 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     const short=height<86, avatar=short?15:21
     avatarCircle(st.avatar,st.name,st.color,x+18+avatar,y+18+avatar,avatar)
     fitLines(st.name,x+28+avatar*2,y+27,short?15:19,12,width-avatar*2-104,1,st.color,{bold:true})
-    text(c.alive?`P${seat} · 场上`:`P${seat} · 已出局`,x+28+avatar*2,y+45,10,C.muted)
+    // 矮卡片（不到 76 高，D-248：横屏 2v2 带胜率折线时）把座位和部队、农民、建筑并成一行，不然两行叠在一起
+    const seatText=c.alive?`P${seat} · 场上`:`P${seat} · 已出局`
+    if(short&&height<76) fitLines(`${seatText}　部队 ${c.army} / 农民 ${c.workers} / 建筑 ${c.buildings}`,x+28+avatar*2,y+45,11,9,width-avatar*2-44,1,C.muted)
+    else text(seatText,x+28+avatar*2,y+45,10,C.muted)
     text(String(c.score),x+width-16,y+(short?28:32),short?23:30,C.text,{bold:true,align:"right",mono:true})
     text("得分",x+width-16,y+(short?44:49),10,C.muted,{align:"right"})
     if(short) {
-      if(height>62)text(`部队 ${c.army}  /  农民 ${c.workers}  /  建筑 ${c.buildings}`,x+16,y+height-12,12,C.muted)
+      if(height>=76)text(`部队 ${c.army}  /  农民 ${c.workers}  /  建筑 ${c.buildings}`,x+16,y+height-12,12,C.muted)
     } else {
       const cw=(width-32)/3
       for(const [j,key,label] of [[0,"army","作战部队"],[1,"workers","农民"],[2,"buildings","建筑"]] as const) {
@@ -1319,10 +1346,17 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     }
     fieldFrame(MX,MY,mapW,mapH)
     const x0=MX+mapW+24,pw=W-x0-24,bottom=Math.max(MY+mapH,H-68)
-    const ch=Math.max(40,Math.min(112,(bottom-MY-126)/Math.max(1,s.seats.length)-10))
+    // 分队时（D-248）：同队的挨着放，每队上面一行小字「队1」；有胜率折线时卡片先让出它的位置（2v2 四张卡片也放得下）
+    const groups=teamGroups(s.seats)
+    const grouped=groups.some((gr)=>gr.length>1)
+    const rest=116+(s.win?116:0)+(grouped?groups.length*16:0)
+    const ch=Math.max(40,Math.min(112,(bottom-MY-rest)/Math.max(1,s.seats.length)-10))
     let y=MY
-    s.seats.forEach((st:Any,k:number)=>{teamCard(st,f.counts[k],x0,y,pw,ch,k);y+=ch+10})
-    if(s.win&&bottom-y>180){broadcastCard(x0,y,pw,104);drawWin(s.win,f.t,x0+14,y+25,pw-28,52,13);y+=116}
+    for(const gr of groups) {
+      if(grouped){text(`队${(s.seats[gr[0]].team??gr[0])+1}`,x0+2,y+11,11,C.muted,{bold:true});y+=16}
+      for(const k of gr){teamCard(s.seats[k],f.counts[k],x0,y,pw,ch,k);y+=ch+10}
+    }
+    if(s.win&&bottom-y>=174){broadcastCard(x0,y,pw,104);drawWin(s.win,f.t,x0+14,y+25,pw-28,52,13);y+=116}
     if(f.status&&bottom-y>90) {
       broadcastCard(x0,y,pw,56)
       fitLines(f.status,x0+14,y+24,14,11,pw-28,2,C.accent,{bold:true});y+=68
@@ -1360,9 +1394,16 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     broadcastBrand(SX,32)
     fitLines(s.kicker??"精彩对局 "+s.no,SX+SW,32,16,12,SW-210,1,C.accent,{bold:true,align:"right"})
     // 阵营卡片两家一行；三四家排两行、卡片变矮，标题和解说跟着缩小（D-243，用户：竖屏顶部也显示全部阵营卡片）
-    const seats=s.seats as Any[],gap=12,colW=(SW-gap)/2,rows=Math.ceil(seats.length/2)
+    // 分队时（D-248）每队从新的一行开始，每行左边一个窄标签「队 1」
+    const seats=s.seats as Any[],groups=teamGroups(seats),grouped=groups.some((gr)=>gr.length>1),gap=12
+    const lines=grouped?groups.flatMap((gr)=>Array.from({length:Math.ceil(gr.length/2)},(_,r)=>({team:seats[gr[0]].team??gr[0],ks:gr.slice(r*2,r*2+2),first:r===0}))):Array.from({length:Math.ceil(seats.length/2)},(_,r)=>({team:-1,ks:[r*2,r*2+1].filter((k)=>k<seats.length),first:false}))
+    const rows=lines.length,labelW=grouped?26:0,colW=(SW-labelW-(grouped?6:0)-gap)/2,cx0=SX+labelW+(grouped?6:0)
     const teamH=rows<=1?116:rows===2?80:Math.max(44,(170-(rows-1)*8)/rows)
-    seats.forEach((st,k)=>teamCard(st,f.counts?.[k]??{army:0,workers:0,buildings:0,score:0,alive:true},SX+(k%2)*(colW+gap),72+Math.floor(k/2)*(teamH+8),colW,teamH,k))
+    lines.forEach((ln,r)=>{
+      const ry=72+r*(teamH+8)
+      if(grouped){roundRect(SX,ry,labelW,teamH,6,"rgba(255,255,255,0.05)",C.line);if(ln.first){text("队",SX+labelW/2,ry+teamH/2-3,13,C.muted,{bold:true,align:"center"});text(String(ln.team+1),SX+labelW/2,ry+teamH/2+14,15,C.text,{bold:true,align:"center"})}}
+      ln.ks.forEach((k,j)=>teamCard(seats[k],f.counts?.[k]??{army:0,workers:0,buildings:0,score:0,alive:true},cx0+j*(colW+gap),ry,colW,teamH,k))
+    })
     const top = 72 + rows*teamH + (rows-1)*8 + 15, many = rows > 1
     const title = layoutLines(s.title, many ? 26 : 34, many ? 19 : 25, SW, 2, true)
     const note = s.commentary ? layoutLines(s.commentary, many ? 17 : 22, many ? 13 : 17, SW, 2, false) : null
@@ -1413,6 +1454,7 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     }
     if(!(f.events??[]).length)fitLines(f.status||"部队正在部署，等待交锋",tx+16,ey,18,14,tw-32,3,C.muted)
     if(s.win)drawWin(s.win,f.t??0,SX,my+cardH+30,SW,50,16)
+    else if(s.seats.length>2)drawForces(s,f,SX,my+cardH+30,SW,16)
 
   }
 

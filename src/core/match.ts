@@ -193,7 +193,7 @@ function play(opts: MatchOptions, w: World): Replay {
     map: { width: w.width, height: w.height, terrain: w.terrain, colors, walkable },
     types,
     fog: rules.fog,
-    ...(rules.sharedResources ? { sharedResources: true as const } : {}),
+    ...(rules.sharedResources ? { sharedResources: true as const, gathered: w.gathered.map((g) => ({ ...g })) } : {}),
     initial: rec.initial,
     frames: rec.frames,
     result: w.ended,

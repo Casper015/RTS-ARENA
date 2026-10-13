@@ -590,6 +590,8 @@ export interface Replay {
   fog?: boolean
   /** 同队共用一份资源（D-245 起记下，有才写）：每个队友记的资源都是整队的 */
   sharedResources?: true
+  /** 共用资源时（D-248 起记下）：每个玩家整局采到的（自己的工人交的 + 规则包给的），下标是玩家编号 */
+  gathered?: Record<string, number>[]
   initial: Snapshot
   frames: Frame[]
   result: MatchResult & { tick: number }

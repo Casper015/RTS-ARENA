@@ -170,7 +170,7 @@ export function buildScenes(
     const result = tidy(winners.length ? `${winners.join("、")} 获胜` : "平局")
     const title = pick.title || sides.map((s) => s.name).join(" 对 ")
     const commentary = pick.commentary || null
-    const seats = seatOf.map((i, p) => ({ name: display(g.names[p]), color: shown.get(i)!, avatar: imageOf(g.names[p]), crop: avatarOf(g.names[p]) }))
+    const seats = seatOf.map((i, p) => ({ name: display(g.names[p]), color: shown.get(i)!, avatar: imageOf(g.names[p]), crop: avatarOf(g.names[p]), team: g.teams[p] }))
     return { g, replay, result, title, commentary, seats }
   }
   // 开场阵容（D-179 加、D-221 删，D-230 用户要求加回来）：第一帧就是全体参赛选手的立绘阵容和一句大字（不从黑屏淡入，也当封面），
@@ -541,7 +541,7 @@ export function replayScene(
   no: number,
   title: string,
   commentary: string | null,
-  seats: { name: string; color: string; avatar?: string | null; crop?: number[] }[],
+  seats: { name: string; color: string; avatar?: string | null; crop?: number[]; team?: number }[],
   result: string,
   fps: number,
   weights: number[] | null = null,

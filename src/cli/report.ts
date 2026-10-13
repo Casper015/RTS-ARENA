@@ -745,6 +745,8 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
   const after = samples.slice(1)
   const incomeOf: number[] = []
   for (let p = 0; p < n; p++) incomeOf[p] = sum(samples[samples.length - 1].players[p].res) - sum(initialRes[p]) + spentTotal[p]
+  // 同队共用一份资源时（D-248）：每人记的都是整队的钱，用回放记下的每人采到的
+  if (replay.gathered) replay.gathered.forEach((g, p) => (incomeOf[p] = sum(g)))
   for (const p of seatOrder) {
     if (me !== undefined && p !== me && !enemies(p, me) && team(p) !== team(me)) continue
     const lost = new Map<string, number>()
@@ -754,14 +756,16 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       if (d.by === p && d.owner !== p) killed.set(d.owner < 0 ? `中立 ${d.type}` : d.type, (killed.get(d.owner < 0 ? `中立 ${d.type}` : d.type) ?? 0) + 1)
     }
     const fin = samples[samples.length - 1].players[p].res
-    const income = Object.keys(fin)
-      .map((k) => `${k} ${Math.round(fin[k] - (initialRes[p][k] ?? 0) + (spent[p].get(k) ?? 0))}`)
-      .join(" ")
+    const income = replay.gathered
+      ? Object.keys(fin).map((k) => `${k} ${Math.round(replay.gathered![p][k] ?? 0)}`).join(" ")
+      : Object.keys(fin)
+          .map((k) => `${k} ${Math.round(fin[k] - (initialRes[p][k] ?? 0) + (spent[p].get(k) ?? 0))}`)
+          .join(" ")
     const spentText = [...spent[p]].map(([k, v]) => `${k} ${v}`).join(" ") || "0"
     const bank = Object.keys(fin)
       .map((k) => `${k} ${Math.round(after.reduce((a, smp) => a + (smp.players[p].res[k] ?? 0), 0) / Math.max(1, after.length))}`)
       .join(" ")
-    out.push(`${who0(p)}：采集约 ${income}（估算：结束时剩的 − 开局的 + 造东西花掉的），花掉 ${spentText}，抽样时平均手上留着 ${bank}；整局损失 ${countList(lost)}；整局击杀 ${countList(killed)}`)
+    out.push(`${who0(p)}：${replay.gathered ? `采集 ${income}（自己的工人交的 + 规则包给的；队友共用一份钱，手上留着的是整队的）` : `采集约 ${income}（估算：结束时剩的 − 开局的 + 造东西花掉的）`}，花掉 ${spentText}，抽样时平均手上留着 ${bank}；整局损失 ${countList(lost)}；整局击杀 ${countList(killed)}`)
     if (castsBy[p].size) out.push(`  放技能：${[...castsBy[p]].map(([k, v]) => `${k} ×${v}`).join("、")}`)
     else if (Object.values(replay.types).some((t) => t.skills?.length)) out.push("  放技能：一次都没放（规则包里有技能，见说明书单位表下面）")
     const byNeutral = new Map<string, number>()
