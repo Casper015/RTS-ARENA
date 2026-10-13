@@ -781,6 +781,8 @@ export function replayScene(
       types,
       seats,
       result,
+      // 结束原因（D-256）：结尾和获胜方一起写，比如「时间到，击杀价值 A 4620 : B 4960」
+      reason: explainReason(replay.result.reason, seats),
       win,
     },
     frame,
@@ -795,6 +797,22 @@ export function replayScene(
 export function relabelSeats(s: string, seats: { name: string }[], sentence = true): string {
   const out = s.replace(/(?<![A-Za-z])P(\d+)/g, (m, d) => seats[Number(d)]?.name ?? m)
   return sentence ? tidy(out) : out
+}
+
+/**
+ * 结束原因写给观众看（D-256，用户：视频里没说为什么赢，时间到按分数赢的看着莫名其妙）：规则包给的原因里 P0 这样的座位换成名字；
+ * 「4620 : 4960」这样按座位（分队时也可能按队）排的一串数字，每个数前面写上是谁的
+ */
+export function explainReason(reason: string, seats: { name: string; team?: number }[]): string {
+  const teams = [...new Set(seats.map((s, p) => s.team ?? p))]
+  const teamName = (t: number) => [...new Set(seats.filter((s, p) => (s.team ?? p) === t).map((s) => s.name))].join("+")
+  const out = reason.replace(/\d+(?:\.\d+)?(?:\s*:\s*\d+(?:\.\d+)?)+/g, (m) => {
+    const nums = m.split(/\s*:\s*/)
+    const who = nums.length === seats.length ? seats.map((s) => s.name) : nums.length === teams.length ? teams.map(teamName) : null
+    return who ? nums.map((x, k) => `${who[k]} ${x}`).join(" : ") : m
+  })
+  // 不去掉中文名前后的空格：「击杀价值 选手甲 4620」连在一起不好读
+  return relabelSeats(out, seats, false)
 }
 
 /** 胜率曲线每隔几 tick 一个点 */

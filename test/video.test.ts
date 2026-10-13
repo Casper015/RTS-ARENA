@@ -7,7 +7,7 @@ import { basename, dirname, join, resolve } from "node:path"
 import { after, test } from "node:test"
 import { checkScript, codeFacts, botTag, contestantNames, factTags, sparringBots, spotlightFor, gameScores, highlightPlayerWarnings, isReferenceBot, readSeries, resolveBotFile, scriptWarnings, videoBrief, type SeriesFile, type VideoScript } from "../src/video/brief.ts"
 import { findBrowser } from "../src/video/browser.ts"
-import { buildScenes, colorGap, fightWindows, idleHighlightWarnings, PALETTE, pacing, relabelSeats, tidy, timelineOf, videoColors } from "../src/video/render.ts"
+import { buildScenes, colorGap, explainReason, fightWindows, idleHighlightWarnings, PALETTE, pacing, relabelSeats, tidy, timelineOf, videoColors } from "../src/video/render.ts"
 import { analyzeLeague, baseTypeOf, fitWinModel, twoSides, winCurve } from "../src/video/analysis.ts"
 import { matchPortraits } from "../src/video/workspace.ts"
 import { crc32, deflateSync } from "node:zlib"
@@ -340,6 +340,18 @@ test("整片视频每个参赛者一种颜色（D-253）：选手先用自己的
   assert.deepEqual([cm.get("A"), cm.get("B")], [PALETTE[0], PALETTE[1]])
   for (const n of ["baseline", "counter", "expand", "hog", "rush", "turtle"]) assert.ok(colorGap(cm.get(n)!, PALETTE[0]) >= 50 && colorGap(cm.get(n)!, PALETTE[1]) >= 50, n)
   assert.ok(colorGap(cm.get("hog")!, cm.get("rush")!) >= 50)
+})
+
+test("结束原因写给观众看（D-256）：座位换成名字，按座位或按队排的比分每个数前面写上是谁的", () => {
+  const two = [{ name: "baseline" }, { name: "turtle" }]
+  assert.equal(explainReason("时间到，击杀价值 4620 : 4960", two), "时间到，击杀价值 baseline 4620 : turtle 4960")
+  assert.equal(explainReason("先到 600 分（600 : 420）", [{ name: "甲" }, { name: "乙" }]), "先到 600 分（甲 600 : 乙 420）")
+  assert.equal(explainReason("时间到，击杀价值 4620 : 4960", [{ name: "选手甲" }, { name: "选手乙" }]), "时间到，击杀价值 选手甲 4620 : 选手乙 4960", "中文名前面的空格留着")
+  const four = [{ name: "A", team: 0 }, { name: "B", team: 0 }, { name: "C", team: 1 }, { name: "D", team: 1 }]
+  assert.equal(explainReason("时间到，还在场的队伍里击杀价值最高（0 : 7680 : 7140 : 1430）", four), "时间到，还在场的队伍里击杀价值最高（A 0 : B 7680 : C 7140 : D 1430）")
+  assert.equal(explainReason("时间到，队伍分数 30 : 20", four), "时间到，队伍分数 A+B 30 : C+D 20")
+  assert.equal(explainReason("其他队伍都出局了（获胜队伍：P0、P1）", four), "其他队伍都出局了（获胜队伍：A、B）")
+  assert.equal(explainReason("摧毁了对方的主基地", two), "摧毁了对方的主基地")
 })
 
 test("平台拼的文字：中文名前后的空格去掉，英文名的留着", () => {
