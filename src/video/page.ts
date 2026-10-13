@@ -40,18 +40,8 @@ export type SceneData = (
       ruleset: string
       /** 脚本写的规则介绍（不写就是规则包的一句话简介） */
       lines: string[]
-      /** 地图下面的小字："第 N 局的开局地图" */
-      mapNote: string
-      width: number
-      height: number
-      terrain: string[]
-      colors: Record<string, string>
-      /** [x, y, w, h, 座位(-1 中立), 类型下标] 一组 6 个 */
-      ents: number[]
-      /** 和 ents 一一对应：朝右 0、朝左 π（D-234：背对自己的主基地） */
-      faces?: number[]
-      markers: ({ kind: "zone"; x: number; y: number; w: number; h: number; owner: number | null; label?: string; color?: string } | { kind: "label"; x: number; y: number; text: string; owner?: number | null })[]
-      types: (BattleType & { shape: string; label: string; color: string | null; kind: string })[]
+      /** 陪练（D-252，平台自带的参考 bot）：名字、颜色、一句话介绍；联赛里没有陪练就是空的 */
+      sparring: { name: string; color: string; text: string }[]
       seatColors: string[]
       legend: { shape: string; label: string; color: string | null; kind: string; name: string; detail: string; art?: BattleType }[]
       /** 左下角的小字：1 秒 = 多少 tick */
@@ -543,55 +533,44 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     if (s.tickNote) text(s.tickNote, 80, H - 56, 17, C.muted, { alpha: ease((i - 20) / 15) })
     // 平台署名（D-221：开场阵容删掉了，署名和仓库地址放在第一页规则介绍的底部）
     fitLines(`RTS Arena · 大模型写 bot 的即时战略竞技平台 · ${REPO}`, 80, H - 22, 15, 10, 600, 1, C.muted)
-    // 右边：开局地图和单位图例
-    rulesMap(s, i, 700, 92, 540, 330, 686)
+    // 右边：陪练和单位图例（D-252）
+    rulesSide(s, i, 700, 92, 540, 686)
     watermark()
   }
 
-  /** 规则页的开局地图、说明小字和单位图例（D-183 抽出来，横竖屏共用）：地图放进 (x0, y0) 起 boxW×boxH 的框，图例排在地图下面、不超过 bottom */
-  function rulesMap(s: Any, i: number, x0: number, y0: number, boxW: number, boxH: number, bottom: number): void {
-    const a2 = ease((i - 8) / 18)
-    const tile = Math.min(boxW / s.width, boxH / s.height)
-    const mx = x0 + (boxW - s.width * tile) / 2
-    const my = y0
-    g.globalAlpha = a2
-    g.save(); g.translate(mx, my)
-    art.terrain(g, s.terrain, s.colors, tile)
-    g.restore()
-    const seatColor = (o: number) => (o >= 0 ? (s.seatColors[o] ?? "#ccc") : "#9aa0a6")
-    for (const m of s.markers as Any[]) {
-      if (m.kind !== "zone") continue
-      const col = m.color ?? (m.owner === null || m.owner === undefined || m.owner < 0 ? "#c8ccd4" : seatColor(m.owner))
-      g.fillStyle = col
-      g.globalAlpha = a2 * 0.3
-      g.fillRect(mx + m.x * tile, my + m.y * tile, m.w * tile, m.h * tile)
-      g.globalAlpha = a2
-      g.strokeStyle = col
-      g.lineWidth = 1.5
-      g.setLineDash([4, 3])
-      g.strokeRect(mx + m.x * tile, my + m.y * tile, m.w * tile, m.h * tile)
-      g.setLineDash([])
-      if (m.label) text(m.label, mx + m.x * tile, my + m.y * tile - 4, 12, col, { bold: true, alpha: a2 })
+  /**
+   * 规则页右边（D-252 去掉开局地图，用户：换成陪练的简短介绍；横竖屏共用）：上面是陪练（平台自带的参考 bot）每个一行——颜色点、名字、
+   * 一句话介绍，下面是单位图例（兵种造型、名字、造价和数值），都排在 (x0, y0) 起 width 宽、不超过 bottom 的地方
+   */
+  function rulesSide(s: Any, i: number, x0: number, y0: number, width: number, bottom: number): void {
+    let y = y0
+    const spar = (s.sparring ?? []) as { name: string; color: string; text: string }[]
+    if (spar.length) {
+      g.save();g.globalAlpha=ease((i - 8) / 18);dataHeading("陪练：平台自带的参考 bot，也在联赛里",x0,y+14,width);g.restore()
+      y += 46
+      g.font = font(18, true)
+      const nameW = Math.min(width * 0.35, Math.max(...spar.map((b) => g.measureText(b.name).width)))
+      spar.forEach((b, k) => {
+        const a = ease((i - 12 - k * 3) / 12)
+        g.globalAlpha = a
+        g.fillStyle = b.color
+        g.beginPath()
+        g.arc(x0 + 6, y - 6, 5, 0, Math.PI * 2)
+        g.fill()
+        g.globalAlpha = 1
+        fitLines(b.name, x0 + 20, y, 18, 12, nameW, 1, b.color, { bold: true, alpha: a })
+        fitLines(b.text, x0 + 34 + nameW, y, 17, 12, width - 34 - nameW, 1, C.text, { alpha: a })
+        y += 34
+      })
+      y += 12
     }
-    const e = s.ents as number[]
-    for (let k = 0; k < e.length; k += 6) {
-      const [x, yy, w, h, o, ti] = e.slice(k, k + 6)
-      const ty = s.types[ti]
-      g.globalAlpha = a2
-      g.save(); g.translate(mx, my); g.scale(tile, tile)
-      art.entity(g, ty, x, yy, w, h, ty.color ?? seatColor(o), { angle: s.faces?.[k / 6] ?? (o > 0 ? Math.PI : 0) })
-      g.restore()
-    }
-    g.globalAlpha = 1
-    text(s.mapNote, mx, my + s.height * tile + 24, 15, C.muted, { alpha: a2 })
-    // 地图下面：单位图例（兵种造型、名字、造价和数值）
-    // 排一栏放得下（不超过 bottom）就排一栏，否则排两栏；说明超出栏宽就截断
-    const ly = my + s.height * tile + 58
+    // 单位图例：排一栏放得下（不超过 bottom）就排一栏，否则排两栏；说明超出栏宽就截断
+    const ly = y + 24
     const cols = ly + (s.legend.length - 1) * 34 <= bottom ? 1 : 2
-    const colW = (s.width * tile) / cols
+    const colW = width / cols
     s.legend.forEach((it: Any, k: number) => {
       const col = k % cols
-      const lx = mx + col * colW
+      const lx = x0 + col * colW
       const yy = ly + Math.floor(k / cols) * 34
       const a = ease((i - 20 - k * 3) / 12)
       g.globalAlpha = a
@@ -638,17 +617,14 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     return y
   }
 
-  /** 竖屏的规则页（D-183）：上面是标题和规则几句，下面是拉满宽度的开局地图和单位图例 */
+  /** 竖屏的规则页（D-183）：上面是标题和规则几句，下面是陪练和单位图例（D-252 去掉开局地图） */
   function vRules(s: Any, i: number): void {
     const p = ease(i / 15)
     text("规则", SX, 90, 26, C.accent, { bold: true, alpha: p })
     fitLines(`${s.ruleset}怎么玩`, SX, 156, 48, 28, SW, 1, C.text, { bold: true })
     // 规则最多占到 560 高，字多就缩字号
     const y = vBullets(s.lines, SX + 22, 196, SW - 22, 360, 28, 20, C.accent, i)
-    // 地图在下面拉满宽度；高度给图例（按两栏算）和最下面的 tick 说明留出地方
-    const y0 = Math.max(y + 16, 400)
-    const legendH = 58 + Math.ceil(s.legend.length / 2) * 34
-    rulesMap(s, i, SX, y0, SW, Math.min(520, VH - 150 - y0 - legendH), VH - 140)
+    rulesSide(s, i, SX, Math.max(y + 24, 400), SW, VH - 140)
     if (s.tickNote) fitLines(s.tickNote, SX, VH - 104, 18, 12, SW, 1, C.muted, { alpha: ease((i - 20) / 15) })
     // 平台署名（D-221：开场阵容删掉了，挪到规则页最下面）
     fitLines("RTS Arena · 大模型写 bot 的即时战略竞技平台", VW / 2, VH - 64, 20, 12, SW, 1, C.muted, { align: "center" })

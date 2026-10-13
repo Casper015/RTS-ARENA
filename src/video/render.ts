@@ -6,7 +6,7 @@ import { basename, dirname, join, resolve } from "node:path"
 import { applyFrame, ReplayModel, type State } from "../core/replay-model.ts"
 import type { Replay } from "../core/types.ts"
 import { findBrowser, launchBrowser } from "./browser.ts"
-import { checkScript, codeFacts, contestantNames, highlightPlayerWarnings, spotlightFor, playerGames, PLAYER_PAGE_CHARS, PLAYER_PAGE_MIN, readSeries, resolveBotFile, RULES_PAGE_CHARS, SCRIPT_LIMITS, scriptWarnings, type SeriesFile, type VideoScript } from "./brief.ts"
+import { checkScript, codeFacts, botTag, contestantNames, highlightPlayerWarnings, sparringNames, spotlightFor, playerGames, PLAYER_PAGE_CHARS, PLAYER_PAGE_MIN, readSeries, resolveBotFile, RULES_PAGE_CHARS, SCRIPT_LIMITS, scriptWarnings, type SeriesFile, type VideoScript } from "./brief.ts"
 import { installVideoPage, type ReplayFrame, type SceneData } from "./page.ts"
 import { createBattleArt, type BattleAttack } from "./battle-art.ts"
 import { FACTION_COLORS, FACTION_COLOR_NAMES } from "./battle-colors.ts"
@@ -14,7 +14,7 @@ import { faceToward, farmWorkers, homeFacing, legacySplashEffects, trainingQueue
 import { battleCameraTrack } from "./battle-camera.ts"
 import { excitement, gameFacts } from "../cli/highlights.ts"
 import { fighterTest, groupBattles, isRout } from "../cli/battles.ts"
-import { importRuleset, listRulesets } from "../cli/catalog.ts"
+import { botAbout, importRuleset, listRulesets } from "../cli/catalog.ts"
 import { analyzeLeague, baseTypeOf, twoSides, winCurve, type LeagueAnalysis } from "./analysis.ts"
 import { PKG_ROOT } from "../paths.ts"
 
@@ -187,7 +187,7 @@ export function buildScenes(
       players: lineupPlayers.map((p) => ({ name: display(p.name), color: color(names.indexOf(p.name)), portrait: imageOf(p.name) })),
     },
   })
-  // 规则介绍（开场阵容之后）：脚本写的几句（不写就用规则包的一句话简介），配第一局高光对局的开局地图和单位图例
+  // 规则介绍（开场阵容之后）：脚本写的几句（不写就用规则包的一句话简介），右边是陪练的一句话介绍和单位图例（D-252 去掉开局地图，用户）
   const rulesLines = script.rules?.length ? script.rules : series.ruleset.summary ? [series.ruleset.summary] : []
   const mapIndex = script.highlights?.[0]?.index ?? sum.highlights?.[0]?.index ?? series.results[0]?.index
   const mapGame = series.results.find((r) => r.index === mapIndex)
@@ -195,7 +195,12 @@ export function buildScenes(
     const replay = loadReplay(mapGame.replay)
     const seatOf = mapGame.names.map((n) => names.indexOf(n))
     const shown = contrastColors(seatOf, seatOf[0])
-    scenes.push({ label: "规则介绍", data: rulesScene(replay, series.ruleset.name, rulesLines, `第 ${mapGame.index} 局的开局地图`, seatOf.map((i) => shown.get(i)!), fps, specs) })
+    // 陪练：联赛里平台自带的参考 bot，脚本写的一句话介绍，不写用打法说明冒号前的标签
+    const sparring = sparringNames(series).map((name) => {
+      const file = resolveBotFile(series.participants[names.indexOf(name)].file, seriesFile)
+      return { name, color: color(names.indexOf(name)), text: script.sparring?.find((x) => x.name === name)?.text || (file ? botTag(botAbout(file)) : "") }
+    })
+    scenes.push({ label: "规则介绍", data: rulesScene(replay, series.ruleset.name, rulesLines, sparring, seatOf.map((i) => shown.get(i)!), fps, specs) })
   }
   // 只介绍参赛 bot，平台自带的参考 bot（陪练）不进视频（D-221 只出现在排名页，D-225 排名页也删了）
   const own = new Set(contestantNames(series))
@@ -319,19 +324,9 @@ function typeDetail(t: Replay["types"][string], spec?: TypeSpecs[string], nameOf
   return parts.join(" · ")
 }
 
-/** 规则介绍的画面：文字 + 一局的开局地图 + 单位图例 */
-function rulesScene(replay: Replay, ruleset: string, lines: string[], mapNote: string, seatColors: string[], fps: number, specs?: TypeSpecs): SceneData {
+/** 规则介绍的画面：文字 + 陪练的一句话介绍 + 单位图例（D-252 去掉了开局地图）；replay 只用来取单位类型 */
+function rulesScene(replay: Replay, ruleset: string, lines: string[], sparring: { name: string; color: string; text: string }[], seatColors: string[], fps: number, specs?: TypeSpecs): SceneData {
   const typeNames = Object.keys(replay.types)
-  const ents: number[] = []
-  // 每个实体朝左还是朝右（D-234：背对自己的主基地）
-  const faces: number[] = []
-  const homeFace = homeFacing(replay)
-  for (const e of replay.initial.entities) {
-    const t = replay.types[e.type]
-    if (!t) continue
-    ents.push(e.x, e.y, t.w ?? 1, t.h ?? 1, e.owner, typeNames.indexOf(e.type))
-    faces.push(homeFace(e))
-  }
   const order = { building: 0, unit: 1, resource: 2 } as Record<string, number>
   // 最多 12 项（两栏 6 行）；放不下时先留单位和资源，建筑按定义的顺序从后往前删（科技规则包有 12 种）
   const cand = typeNames.map((k) => ({ k, t: replay.types[k] })).filter((x) => x.t.look?.label || x.t.kind === "resource")
@@ -341,7 +336,7 @@ function rulesScene(replay: Replay, ruleset: string, lines: string[], mapNote: s
     .filter((x) => kept.has(x.k))
     .sort((a, b) => (order[a.t.kind] ?? 3) - (order[b.t.kind] ?? 3))
     .map(({ k, t }) => ({ shape: t.look?.shape ?? "circle", label: t.look?.label ?? "", color: t.look?.color ?? null, kind: t.kind, name: typeName(replay, k), detail: typeDetail(t, specs?.[k], (x) => typeName(replay, x)), art: { name: k, kind: t.kind, worker: t.worker, range: t.attack?.range, splash: t.attack?.splash, label: t.look?.label, art: t.look?.art } }))
-  const chars = lines.reduce((a, l) => a + [...l].length, 0)
+  const chars = [...lines, ...sparring.map((x) => x.text)].reduce((a, l) => a + [...l].length, 0)
   return {
     kind: "rules",
     // 按字数算，再两次减半（D-183、D-221：用户让规则介绍时长减半、字数不变），1.5～3 秒，页内动画也快一倍
@@ -349,15 +344,7 @@ function rulesScene(replay: Replay, ruleset: string, lines: string[], mapNote: s
     speed: HALF,
     ruleset,
     lines,
-    mapNote,
-    width: replay.map.width,
-    height: replay.map.height,
-    terrain: replay.map.terrain,
-    colors: replay.map.colors,
-    ents,
-    faces,
-    markers: replay.initial.markers?.length ? replay.initial.markers : (replay.frames.find((f) => f.markers?.length)?.markers ?? []),
-    types: typeNames.map((k) => ({ name: k, shape: replay.types[k].look?.shape ?? "circle", label: replay.types[k].look?.label ?? "", color: replay.types[k].look?.color ?? null, kind: replay.types[k].kind, worker: replay.types[k].worker, range: replay.types[k].attack?.range, splash: replay.types[k].attack?.splash, art: replay.types[k].look?.art })),
+    sparring,
     seatColors,
     legend,
     tickNote: `时间单位 tick：1 秒 = ${replay.tickRate} tick，一局最多 ${replay.maxTicks} tick`,

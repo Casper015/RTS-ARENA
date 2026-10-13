@@ -5,7 +5,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
 import { after, test } from "node:test"
-import { checkScript, codeFacts, contestantNames, factTags, spotlightFor, gameScores, highlightPlayerWarnings, isReferenceBot, readSeries, resolveBotFile, scriptWarnings, videoBrief, type SeriesFile, type VideoScript } from "../src/video/brief.ts"
+import { checkScript, codeFacts, botTag, contestantNames, factTags, sparringNames, spotlightFor, gameScores, highlightPlayerWarnings, isReferenceBot, readSeries, resolveBotFile, scriptWarnings, videoBrief, type SeriesFile, type VideoScript } from "../src/video/brief.ts"
 import { findBrowser } from "../src/video/browser.ts"
 import { buildScenes, colorGap, contrastColors, fightWindows, idleHighlightWarnings, PALETTE, pacing, relabelSeats, tidy, timelineOf } from "../src/video/render.ts"
 import { analyzeLeague, baseTypeOf, fitWinModel, twoSides, winCurve } from "../src/video/analysis.ts"
@@ -240,11 +240,12 @@ test("场景编排（D-221、D-225、D-230、D-237）：开场阵容 → 规则�
   // 片尾名单按脚本里的出场顺序
   const close = scenes.at(-1)!.data as { credits: string[] }
   assert.deepEqual(close.credits.slice(0, 2), ["基准 · 平台自带", "rush"])
-  // 规则介绍：没写 rules 就用规则包的一句话简介；配一局的开局地图（有控制点标记）和单位图例（带近战 / 射程）
-  const rules = scenes[1].data as { lines: string[]; ents: number[]; markers: { kind: string }[]; legend: { name: string; detail: string }[]; tickNote: string }
+  // 规则介绍：没写 rules 就用规则包的一句话简介；右边是陪练（这场全是参考 bot，都算选手，没有陪练）和单位图例（带近战 / 射程），不再有开局地图（D-252）
+  const rules = scenes[1].data as unknown as { lines: string[]; sparring: unknown[]; ents?: unknown; legend: { name: string; detail: string }[]; tickNote: string }
   assert.match(rules.tickNote, /1 秒 = 10 tick，一局最多 \d+ tick/)
   assert.equal(rules.lines.length, 1)
-  assert.ok(rules.ents.length > 0 && rules.markers.some((m) => m.kind === "zone"))
+  assert.deepEqual(rules.sparring, [])
+  assert.equal(rules.ents, undefined)
   assert.ok(rules.legend.some((l) => l.name === "弓手" && /射程 4/.test(l.detail)) && rules.legend.some((l) => l.name === "战士" && /近战/.test(l.detail)))
   // 能力按规则包里实际的写：夺点的工人只采矿、不能建造
   const worker = rules.legend.find((l) => l.name === "工人")!
@@ -299,19 +300,35 @@ test("场景编排（D-221、D-225、D-230、D-237）：开场阵容 → 规则�
   }
 })
 
-test("规则页：开局快照里没有标记（规则包第 1 个 tick 才放）时用回放里第一次出现的；图例用规则包写的中文名 look.name", () => {
-  const dir = join(TMP, "lg-nomark")
+test("规则页（D-252）：右边列出陪练（联赛里平台自带的参考 bot）和一句话介绍，脚本没写用打法说明冒号前的标签；图例用规则包写的中文名 look.name", () => {
+  const dir = join(TMP, "lg-sparring")
   cpSync(join(TMP, "lg"), dir, { recursive: true })
   for (const f of readdirSync(dir).filter((x) => x.endsWith(".json") && !x.endsWith(".series.json") && !x.endsWith(".analysis.json"))) {
     const r = JSON.parse(readFileSync(join(dir, f), "utf8")) as Replay
-    r.initial.markers = []
     r.types.archer.look = { ...r.types.archer.look!, name: "射手" }
     writeFileSync(join(dir, f), JSON.stringify(r))
   }
+  // baseline 当成参赛选手（文件不在规则包的 bots/ 里），rush 就是陪练
   const sf = join(dir, basename(seriesFile))
-  const rules = buildScenes(readSeries(sf), script, sf, 10).find((x) => x.data.kind === "rules")!.data as { markers: { kind: string }[]; legend: { name: string }[] }
-  assert.ok(rules.markers.some((m) => m.kind === "zone"))
-  assert.ok(rules.legend.some((l) => l.name === "射手") && rules.legend.some((l) => l.name === "战士"))
+  const raw = JSON.parse(readFileSync(sf, "utf8")) as SeriesFile
+  raw.participants = raw.participants.map((p) => (p.name === "baseline" ? { ...p, file: "GPT.ts" } : p))
+  writeFileSync(sf, JSON.stringify(raw))
+  const series = readSeries(sf)
+  assert.deepEqual(sparringNames(series), ["rush"])
+  const own = { ...script, players: script.players.filter((p) => p.name === "baseline") }
+  const rulesOf = (sc: VideoScript) => buildScenes(series, sc, sf, 10).find((x) => x.data.kind === "rules")!.data as unknown as { sparring: { name: string; text: string }[]; legend: { name: string }[] }
+  assert.deepEqual(rulesOf(own).sparring.map((x) => [x.name, x.text]), [["rush", "拆家速攻"]])
+  assert.deepEqual(rulesOf({ ...own, sparring: [{ name: "rush", text: "不管点，6 个战士直接拆家" }] }).sparring.map((x) => x.text), ["不管点，6 个战士直接拆家"])
+  assert.ok(rulesOf(own).legend.some((l) => l.name === "射手") && rulesOf(own).legend.some((l) => l.name === "战士"))
+  // 脚本检查：sparring 只能写陪练、一句话最多 30 字；模板里给每个陪练留了待填
+  const errs = checkScript({ ...own, sparring: [{ name: "baseline", text: "x" }, { name: "rush", text: "很长".repeat(16) }] }, series).join("\n")
+  assert.match(errs, /sparring\[0\]\.name 要是这场联赛的陪练之一：rush/)
+  assert.match(errs, /sparring\[1\]\.text/)
+  assert.deepEqual(videoBrief(sf).scriptTemplate.sparring?.map((x) => x.name), ["rush"])
+  assert.ok(videoBrief(sf).players.find((p) => p.name === "rush")!.about)
+  // 标签：冒号前那几个字，括号里的冒号不算
+  assert.equal(botTag("爆经济（多人局：只打离家最近的）：第 300 tick 开分矿"), "爆经济（多人局：只打离家最近的）")
+  assert.equal(botTag("没有冒号的一句很长很长很长很长很长的说明"), "没有冒号的一句很长很长很长很长很", "没有冒号取前 16 个字")
 })
 
 test("平台拼的文字：中文名前后的空格去掉，英文名的留着", () => {
