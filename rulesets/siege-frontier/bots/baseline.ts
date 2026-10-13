@@ -59,6 +59,18 @@ const siteSeen = new Map<number, number>()
 let engineers: number[] = []
 let hadTower = false
 
+/**
+ * 打谁（D-244）：离自己主基地直线距离最近的、还在场的敌方主基地（两人局就是对手那个）；一样近的（四人各自为战时左右两家）
+ * 取顺时针那家，四家各打下一家，不会都去打编号小的那家
+ */
+function targetBase<T extends Pos>(bases: T[], home: Pos): T | undefined {
+  const far = (r: Pos) => Math.hypot(r.x - home.x, r.y - home.y)
+  const side = (r: Pos) => (game.width / 2 - home.x) * (r.y - home.y) - (game.height / 2 - home.y) * (r.x - home.x)
+  let best: T | undefined
+  for (const r of bases) if (!best || far(r) < far(best) - 0.5 || (Math.abs(far(r) - far(best)) <= 0.5 && side(r) < side(best))) best = r
+  return best
+}
+
 function nearest<T extends Pos>(from: Pos, list: T[]): T | undefined {
   let best: T | undefined
   let bestD = Infinity
@@ -174,7 +186,7 @@ function farmCell(view: View, f: { x: number; y: number }, from: Entity): Pos | 
   return best
 }
 
-export function onTick(view: View, cmd: Commands): void {
+function decide(view: View, cmd: Commands): void {
   const me = view.me
   const mine = view.entities.filter((e) => e.owner === me)
   const base = mine.find((e) => e.type === "base")
@@ -216,10 +228,7 @@ export function onTick(view: View, cmd: Commands): void {
   // 目标是离自己最近的、还在场的敌方主基地（两人局就是对手那个）；离哪个敌方主基地比离自己近的矿都算对手那一侧
   const enemyRects = view.objectives.enemyBases.map((b) => ({ x: b.x, y: b.y, w: 3, h: 3 }))
   if (!enemyRects.length) return
-  // 按直线距离挑；一样近的（四人各自为战时左右两家）取顺时针那家：四家各打下一家，不会都去打编号小的那家
-  const far = (r: Pos) => Math.hypot(r.x - base.x, r.y - base.y)
-  const side = (r: Pos) => (game.width / 2 - base.x) * (r.y - base.y) - (game.height / 2 - base.y) * (r.x - base.x)
-  const enemyRect = enemyRects.reduce((a, r) => (far(r) < far(a) - 0.5 || (Math.abs(far(r) - far(a)) <= 0.5 && side(r) < side(a)) ? r : a))
+  const enemyRect = targetBase(enemyRects, base)!
   const eb = enemyRect
   const enemyCenter = { x: eb.x + 1, y: eb.y + 1 }
   const home = centerOf(base)
@@ -613,5 +622,113 @@ export function onTick(view: View, cmd: Commands): void {
     } else if (goal && dist(u, goal) <= 10) hit(u, goal)
     else if (dist(u, fc) > 6) order(cmd, u, "move", fc)
     else order(cmd, u, "attackMove", toward(fc, enemyCenter, 5))
+  }
+}
+
+// ======================= 换到「自己在左上角」的视角里决策（D-246，几个参考 bot 共用） =======================
+// 同一份写法坐在不同的角，找建筑位置（findBuildSpot 一样近时先试左边、下边）、toward 的取整和找空格的顺序都偏向某个方向，
+// 对称的座位会摆出不对称的布局（差一两格），4 人 2v2 里右边那队赢 88%。这里把局面转成「自己的主基地在左上角」再交给上面的
+// decide，它下的命令再转回去：两人局（长方形地图，你在左上或右下）转 0° 或 180°，3～4 人局（正方形）按坐的角转 0°、90°、180°、270°。
+// decide 运行时 game 换成转好的那份（地形跟着转），findBuildSpot、canBuild、pathDistances 也按它算。
+
+let turn = -1
+let realGame: Game
+let turnedGame: Game
+
+/** 格子 (x, y) 顺时针转 k 次 90°（正方形地图）；长方形地图只会转 180° */
+function turnCell(x: number, y: number, k: number): [number, number] {
+  const W = realGame.width
+  const H = realGame.height
+  if (k === 2) return [W - 1 - x, H - 1 - y]
+  for (let i = 0; i < k; i++) [x, y] = [W - 1 - y, x]
+  return [x, y]
+}
+
+/** 占地矩形（左上角 x, y，宽 w、高 h）顺时针转 k 次 90° */
+function turnRect(x: number, y: number, w: number, h: number, k: number): [number, number, number, number] {
+  const W = realGame.width
+  const H = realGame.height
+  if (k === 2) return [W - x - w, H - y - h, w, h]
+  for (let i = 0; i < k; i++) [x, y, w, h] = [W - y - h, x, h, w]
+  return [x, y, w, h]
+}
+
+export function onTick(view: View, cmd: Commands): void {
+  if (turn < 0) {
+    const b = view.entities.find((e) => e.owner === view.me && e.type === "base")
+    if (!b) return
+    realGame = game
+    const left = b.x + b.w / 2 < game.width / 2
+    const top = b.y + b.h / 2 < game.height / 2
+    turn = game.width !== game.height ? (left ? 0 : 2) : left ? (top ? 0 : 3) : top ? 1 : 2
+    const terrain: string[] = []
+    for (let y = 0; y < game.height; y++) {
+      let row = ""
+      for (let x = 0; x < game.width; x++) {
+        const [rx, ry] = turnCell(x, y, turn)
+        row += game.terrain[ry][rx]
+      }
+      terrain.push(row)
+    }
+    turnedGame = { ...game, terrain }
+  }
+  /** 真实坐标转到「自己在左上角」要转几次（反过来转 turn 次） */
+  const back = (4 - turn) % 4
+  const cell = (x: number, y: number) => turnCell(x, y, back)
+  const box = (x: number, y: number, w: number, h: number) => turnRect(x, y, w, h, back)
+  const entities = view.entities.map((e) => {
+    const [x, y] = box(e.x, e.y, e.w, e.h)
+    const out: Entity = { ...e, x, y }
+    if (e.order && (e.order.kind === "move" || e.order.kind === "attackMove")) {
+      const [ox, oy] = cell(e.order.x, e.order.y)
+      out.order = { ...e.order, x: ox, y: oy }
+    }
+    return out
+  })
+  const base3 = (b: { owner: number; x: number; y: number }) => {
+    const [x, y] = box(b.x, b.y, 3, 3)
+    return { ...b, x, y }
+  }
+  const ob = view.objectives
+  const objectives = {
+    ...ob,
+    enemyBases: ob.enemyBases.map(base3),
+    allyBases: ob.allyBases.map(base3),
+    farms: ob.farms.map((f) => {
+      const [x, y] = box(f.x, f.y, 2, 2)
+      return { ...f, x, y }
+    }),
+  }
+  const events = view.events.map((ev) => {
+    if (ev.kind !== "died") return ev
+    const [x, y] = cell(ev.x, ev.y)
+    return { ...ev, x, y }
+  })
+  const to = (x: number, y: number) => turnCell(x, y, turn)
+  const turnedCmd: Commands = {
+    move: (u, x, y) => cmd.move(u, ...to(x, y)),
+    attack: (u, t) => cmd.attack(u, t),
+    attackMove: (u, x, y, o) => cmd.attackMove(u, ...to(x, y), o),
+    gather: (u, r) => cmd.gather(u, r),
+    stop: (u) => cmd.stop(u),
+    produce: (b, t) => cmd.produce(b, t),
+    cancel: (b) => cmd.cancel(b),
+    build: (u, type, x, y) => {
+      const d = realGame.types[type]
+      const [bx, by] = turnRect(x, y, d.w ?? 1, d.h ?? 1, turn)
+      cmd.build(u, type, bx, by)
+    },
+    cast: (u, skill, t) => {
+      if (t && typeof t === "object" && !("id" in t)) {
+        const [x, y] = to(t.x, t.y)
+        cmd.cast(u, skill, { x, y })
+      } else cmd.cast(u, skill, t)
+    },
+  }
+  ;(globalThis as unknown as { game: Game }).game = turnedGame
+  try {
+    decide({ ...view, entities, objectives, events }, turnedCmd)
+  } finally {
+    ;(globalThis as unknown as { game: Game }).game = realGame
   }
 }

@@ -1,5 +1,5 @@
 // 看兵出兵（侦察兵盯着对方，出克它的兵）：侦察兵在对方家门口外盯着，记下看到的敌兵，对方骑兵多就多出枪兵、弓兵多就多出骑兵、枪兵多就多出弓兵、有炮就多出骑兵去切；看到对方的塔和墙就出 2 门炮；兵够 16 个、不比对方少就推，打残了退回。工人见到敌兵就跑回主基地的炮下，家门口的矿快采完时建分矿和 3 块农田。
-// 对手也看兵出兵时会被反克；混编打得多的对手对它比较稳。
+// 3～4 人局：打离自己主基地最近的对手（不是 enemyBases[0]）；分队时队友不算敌人（不攻击、不当威胁），两人共用的金子按队里活着的人平分，各花各的一份。两人局的打法不变。
 /** 这个 bot 的打法参数（几个参考 bot 共用下面的写法，只有这里不一样，D-219） */
 const CFG = {
   workers: 12,
@@ -36,7 +36,7 @@ const CFG = {
 const isArmy = (e: Entity) => e.type === "spearman" || e.type === "archer" || e.type === "cavalry" || e.type === "cannon"
 const isBuilding = (e: Entity) => game.types[e.type].kind === "building"
 /** 看到过的敌方兵：id → [类型, 最后看到的 tick, x, y]（600 tick 没再看到就忘掉） */
-const seen = new Map<number, { type: TypeName; tick: number; x: number; y: number }>()
+const seen = new Map<number, { type: TypeName; tick: number; x: number; y: number; owner: number }>()
 const SEEN_FOR = 600
 /** 看到过对方的箭塔、城墙（要出炮） */
 let siegeNeeded = false
@@ -58,6 +58,18 @@ const siteSeen = new Map<number, number>()
 /** 塔爆（CFG.engineers > 0）：去对手家门口建塔的工人 id；建好过塔没有（塔全被拆了就收手） */
 let engineers: number[] = []
 let hadTower = false
+
+/**
+ * 打谁（D-244）：离自己主基地直线距离最近的、还在场的敌方主基地（两人局就是对手那个）；一样近的（四人各自为战时左右两家）
+ * 取顺时针那家，四家各打下一家，不会都去打编号小的那家
+ */
+function targetBase<T extends Pos>(bases: T[], home: Pos): T | undefined {
+  const far = (r: Pos) => Math.hypot(r.x - home.x, r.y - home.y)
+  const side = (r: Pos) => (game.width / 2 - home.x) * (r.y - home.y) - (game.height / 2 - home.y) * (r.x - home.x)
+  let best: T | undefined
+  for (const r of bases) if (!best || far(r) < far(best) - 0.5 || (Math.abs(far(r) - far(best)) <= 0.5 && side(r) < side(best))) best = r
+  return best
+}
 
 function nearest<T extends Pos>(from: Pos, list: T[]): T | undefined {
   let best: T | undefined
@@ -174,12 +186,19 @@ function farmCell(view: View, f: { x: number; y: number }, from: Entity): Pos | 
   return best
 }
 
-export function onTick(view: View, cmd: Commands): void {
+function decide(view: View, cmd: Commands): void {
   const me = view.me
   const mine = view.entities.filter((e) => e.owner === me)
   const base = mine.find((e) => e.type === "base")
   if (!base) return
-  const foes = view.entities.filter((e) => e.owner >= 0 && e.owner !== me)
+  // 敌人 = 不同队的（分队时队友既不是敌人，也不能攻击、不算威胁）
+  const myTeam = view.players.find((p) => p.id === me)?.team
+  const isFoe = (e: Entity) => e.owner >= 0 && view.players.find((p) => p.id === e.owner)?.team !== myTeam
+  const foes = view.entities.filter(isFoe)
+  // 自己和队友的实体（队友的视野我们也看得见）
+  const teamEnts = view.entities.filter((e) => e.owner >= 0 && !isFoe(e))
+  // 已经出局的玩家：他们留下的记忆（建筑、兵）要清掉
+  const out = new Set(view.objectives.eliminated)
   const foeArmy = foes.filter(isArmy)
   const visible = new Set(foes.map((e) => e.id))
   for (const b of foes.filter(isBuilding)) {
@@ -187,7 +206,8 @@ export function onTick(view: View, cmd: Commands): void {
     if (b.construction) siteSeen.set(b.id, view.tick)
   }
   for (const ev of view.events) if (ev.kind === "died") foeMemory.delete(ev.id)
-  for (const [id, b] of foeMemory) if (!visible.has(id) && mine.some((e) => dist(e, b) < (game.types[e.type].sight ?? 0) - 1)) foeMemory.delete(id)
+  for (const [id, b] of foeMemory) if (out.has(b.owner)) foeMemory.delete(id)
+  for (const [id, b] of foeMemory) if (!visible.has(id) && teamEnts.some((e) => dist(e, b) < (game.types[e.type].sight ?? 0) - 1)) foeMemory.delete(id)
   const foeBuildings = [...foeMemory.values()]
   /** 建好的箭塔（看不见的地基过了 60 tick 就当它建好了） */
   const towerUp = (b: Entity) => b.type === "tower" && (!b.construction || (!visible.has(b.id) && view.tick - (siteSeen.get(b.id) ?? 0) > 60))
@@ -212,16 +232,21 @@ export function onTick(view: View, cmd: Commands): void {
   const buildings = mine.filter(isBuilding)
   const done = (t: TypeName) => buildings.filter((b) => b.type === t && !b.construction)
   const all = (t: TypeName) => buildings.filter((b) => b.type === t)
-  const eb = view.objectives.enemyBases[0]
+  // 要打的对手：离自己主基地最近的一个（两人局就是唯一的对手；3～4 人局列的是还没出局的）
+  const eb = targetBase(view.objectives.enemyBases, base)
+  if (!eb) return
   const enemyRect = { x: eb.x, y: eb.y, w: 3, h: 3 }
   const enemyCenter = { x: eb.x + 1, y: eb.y + 1 }
+  /** 离某点最近的对手主基地的距离（没有对手是无穷大） */
+  const enemyRects = view.objectives.enemyBases.map((b) => ({ x: b.x, y: b.y, w: 3, h: 3 }))
+  const nearestEnemyD = (p: Pos | { x: number; y: number; w: number; h: number }) => Math.min(Infinity, ...enemyRects.map((r) => dist(p, r)))
   const home = centerOf(base)
   const drops = buildings.filter((b) => game.types[b.type].dropOff && !b.construction)
   // 家门口还能采的金子：被对方箭塔盯着（5 格内）的矿不算（被塔爆时马上去开分矿、种田）
   const homeGold = goldmines.filter((m) => dist(m, base) <= 10 && !foeBuildings.some((e) => e.type === "tower" && dist(e, m) <= 5)).reduce((a, m) => a + (m.amount ?? 0), 0)
   /** 去不得的矿：在对手那一侧、旁边有敌兵、在箭塔射程边上，或者从交货点走过去要经过箭塔射程（沿直线每格查一下） */
   const unsafe = (m: Entity) => {
-    if (dist(m, base) > dist(m, enemyRect) || foes.some((e) => isArmy(e) && dist(e, m) <= 6) || foeTowers.some((t) => dist(t, m) <= 5)) return true
+    if (dist(m, base) > nearestEnemyD(m) || foes.some((e) => isArmy(e) && dist(e, m) <= 6) || foeTowers.some((t) => dist(t, m) <= 5)) return true
     if (foeTowers.length === 0) return false
     const d = nearest(m, drops)
     if (!d) return false
@@ -242,13 +267,15 @@ export function onTick(view: View, cmd: Commands): void {
   }
   // 给下一座塔留 100 金：第一座马上建；之后要等兵营建好、出了骑兵（先护住第一座再加塔）
   const nextTower = engineers.length > 0 && !rushTowers.some((t) => t.construction) && (rushTowers.length === 0 || (done("barracks").length > 0 && army.some((u) => u.type === "cavalry")))
-  let gold = view.resources.gold - (nextTower ? 100 : 0)
+  // 同队共用一份金子：队友和我花的是同一份，按队里还活着的人平分，各花各的一份（不超花）
+  const teamAlive = Math.max(1, view.players.filter((p) => p.team === myTeam && p.alive).length)
+  let gold = Math.floor(view.resources.gold / teamAlive) - (nextTower ? 100 : 0)
   let reserve = 0
 
   // ---------- 记账：看到的敌兵、塔和墙 ----------
-  for (const e of foeArmy) seen.set(e.id, { type: e.type, tick: view.tick, x: e.x, y: e.y })
+  for (const e of foeArmy) seen.set(e.id, { type: e.type, tick: view.tick, x: e.x, y: e.y, owner: e.owner })
   for (const ev of view.events) if (ev.kind === "died") seen.delete(ev.id)
-  for (const [id, s] of seen) if (view.tick - s.tick > SEEN_FOR) seen.delete(id)
+  for (const [id, s] of seen) if (view.tick - s.tick > SEEN_FOR || out.has(s.owner)) seen.delete(id)
   if (foeBuildings.some((b) => b.type === "tower" || b.type === "wall")) siegeNeeded = true
   const seenCount = (t: TypeName) => [...seen.values()].filter((s) => s.type === t).length
   const enemyStrength = seen.size
@@ -343,7 +370,7 @@ export function onTick(view: View, cmd: Commands): void {
     const front = toward(home, enemyCenter, 5)
     const homeMines = goldmines.filter((m) => dist(m, base) <= 10)
     const mineCenter = homeMines.length ? { x: Math.round(homeMines.reduce((a, m) => a + m.x, 0) / homeMines.length), y: Math.round(homeMines.reduce((a, m) => a + m.y, 0) / homeMines.length) } : front
-    const natural = goldmines.filter((m) => dist(m, base) > 12 && dist(m, base) < dist(m, enemyRect)).sort((a, b) => dist(a, base) - dist(b, base))[0]
+    const natural = goldmines.filter((m) => dist(m, base) > 12 && dist(m, base) < nearestEnemyD(m)).sort((a, b) => dist(a, base) - dist(b, base))[0]
     const wantDepot = natural && all("depot").length === 0 && (view.tick >= CFG.depotTick || homeGold < CFG.depotHomeGold) && workers.length >= 8
     if (all("barracks").length === 0 && workers.length >= CFG.barracksAt) place("barracks", front, 8)
     else if (intruders.length === 0 && all("barracks").length < CFG.barracks && done("barracks").length > 0 && workers.length >= CFG.secondBarracksAt && gold >= 150) place("barracks", toward(home, enemyCenter, 7), 8)
@@ -591,7 +618,7 @@ export function onTick(view: View, cmd: Commands): void {
   // 推进：先打看得见的敌兵；炮打 12 格内的建筑（塔、墙优先）；没敌兵时整队往对方主基地走，先拆兵营、塔，再拆主基地
   const front = main.filter((u) => u.type !== "cannon")
   const fc = front.length ? { x: Math.round(front.reduce((a, u) => a + u.x, 0) / front.length), y: Math.round(front.reduce((a, u) => a + u.y, 0) / front.length) } : home
-  const goal = foeBuildings.find((b) => b.type === "tower") ?? foeBuildings.find((b) => b.type === "barracks") ?? foeBuildings.find((b) => b.type === "base")
+  const goal = nearest(fc, foeBuildings.filter((b) => b.type === "tower")) ?? nearest(fc, foeBuildings.filter((b) => b.type === "barracks")) ?? nearest(fc, foeBuildings.filter((b) => b.type === "base"))
   for (const u of main) {
     if (u.type === "cannon") {
       const b = foeBuildings.filter((e) => dist(e, u) <= 12).sort((x, y) => (x.type === "tower" || x.type === "wall" ? -100 : 0) + dist(x, u) - ((y.type === "tower" || y.type === "wall" ? -100 : 0) + dist(y, u)))[0]
@@ -606,5 +633,113 @@ export function onTick(view: View, cmd: Commands): void {
     } else if (goal && dist(u, goal) <= 10) hit(u, goal)
     else if (dist(u, fc) > 6) order(cmd, u, "move", fc)
     else order(cmd, u, "attackMove", toward(fc, enemyCenter, 5))
+  }
+}
+
+// ======================= 换到「自己在左上角」的视角里决策（D-246，几个参考 bot 共用） =======================
+// 同一份写法坐在不同的角，找建筑位置（findBuildSpot 一样近时先试左边、下边）、toward 的取整和找空格的顺序都偏向某个方向，
+// 对称的座位会摆出不对称的布局（差一两格），4 人 2v2 里右边那队赢 88%。这里把局面转成「自己的主基地在左上角」再交给上面的
+// decide，它下的命令再转回去：两人局（长方形地图，你在左上或右下）转 0° 或 180°，3～4 人局（正方形）按坐的角转 0°、90°、180°、270°。
+// decide 运行时 game 换成转好的那份（地形跟着转），findBuildSpot、canBuild、pathDistances 也按它算。
+
+let turn = -1
+let realGame: Game
+let turnedGame: Game
+
+/** 格子 (x, y) 顺时针转 k 次 90°（正方形地图）；长方形地图只会转 180° */
+function turnCell(x: number, y: number, k: number): [number, number] {
+  const W = realGame.width
+  const H = realGame.height
+  if (k === 2) return [W - 1 - x, H - 1 - y]
+  for (let i = 0; i < k; i++) [x, y] = [W - 1 - y, x]
+  return [x, y]
+}
+
+/** 占地矩形（左上角 x, y，宽 w、高 h）顺时针转 k 次 90° */
+function turnRect(x: number, y: number, w: number, h: number, k: number): [number, number, number, number] {
+  const W = realGame.width
+  const H = realGame.height
+  if (k === 2) return [W - x - w, H - y - h, w, h]
+  for (let i = 0; i < k; i++) [x, y, w, h] = [W - y - h, x, h, w]
+  return [x, y, w, h]
+}
+
+export function onTick(view: View, cmd: Commands): void {
+  if (turn < 0) {
+    const b = view.entities.find((e) => e.owner === view.me && e.type === "base")
+    if (!b) return
+    realGame = game
+    const left = b.x + b.w / 2 < game.width / 2
+    const top = b.y + b.h / 2 < game.height / 2
+    turn = game.width !== game.height ? (left ? 0 : 2) : left ? (top ? 0 : 3) : top ? 1 : 2
+    const terrain: string[] = []
+    for (let y = 0; y < game.height; y++) {
+      let row = ""
+      for (let x = 0; x < game.width; x++) {
+        const [rx, ry] = turnCell(x, y, turn)
+        row += game.terrain[ry][rx]
+      }
+      terrain.push(row)
+    }
+    turnedGame = { ...game, terrain }
+  }
+  /** 真实坐标转到「自己在左上角」要转几次（反过来转 turn 次） */
+  const back = (4 - turn) % 4
+  const cell = (x: number, y: number) => turnCell(x, y, back)
+  const box = (x: number, y: number, w: number, h: number) => turnRect(x, y, w, h, back)
+  const entities = view.entities.map((e) => {
+    const [x, y] = box(e.x, e.y, e.w, e.h)
+    const out: Entity = { ...e, x, y }
+    if (e.order && (e.order.kind === "move" || e.order.kind === "attackMove")) {
+      const [ox, oy] = cell(e.order.x, e.order.y)
+      out.order = { ...e.order, x: ox, y: oy }
+    }
+    return out
+  })
+  const base3 = (b: { owner: number; x: number; y: number }) => {
+    const [x, y] = box(b.x, b.y, 3, 3)
+    return { ...b, x, y }
+  }
+  const ob = view.objectives
+  const objectives = {
+    ...ob,
+    enemyBases: ob.enemyBases.map(base3),
+    allyBases: ob.allyBases.map(base3),
+    farms: ob.farms.map((f) => {
+      const [x, y] = box(f.x, f.y, 2, 2)
+      return { ...f, x, y }
+    }),
+  }
+  const events = view.events.map((ev) => {
+    if (ev.kind !== "died") return ev
+    const [x, y] = cell(ev.x, ev.y)
+    return { ...ev, x, y }
+  })
+  const to = (x: number, y: number) => turnCell(x, y, turn)
+  const turnedCmd: Commands = {
+    move: (u, x, y) => cmd.move(u, ...to(x, y)),
+    attack: (u, t) => cmd.attack(u, t),
+    attackMove: (u, x, y, o) => cmd.attackMove(u, ...to(x, y), o),
+    gather: (u, r) => cmd.gather(u, r),
+    stop: (u) => cmd.stop(u),
+    produce: (b, t) => cmd.produce(b, t),
+    cancel: (b) => cmd.cancel(b),
+    build: (u, type, x, y) => {
+      const d = realGame.types[type]
+      const [bx, by] = turnRect(x, y, d.w ?? 1, d.h ?? 1, turn)
+      cmd.build(u, type, bx, by)
+    },
+    cast: (u, skill, t) => {
+      if (t && typeof t === "object" && !("id" in t)) {
+        const [x, y] = to(t.x, t.y)
+        cmd.cast(u, skill, { x, y })
+      } else cmd.cast(u, skill, t)
+    },
+  }
+  ;(globalThis as unknown as { game: Game }).game = turnedGame
+  try {
+    decide({ ...view, entities, objectives, events }, turnedCmd)
+  } finally {
+    ;(globalThis as unknown as { game: Game }).game = realGame
   }
 }
