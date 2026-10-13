@@ -132,7 +132,8 @@ export function checkPatch(base: TypeDef, p: unknown, what: string): StatPatch {
   }
   if (o.attack !== undefined) {
     if (!base.attack) throw new Error(`${what}：${base.name} 不能攻击，不能改 attack`)
-    out.attack = sub(o.attack, "attack", { damage: [0, 100_000], range: [1, 30], cooldown: [1, 10_000] })
+    out.attack = sub(o.attack, "attack", { damage: [0, 100_000], range: [1, 30], cooldown: [1, 10_000], accuracy: [1, 100] })
+    if (out.attack.accuracy !== undefined && base.attack.accuracy === undefined) throw new Error(`${what}：${base.name} 没有命中率（attack.accuracy），不能改`)
   }
   if (o.gather !== undefined) {
     if (!base.gather) throw new Error(`${what}：${base.name} 不能采集，不能改 gather`)
@@ -150,7 +151,8 @@ export function statDiff(d: TypeDef, base: TypeDef): StatDiff | undefined {
   if (d.sight !== base.sight) o.sight = d.sight
   const a = d.attack
   const b = base.attack
-  if (a && b && (a.damage !== b.damage || a.range !== b.range || a.cooldown !== b.cooldown)) o.attack = { damage: a.damage, range: a.range, cooldown: a.cooldown }
+  if (a && b && (a.damage !== b.damage || a.range !== b.range || a.cooldown !== b.cooldown || a.accuracy !== b.accuracy))
+    o.attack = { damage: a.damage, range: a.range, cooldown: a.cooldown, ...(a.accuracy !== undefined ? { accuracy: a.accuracy } : {}) }
   const g = d.gather
   const h = base.gather
   if (g && h && (g.amount !== h.amount || g.ticks !== h.ticks || g.capacity !== h.capacity)) o.gather = { amount: g.amount, ticks: g.ticks, capacity: g.capacity }
@@ -199,6 +201,8 @@ export class World implements SetupContext, RuleContext {
   events: RuleEvent[] = []
   /** 本 tick 的攻击 [攻击者, 目标, ...]（回放用） */
   shots: number[] = []
+  /** 这一 tick 打偏的落点（D-257）：[攻击方 id, x, y, ...] */
+  misses: number[] = []
   markers: Marker[] = []
   status = ""
   /** 每个玩家的视野格（tick 开始时算） */

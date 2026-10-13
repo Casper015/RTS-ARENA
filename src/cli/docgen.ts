@@ -96,7 +96,7 @@ export function unitTable(rules: Ruleset): string {
         d.buildTicks || "—",
         d.moveTicks || "不能动",
         d.sight || "—",
-        d.attack ? `${d.attack.damage} / ${d.attack.range} / ${d.attack.cooldown}${vsText(d.attack.vs)}${d.attack.splash ? `（溅射 ${d.attack.splash} 格）` : ""}` : "—",
+        d.attack ? `${d.attack.damage} / ${d.attack.range} / ${d.attack.cooldown}${vsText(d.attack.vs)}${d.attack.splash ? `（溅射 ${d.attack.splash} 格）` : ""}${d.attack.accuracy !== undefined && d.attack.accuracy < 100 ? `（命中 ${d.attack.accuracy}%）` : ""}` : "—",
         d.gather ? `${d.gather.amount} / ${d.gather.ticks} / ${d.gather.capacity}` : "—",
         d.dropOff ? "是" : "—",
         d.produces.length ? `${d.produces.join("、")}${d.parallel > 1 ? `（同时造 ${d.parallel} 个）` : ""}` : "—",
@@ -110,6 +110,9 @@ export function unitTable(rules: Ruleset): string {
   }
   if (defs.some(({ d }) => d.attack?.splash)) {
     rows.push("", "「溅射 N 格」（`attack.splash`，D-217）：打中目标时，目标占的格子往外扩 N 格的方圈里（1 格就是周围一圈 8 格）别的敌方实体也挨一下，伤害按各自的类型算克制倍数；自己人不挨。兵挤成一团时挨得多。")
+  }
+  if (defs.some(({ d }) => d.attack?.accuracy !== undefined && d.attack.accuracy < 100)) {
+    rows.push("", "「命中 N%」（`attack.accuracy`，D-257）：每一下有 N% 打中目标；打偏时落在目标周围一圈里随机的一格，那格里有你的敌人就打中它（伤害按它的类型算克制倍数），没有就打空。打偏的那一下不溅射。兵挤成一团时打偏也常打中旁边的人。")
   }
   if (building) {
     const names = [...buildable].map((n) => "`" + n + "`").join("、")

@@ -21,6 +21,7 @@ export function step(w: World): void {
   // 这一 tick 执行命令时放成功的技能（D-186），规则包在 onTick 里从 events 看得到
   w.events = w.casts.map((c) => ({ kind: "cast" as const, ...c }))
   w.shots = []
+  w.misses = []
   if (w.hasSkills || w.hasAuras || w.ruleBuffs.size > 0 || w.buffed.size > 0) abilities(w)
   production(w)
   combat(w)
@@ -224,7 +225,15 @@ function combat(w: World): void {
   const splashed: EntityState[] = []
   for (let i = 0; i < hits.length; i += 2) {
     const a = hits[i]
-    const t = hits[i + 1]
+    let t = hits[i + 1]
+    // 命中率（D-257）：打偏时落在目标周围一圈里随机的一格，那格有能打的就打中它，没有就打空；打偏的那一下不溅射
+    const acc = a.def.attack!.accuracy
+    if (acc !== undefined && acc < 100 && w.simRng.int(100) >= acc) {
+      const hit = scatter(w, a, t)
+      if (!hit) continue
+      t = hit
+      splashed.push(t)
+    }
     // 增益（光环、技能，D-186）：攻击方的伤害加成、挨打方的减伤
     const dmg = buffedDamage(damageOf(a.def.attack!, t.type), a.dmgPct, t.defPct)
     t.hp -= dmg
@@ -235,13 +244,32 @@ function combat(w: World): void {
     t.lastHitType = a.type
     w.shots.push(a.id, t.id)
     if (t.owner >= 0) w.pushEvent(t.owner, { kind: "damaged", tick: w.tick, id: t.id, by: a.id, byOwner: a.owner, byType: a.type, damage: dmg })
-    if (a.def.attack!.splash) splash(w, a, t, a.def.attack!.splash, splashed)
+    if (a.def.attack!.splash && t === hits[i + 1]) splash(w, a, t, a.def.attack!.splash, splashed)
   }
   for (let i = 1; i < hits.length; i += 2) {
     const t = hits[i]
     if (t.alive && t.hp <= 0) w.destroy(t, t.lastHitBy, false, t.lastHitNeutral)
   }
   for (const o of splashed) if (o.alive && o.hp <= 0) w.destroy(o, o.lastHitBy, false, o.lastHitNeutral)
+}
+
+/**
+ * 打偏（D-257）：在目标占的格子外面一圈（地图里的）随机挑一格，记下落点；那格里有能打的实体（敌方的；打玩家的东西时不算中立的）
+ * 就返回它，没有返回 null（打空）
+ */
+function scatter(w: World, a: EntityState, t: EntityState): EntityState | null {
+  const ring: [number, number][] = []
+  for (let y = t.y - 1; y <= t.y + t.h; y++)
+    for (let x = t.x - 1; x <= t.x + t.w; x++) {
+      if (x < 0 || y < 0 || x >= w.width || y >= w.height) continue
+      if (x >= t.x && x < t.x + t.w && y >= t.y && y < t.y + t.h) continue
+      ring.push([x, y])
+    }
+  if (ring.length === 0) return null
+  const [x, y] = ring[w.simRng.int(ring.length)]
+  w.misses.push(a.id, x, y)
+  for (const o of w.entitiesIn(x, y, 1, 1)) if (o.alive && o !== a && canHit(w, a, o) && !(o.owner < 0 && t.owner >= 0)) return o
+  return null
 }
 
 /**

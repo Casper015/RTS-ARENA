@@ -325,6 +325,9 @@ function typeDetail(t: Replay["types"][string], spec?: TypeSpecs[string], nameOf
   const counters = Object.entries(attack?.vs ?? {}).filter(([, m]) => (m ?? 1) > 1)
   if (counters.length) parts.push(`克${counters.map(([k]) => nameOf(k)).join("、")}`)
   if (attack) parts.push(attack.range > 1 ? `射程 ${attack.range}` : "近战")
+  // 命中率（D-257，线列步兵这类）：不到 100% 才写
+  const acc = (attack as { accuracy?: number } | undefined)?.accuracy
+  if (acc !== undefined && acc < 100) parts.push(`命中 ${acc}%`)
   // 能力按规则包里实际的写（歼灭的工人只采矿、不能建造）；老回放没记就看规则包，都没有就按"工人"笼统写采矿
   const gather = t.gather ?? (spec ? !!spec.gather : t.worker)
   const builds = t.builds ?? spec?.builds ?? []
@@ -340,7 +343,7 @@ function typeDetail(t: Replay["types"][string], spec?: TypeSpecs[string], nameOf
 function rulesScene(replay: Replay, ruleset: string, lines: string[], sparring: { name: string; text: string }[], seatColors: string[], fps: number, specs?: TypeSpecs): SceneData {
   const typeNames = Object.keys(replay.types)
   const order = { building: 0, unit: 1, resource: 2 } as Record<string, number>
-  // 最多 12 项（两栏 6 行）；放不下时先留单位和资源，建筑按定义的顺序从后往前删（科技规则包有 12 种）
+  // 最多 12 项（两栏 6 行）；放不下时先留单位和资源，建筑按定义的顺序从后往前删（火药科技有 18 种）
   const cand = typeNames.map((k) => ({ k, t: replay.types[k] })).filter((x) => x.t.look?.label || x.t.kind === "resource")
   const keep = { unit: 0, resource: 1, building: 2 } as Record<string, number>
   const kept = new Set([...cand].sort((a, b) => (keep[a.t.kind] ?? 3) - (keep[b.t.kind] ?? 3)).slice(0, 12).map((x) => x.k))
@@ -650,13 +653,29 @@ export function replayScene(
         if (!ta || !tb) continue
         const x1 = a.x + ta.w / 2, y1 = a.y + ta.h / 2, x2 = b.x + tb.w / 2, y2 = b.y + tb.h / 2
         const style = art.attackStyle({ name: a.type, kind: ta.kind, worker: ta.worker, range: a.st?.attack?.range ?? ta.attack?.range, splash: ta.attack?.splash })
-        const duration = Math.max(3, Math.round(fps * (style === "shell" ? .48 : style === "arrow" ? .30 : .24)))
+        const duration = Math.max(3, Math.round(fps * (style === "shell" ? .48 : style === "musket" ? .42 : style === "arrow" ? .30 : .24)))
         const frame = displayedAt[k]
         const angle = Math.atan2(y2 - y1, x2 - x1)
         attacks.push({ source: a.id, target: b.id, x1, y1, x2, y2, owner: a.owner, style, age: 0, duration, frame })
         attacking.set(a.id, { angle, frame, duration })
         facing.set(a.id, faceToward(facing.get(a.id) ?? homeFace(a), x2 - x1))
         hitAt.set(b.id, frame)
+      }
+      // 打偏又打空的（D-257）：子弹飞到落点那一格、冒一团土；打偏打中旁边别人的那一下已经在 shots 里
+      const fired = new Set<number>()
+      for (let j = 0; j < sh.length; j += 2) fired.add(sh[j])
+      const ms = f.miss ?? []
+      for (let j = 0; j < ms.length; j += 3) {
+        const a = state.ents.get(ms[j]) ?? f.spawn?.find((e) => e.id === ms[j])
+        const ta = a && replay.types[a.type]
+        if (!a || !ta || fired.has(a.id)) continue
+        const x1 = a.x + ta.w / 2, y1 = a.y + ta.h / 2, x2 = ms[j + 1] + .5, y2 = ms[j + 2] + .5
+        const style = art.attackStyle({ name: a.type, kind: ta.kind, worker: ta.worker, range: a.st?.attack?.range ?? ta.attack?.range, splash: ta.attack?.splash })
+        const duration = Math.max(3, Math.round(fps * (style === "musket" ? .42 : .30)))
+        const frame = displayedAt[k]
+        attacks.push({ source: a.id, target: -1, x1, y1, x2, y2, owner: a.owner, style, age: 0, duration, frame })
+        attacking.set(a.id, { angle: Math.atan2(y2 - y1, x2 - x1), frame, duration })
+        facing.set(a.id, faceToward(facing.get(a.id) ?? homeFace(a), x2 - x1))
       }
       applyFrame(state, f)
     }

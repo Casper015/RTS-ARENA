@@ -23,7 +23,7 @@ export interface BattleArtLayers {
   sprite?: string
 }
 
-export type AttackStyle = "slash" | "thrust" | "arrow" | "shell"
+export type AttackStyle = "slash" | "thrust" | "arrow" | "shell" | "musket"
 export interface BattlePose {
   angle?: number
   walk?: number
@@ -69,6 +69,8 @@ export function createBattleArt() {
     if (/scout/.test(n)) return "scout"
     if (/cavalry|knight|horse/.test(n)) return "cavalry"
     if (/spearman|pike|lancer/.test(n)) return "spearman"
+    // Gunpowder line infantry (D-257): tricorn, long coat and a bayonet musket.
+    if (/musket|rifle|fusil/.test(n)) return "musketeer"
     if (/archer|ranger|bow/.test(n)) return "archer"
     // The lord's cape, crown and gold shield ship with the regicide ruleset (look.art, D-233); here it is a plain soldier.
     if (/cow|cattle|sheep|herd/.test(n)) return "animal"
@@ -81,6 +83,7 @@ export function createBattleArt() {
   function attackStyle(t: BattleType): AttackStyle {
     const r = role(t)
     if (r === "cannon") return "shell"
+    if (r === "musketeer") return "musket"
     if ((t.range ?? 0) > 1 || r === "archer" || r === "tower" || r === "base") return "arrow"
     return r === "spearman" || r === "cavalry" ? "thrust" : "slash"
   }
@@ -275,7 +278,7 @@ export function createBattleArt() {
     g.scale(Math.cos(p.angle??0)<0?-1:1,1)
     for(const side of [-1,1]) {
       const foot=side*.12+walk*side*.12
-      line(g,side*.08,.04,foot,.34,r==="archer"?"#78674d":"#879c9e",.10)
+      line(g,side*.08,.04,foot,.34,r==="archer"?"#78674d":r==="musketeer"?"#d8d2bf":"#879c9e",.10)
       line(g,foot-.035,.39,foot+.09,.39,"#30352e",.078)
     }
     g.save();g.translate(strike*.055,Math.abs(walk)*.025)
@@ -290,6 +293,12 @@ export function createBattleArt() {
       }
       polygon(g,[-.16,-.29,.09,-.30,.18,.12,-.18,.15],"#927c55")
       polygon(g,[-.16,-.29,-.05,-.32,.11,.03,.08,.17,-.17,.14],color)
+    } else if(r==="musketeer") {
+      polygon(g,[-.17,-.31,.11,-.31,.19,.17,.05,.22,-.20,.18],color)
+      polygon(g,[-.20,.02,-.06,.02,-.04,.22,-.20,.18],"rgba(10,18,24,.30)","",0)
+      line(g,-.14,-.28,.10,.04,"#f2eddb",.036)
+      line(g,.08,-.28,-.15,.04,"#f2eddb",.036)
+      box(g,-.24,-.06,.11,.10,"#3b2f22")
     } else {
       polygon(g,[-.16,-.31,.105,-.31,.18,.09,.06,.16,-.17,.12],steel)
       polygon(g,[-.085,-.28,.05,-.28,.11,.22,-.14,.21],color)
@@ -299,7 +308,10 @@ export function createBattleArt() {
     line(g,-.16,.06,.15,.06,"#63543e",.047)
     ellipse(g,.02,-.445,.115,.137,skin,ink)
     if(r==="archer")polygon(g,[-.10,-.43,-.12,-.56,-.02,-.64,.10,-.53,.105,-.44,.01,-.51],color)
-    else {
+    else if(r==="musketeer") {
+      polygon(g,[-.19,-.50,-.11,-.61,.02,-.64,.15,-.61,.21,-.50,.02,-.545],"#1b2126")
+      ellipse(g,.12,-.565,.032,.032,color)
+    } else {
       polygon(g,[-.11,-.43,-.11,-.56,-.04,-.61,.065,-.59,.135,-.49,.12,-.445,.015,-.48],steel)
       line(g,.09,-.45,.09,-.35,"#4b5755",.037)
       if(r==="soldier") polygon(g,[-.075,-.60,-.02,-.73,.08,-.70,.12,-.61,.025,-.62],color)
@@ -313,6 +325,17 @@ export function createBattleArt() {
       line(g,0,-.34,-pull,0,"#e7e3c8",.019);line(g,-pull,0,0,.34,"#e7e3c8",.019)
       if(a<.45){line(g,-pull-.04,0,.32,0,"#e6d1a1",.027);polygon(g,[.29,-.035,.42,0,.29,.035],steel,"",0)}
       g.restore()
+    } else if(r==="musketeer") {
+      const kick=a<0?0:Math.max(0,1-a/.22)*.07
+      g.save();g.translate(.05-kick,-.25);g.rotate(a<0?-1.0:-.03)
+      // A thick stock and a pale steel barrel with a highlight stay visible against grass at map scale.
+      line(g,-.30,.025,.08,.025,"#80562f",.085)
+      line(g,.04,0,.80,0,"#56636a",.055)
+      line(g,.06,-.012,.78,-.012,"#b9c6cc",.014)
+      line(g,.30,.028,.62,.028,"#80562f",.032)
+      line(g,.80,0,.97,0,steel,.02)
+      g.restore()
+      line(g,.08,-.25,.22,-.21,skin,.07)
     } else if(r==="spearman") {
       const reach=strike*.28, lift=a<0?-.36:-.16
       line(g,.09,-.25,.32+reach,-.20,skin,.074)
@@ -330,7 +353,7 @@ export function createBattleArt() {
       line(g,.28,-.013,.62,-.013,"#f5f3dd",.018)
       g.restore()
     }
-    if(r!=="archer") {
+    if(r!=="archer"&&r!=="musketeer") {
       const sx=r==="spearman"?-.12:-.18
       polygon(g,[sx-.13,-.27,sx+.14,-.28,sx+.15,-.03,sx+.01,.16,sx-.14,-.02],color)
       line(g,sx,-.22,sx,.065,"#e0dac1",.038)
@@ -400,7 +423,7 @@ export function createBattleArt() {
     const r=role(t)
     // A ruleset overlay (a crown, a banner) usually sticks out above the platform figure.
     const extra=t.art?.over||t.art?.sprite?.05:0
-    return t.kind!=="unit"?0:extra+(r==="cavalry"?.50:r==="scout"?.36:r==="soldier"||r==="infantry"?.35:r==="worker"?.25:r==="spearman"||r==="archer"?.30:.10)
+    return t.kind!=="unit"?0:extra+(r==="cavalry"?.50:r==="scout"?.36:r==="soldier"||r==="infantry"?.35:r==="worker"?.25:r==="spearman"||r==="archer"?.30:r==="musketeer"?.32:.10)
   }
 
   /** Coordinates and line widths use map tiles, so the same art works at any output resolution. */
@@ -577,8 +600,9 @@ export function createBattleArt() {
     const p=clamp(a.age/a.duration)
     if(p>=1||a.age<0)return
     const dx=a.x2-a.x1,dy=a.y2-a.y1,angle=Math.atan2(dy,dx)
-    const ranged=a.style==="arrow"||a.style==="shell"
-    const impact=ranged?.6:.32
+    const ranged=a.style==="arrow"||a.style==="shell"||a.style==="musket"
+    // Musket balls arrive fast; the smoke at the muzzle and the dust at the impact linger.
+    const impact=a.style==="musket"?.3:ranged?.6:.32
     g.save();g.lineCap="round";g.lineJoin="round"
     if(!ranged) {
       g.translate(a.x1,a.y1);g.rotate(angle)
@@ -597,16 +621,34 @@ export function createBattleArt() {
       }
     } else {
       const travel=clamp(p/impact)
-      const arc=a.style==="shell"?.65:.26
+      const arc=a.style==="shell"?.65:a.style==="musket"?0:.26
       // A side-view gun fires from its visible barrel, then the shot travels toward the map target.
       const side=Math.cos(angle)<0?-1:1
-      const launchX=a.x1+(a.style==="shell"?side*.65:0), launchY=a.y1-(a.style==="shell"?.22:0)
+      const launchX=a.x1+(a.style==="shell"?side*.65:a.style==="musket"?side*.92:0), launchY=a.y1-(a.style==="shell"?.22:a.style==="musket"?.25:0)
+      if(a.style==="musket") {
+        // Muzzle flash, then a drifting white smoke cloud that outlives the shot.
+        if(p<.16) {
+          g.save();g.translate(launchX,launchY);g.scale(side,1)
+          const q=1-p/.16
+          polygon(g,[0,-.06,.16,-.10,.30,0,.16,.10,0,.06],`rgba(255,214,110,${q})`,"",0)
+          ellipse(g,.06,0,.09*q,.06*q,"#fff6d8")
+          g.restore()
+        }
+        for(let j=0;j<3;j++) {
+          const q=clamp(p*1.4-j*.12), rr=.08+q*.26
+          ellipse(g,launchX+side*(.08+j*.11+q*.18),launchY-.04-q*.16-j*.03,rr,rr*.8,`rgba(232,232,224,${.42*(1-q)})`)
+        }
+      }
       const fx=a.x2-launchX, fy=a.y2-launchY
       const px=launchX+fx*travel,py=launchY+fy*travel-Math.sin(travel*Math.PI)*arc
       if(p<impact) {
         if(a.style==="shell") {
           for(let j=4;j>=1;j--){const q=Math.max(0,travel-j*.035);ellipse(g,launchX+fx*q,launchY+fy*q-Math.sin(q*Math.PI)*arc,.07+j*.018,.06+j*.015,`rgba(204,187,150,${.17-j*.025})`)}
           ellipse(g,px,py,.09,.09,"#282d29","#d8b472")
+        } else if(a.style==="musket") {
+          const back=Math.min(.45,Math.hypot(fx,fy)*travel)
+          line(g,px-Math.cos(angle)*back,py-Math.sin(angle)*back,px,py,"rgba(255,236,170,.55)",.028)
+          ellipse(g,px,py,.045,.045,"#2a2a26")
         } else {
           const theta=Math.atan2(dy-Math.cos(travel*Math.PI)*Math.PI*arc,dx)
           g.save();g.translate(px,py);g.rotate(theta)
@@ -634,6 +676,16 @@ export function createBattleArt() {
           ellipse(g,Math.cos(ang)*rr,Math.sin(ang)*rr-q*.2,.15+q*.2,.12+q*.2,`rgba(101,103,89,${alpha*.26})`)
         }
         ellipse(g,0,0,.26*(1-q),.22*(1-q),`rgba(255,224,150,${alpha})`)
+      }
+      if(a.style==="musket") {
+        // A miss into empty ground (target -1) kicks up a bigger puff of dirt.
+        const big=a.target<0?1.6:1
+        for(let j=0;j<4;j++) {
+          const ang=-Math.PI/2+(j-1.5)*.7, rr=(.05+q*.22)*big
+          ellipse(g,Math.cos(ang)*rr,Math.sin(ang)*rr*.7-q*.08,(.06+q*.07)*big,(.05+q*.05)*big,`rgba(150,132,96,${alpha*.55})`)
+        }
+        g.restore()
+        return
       }
       g.globalAlpha=alpha
       for(let j=0;j<(a.style==="shell"?7:3);j++) {

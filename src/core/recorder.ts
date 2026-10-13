@@ -97,6 +97,7 @@ export class Recorder {
     if (die.length) f.die = die
     if (removed.length) f.removed = removed
     if (w.shots.length) f.shots = w.shots.slice()
+    if (w.misses.length) f.miss = w.misses.slice()
     if (ord.length) f.ord = ord
     if (queue.length) f.queue = queue
     if (bp.length) f.bp = bp

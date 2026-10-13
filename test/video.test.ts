@@ -496,7 +496,7 @@ test("选手代码：联赛记的路径找不到时，再找平台目录（自�
   const dir = mkdtempSync(join(TMP, "ws-"))
   process.chdir(dir)
   try {
-    assert.equal(resolveBotFile("rulesets/tech/bots/scholar.ts", seriesFile), resolve(ROOT, "rulesets", "tech", "bots", "scholar.ts"))
+    assert.equal(resolveBotFile("rulesets/gunpowder/bots/boom.ts", seriesFile), resolve(ROOT, "rulesets", "gunpowder", "bots", "boom.ts"))
     assert.equal(resolveBotFile("elsewhere\\mine.ts", seriesFile), null)
     mkdirSync("bots")
     writeFileSync(join("bots", "mine.ts"), "// mine\n")

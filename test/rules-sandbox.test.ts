@@ -33,7 +33,7 @@ function stable(r: Replay): string {
   return JSON.stringify({ ...r, perf: null, bots: r.bots.map((b) => ({ ...b, ms: 0 })) })
 }
 
-for (const id of ["annihilation", "koth", "harvest", "melee", "frontier", "tech", "beacons", "wild-herd", "caravan-raid", "flag-run", "counter-annihilation", "counter-frontier", "regicide-annihilation", "siege-frontier"]) {
+for (const id of ["annihilation", "koth", "harvest", "melee", "frontier", "gunpowder", "beacons", "wild-herd", "caravan-raid", "flag-run", "counter-annihilation", "counter-frontier", "regicide-annihilation", "siege-frontier"]) {
   test(`自带规则包「${id}」放进沙箱，回放和直接跑完全一样`, async () => {
     const native = await importRuleset(id)
     const boxed = await loadSandboxedRuleset(join(ROOT, "rulesets", id))
@@ -46,9 +46,9 @@ for (const id of ["annihilation", "koth", "harvest", "melee", "frontier", "tech"
 }
 
 test("科技放进沙箱：科技建筑建好、加成生效（局中改数值）的一局，回放和直接跑完全一样", async () => {
-  const native = await importRuleset("tech")
-  const boxed = await loadSandboxedRuleset(join(ROOT, "rulesets", "tech"))
-  const bot = join(ROOT, "rulesets", "tech", "bots", "scholar.ts")
+  const native = await importRuleset("gunpowder")
+  const boxed = await loadSandboxedRuleset(join(ROOT, "rulesets", "gunpowder"))
+  const bot = join(ROOT, "rulesets", "gunpowder", "bots", "boom.ts")
   const play = async (rules: Ruleset) => runMatch({ ruleset: { ...rules, maxTicks: 2500 }, seed: 3, bots: [await sandboxBot(bot, 0, rules), await sandboxBot(bot, 1, rules)] })
   const a = await play(native)
   // 真的改了数值：回放里有 st，战况里有"建好了"
@@ -94,7 +94,7 @@ test("ctx.entities 的筛选：沙箱里不管有没有全量快照，结果都�
 })
 
 test("自带规则包的定义都能通过沙箱规则包的格式检查", async () => {
-  for (const id of ["annihilation", "koth", "harvest", "melee", "frontier", "tech", "beacons", "wild-herd", "caravan-raid", "flag-run", "counter-annihilation", "counter-frontier", "regicide-annihilation", "siege-frontier"]) {
+  for (const id of ["annihilation", "koth", "harvest", "melee", "frontier", "gunpowder", "beacons", "wild-herd", "caravan-raid", "flag-run", "counter-annihilation", "counter-frontier", "regicide-annihilation", "siege-frontier"]) {
     const r = await importRuleset(id)
     const fns = ["setup", "onTick", "objectives", "result", "timeUp", "buildCheck", "onCast"].filter((f) => typeof (r as unknown as Record<string, unknown>)[f] === "function")
     assert.deepEqual(checkRulesetData(JSON.parse(JSON.stringify(r)), fns), [], id)

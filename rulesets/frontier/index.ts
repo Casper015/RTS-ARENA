@@ -1,5 +1,5 @@
 // 拓荒：开局只有主基地和工人，工人自己建兵营、箭塔、仓库；摧毁对方主基地获胜，到时间上限比击杀价值
-// 地图、开局、单位和胜负判定在 ../common/frontier.ts（科技规则包也用）
+// 地图、开局、单位和胜负判定在 ../common/frontier.ts（克制拓荒、攻城拓荒、火药科技也用）
 import type { Ruleset } from "../../src/core/types.ts"
 import { STANDARD_TERRAIN } from "../common/standard.ts"
 import { enemyBasesOf, frontierResult, frontierSetup, frontierTimeUp, frontierTypes, scoreKills } from "../common/frontier.ts"

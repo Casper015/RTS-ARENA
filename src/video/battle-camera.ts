@@ -49,6 +49,13 @@ function combatEvents(replay: Replay, lastTick: number): { t: number; x: number;
       if (!a || !b || !ta || !tb) continue
       out.push({ t: k, x: (a.x + ta.w / 2 + b.x + tb.w / 2) / 2, y: (a.y + ta.h / 2 + b.y + tb.h / 2) / 2, w: 1 })
     }
+    // 打偏的（D-257）也是在打仗：攻击方和落点的中点
+    const ms = frame.miss ?? []
+    for (let j = 0; j < ms.length; j += 3) {
+      const a = state.ents.get(ms[j]) ?? frame.spawn?.find((e) => e.id === ms[j])
+      const ta = a && replay.types[a.type]
+      if (a && ta) out.push({ t: k, x: (a.x + ta.w / 2 + ms[j + 1] + 0.5) / 2, y: (a.y + ta.h / 2 + ms[j + 2] + 0.5) / 2, w: 1 })
+    }
     const removed = new Set(frame.removed ?? [])
     for (const id of frame.die ?? []) {
       const e = state.ents.get(id), ty = e && replay.types[e.type]

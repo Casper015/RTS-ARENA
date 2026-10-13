@@ -1,5 +1,5 @@
-// 拓荒（frontier）和科技（tech）共用：地图、开局、单位、击杀价值、胜负判定。
-// 科技规则包在拓荒的基础上加科技建筑（D-154），这里的东西两边一模一样
+// 拓荒（frontier）、克制拓荒、攻城拓荒、火药科技共用：地图、开局、单位、击杀价值、胜负判定。
+// 原来的科技规则包（D-154）在拓荒的基础上加科技建筑，D-257 删掉，科技建筑并进了火药科技
 import type { MatchResult, RuleContext, SetupContext, TypeSpec } from "../../src/core/types.ts"
 import { seatCorners } from "./corners.ts"
 import {

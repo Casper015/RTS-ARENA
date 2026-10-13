@@ -454,6 +454,45 @@ test("溅射（D-217）：打中目标时周围一圈的敌方实体也挨一下
   assert.deepEqual(fx, [{ x: 5, y: 2, w: 3, h: 3, color: "#ff9a3c", radius: 1 }])
 })
 
+test("命中率（D-257）：一半打中目标；打偏落在目标周围一圈的格子上，那格有敌人就打中它，盟友不挨；回放记下落点", () => {
+  const gun: TypeSpec = { kind: "unit", maxHp: 100, moveTicks: 1, sight: 8, attack: { damage: 1, range: 5, cooldown: 1, accuracy: 50 }, look }
+  const dummy: TypeSpec = { kind: "unit", maxHp: 100000, moveTicks: 1, sight: 1, look }
+  let hp: Record<string, number> = {}
+  const replay = play(
+    mini([], {
+      maxTicks: 801,
+      types: { ...TYPES, gun, dummy },
+      setup(ctx) {
+        ctx.setTerrain(Array(9).fill(".".repeat(12)))
+        ctx.spawn("gun", 0, 1, 4)
+        ctx.spawn("dummy", 1, 5, 4) // 目标
+        ctx.spawn("dummy", 1, 5, 5) // 目标正下方的敌人：打偏落在这一格就打中它
+        ctx.spawn("dummy", 0, 5, 3) // 目标正上方的盟友：不挨
+      },
+    }),
+    (v, cmd) => {
+      const target = v.entities.find((e) => e.owner === 1 && e.x === 5 && e.y === 4)
+      const g = mine(v, "gun")[0]
+      if (target && g.order?.kind !== "attack") cmd.attack(g, target)
+      hp = Object.fromEntries(v.entities.map((e) => [`${e.owner}:${e.x},${e.y}`, e.hp]))
+    },
+  )
+  // 每一枪打中了谁、打偏落在哪，都从回放里数
+  const at = (x: number, y: number, owner: number) => replay.initial.entities.find((e) => e.x === x && e.y === y && e.owner === owner)!.id
+  const hits = replay.frames.flatMap((f) => { const s = f.shots ?? []; return Array.from({ length: s.length / 2 }, (_, k) => s[k * 2 + 1]) })
+  const misses = replay.frames.flatMap((f) => { const m = f.miss ?? []; return Array.from({ length: m.length / 3 }, (_, k) => [m[k * 3 + 1], m[k * 3 + 2]]) })
+  const onTarget = hits.filter((id) => id === at(5, 4, 1)).length, onNeighbor = hits.filter((id) => id === at(5, 5, 1)).length
+  // 每 tick 一枪：一半上下打中目标，打偏的都记了落点，落点都在目标周围一圈
+  const total = onTarget + misses.length
+  assert.ok(total >= 790 && onTarget / total > 0.42 && onTarget / total < 0.58, `${onTarget} / ${total}`)
+  assert.ok(misses.every(([x, y]) => Math.max(Math.abs(x - 5), Math.abs(y - 4)) === 1), JSON.stringify(misses.slice(0, 5)))
+  // 落在正下方那格（8 格里的 1 格）的打中旁边的敌人；盟友那格的打空
+  assert.equal(onNeighbor, misses.filter(([x, y]) => x === 5 && y === 5).length)
+  assert.ok(onNeighbor > 20 && misses.some(([x, y]) => x === 5 && y === 3))
+  assert.equal(hits.filter((id) => id === at(5, 3, 0)).length, 0)
+  assert.equal(hp["0:5,3"], 100000, "盟友不挨")
+})
+
 test("农田（D-218）：工人贴着建好的农田闲着就耕作，每 56 tick 给 5 金；一块田只算一个工人，离开一格就不产", async () => {
   const { farmInfo, farmTick, farmType, resetFarms, FARM_GOLD, FARM_TICKS } = await import("../rulesets/common/farm.ts")
   const worker: TypeSpec = { kind: "unit", maxHp: 40, moveTicks: 3, sight: 3, look }

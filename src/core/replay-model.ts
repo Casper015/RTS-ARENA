@@ -17,6 +17,8 @@ export interface Delta {
   spawned: number[]
   died: EntSnap[]
   shots: number[]
+  /** 打偏的落点（D-257）：[攻击方 id, x, y, ...] */
+  misses: number[]
   /** 换了主人的实体（from 是原来的主人） */
   owned: { id: number; from: number }[]
   /** 这一 tick 放的技能（D-186） */
@@ -72,7 +74,7 @@ export class ReplayModel {
 
 /** 把一帧应用到局面上（原地修改），返回变化 */
 export function applyFrame(s: State, f: Frame): Delta {
-  const d: Delta = { moved: [], spawned: [], died: [], shots: f.shots ?? [], owned: [], casts: f.casts ?? [], heals: f.heal ?? [], fx: f.fx ?? [] }
+  const d: Delta = { moved: [], spawned: [], died: [], shots: f.shots ?? [], misses: f.miss ?? [], owned: [], casts: f.casts ?? [], heals: f.heal ?? [], fx: f.fx ?? [] }
   for (const e of f.spawn ?? []) {
     s.ents.set(e.id, { ...e })
     d.spawned.push(e.id)

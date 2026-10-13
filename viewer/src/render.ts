@@ -357,12 +357,26 @@ export class Renderer {
       const ta = this.replay.types[a.type], tb = this.replay.types[b.type]
       if (!ta || !tb) continue
       const style = this.art.attackStyle(this.battleType(a.type))
-      const duration = Math.max(4, this.replay.tickRate * (style === "shell" ? 1.3 : .7))
+      const duration = Math.max(4, this.replay.tickRate * (style === "shell" ? 1.3 : style === "musket" ? 1 : .7))
       const x1 = a.x + ta.w / 2, y1 = a.y + ta.h / 2, x2 = b.x + tb.w / 2, y2 = b.y + tb.h / 2
       this.combatFx.push({ source: a.id, target: b.id, x1, y1, x2, y2, owner: a.owner, style, age: 0, duration, tick: t })
       const av = this.views.get(a.id), bv = this.views.get(b.id)
       if (av) { av.angle = faceToward(av.angle, x2 - x1); av.attackAt = t; av.attackDuration = duration }
       if (bv) bv.hitAt = t
+    }
+    // 打偏又打空的（D-257）：子弹飞到落点那一格、冒一团土；打偏打中旁边别人的那一下已经在 shots 里（一个攻击方一 tick 只打一下）
+    const fired = new Set<number>()
+    for (let j = 0; j < d.shots.length; j += 2) fired.add(d.shots[j])
+    for (let j = 0; j < d.misses.length; j += 3) {
+      const a = beforeMovement.get(d.misses[j])
+      const ta = a && this.replay.types[a.type]
+      if (!a || !ta || fired.has(a.id)) continue
+      const style = this.art.attackStyle(this.battleType(a.type))
+      const duration = Math.max(4, this.replay.tickRate * (style === "musket" ? 1 : .7))
+      const x1 = a.x + ta.w / 2, y1 = a.y + ta.h / 2, x2 = d.misses[j + 1] + .5, y2 = d.misses[j + 2] + .5
+      this.combatFx.push({ source: a.id, target: -1, x1, y1, x2, y2, owner: a.owner, style, age: 0, duration, tick: t })
+      const av = this.views.get(a.id)
+      if (av) { av.angle = faceToward(av.angle, x2 - x1); av.attackAt = t; av.attackDuration = duration }
     }
     // 放技能：记下释放者的位置、目标（技能写的目标，加上同一 tick 在释放者 4 格内刷出来的资源点，比如点金的金矿）
     for (const c of d.casts) {

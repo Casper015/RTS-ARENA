@@ -50,7 +50,8 @@ export interface StatPatch {
   moveTicks?: number
   /** 视野半径 */
   sight?: number
-  attack?: { damage?: number; range?: number; cooldown?: number }
+  /** accuracy：命中率（百分数，D-257），只有原来就写了命中率的类型能改 */
+  attack?: { damage?: number; range?: number; cooldown?: number; accuracy?: number }
   gather?: { amount?: number; ticks?: number; capacity?: number }
 }
 
@@ -523,7 +524,7 @@ export interface StatDiff {
   maxHp?: number
   moveTicks?: number
   sight?: number
-  attack?: { damage: number; range: number; cooldown: number }
+  attack?: { damage: number; range: number; cooldown: number; accuracy?: number }
   gather?: { amount: number; ticks: number; capacity: number }
 }
 
@@ -551,6 +552,8 @@ export interface Frame {
   die?: number[]
   /** [攻击者, 目标, ...] */
   shots?: number[]
+  /** 打偏的（D-257，有命中率的攻击）：[攻击方 id, 落点 x, 落点 y, ...]；落点有敌人被打中时 shots 里另有一对 */
+  miss?: number[]
   ord?: [number, string][]
   /** Changed production queues, including [] when completed, cancelled or captured. */
   queue?: [number, NonNullable<EntSnap["queue"]>][]
@@ -606,7 +609,7 @@ export interface Replay {
   /** walkable：每种地形能不能走（D-167 起记下，战报算矿旁边站得下几个用） */
   map: { width: number; height: number; terrain: string[]; colors: Record<string, string>; walkable?: Record<string, boolean> }
   /** sight 是视野半径、cost 是造价、worker 表示能采集或建造（老回放没有）；按视野看回放、战报用 */
-  types: Record<string, { kind: TypeDef["kind"]; w: number; h: number; maxHp: number; moveTicks: number; sight?: number; cost?: TypeDef["cost"]; worker?: boolean; /** D-145 起记下（vs 是克制倍数，D-166） */ attack?: { damage: number; range: number; cooldown: number; vs?: Partial<Record<string, number>>; splash?: number }; /** D-148 起记下：能不能采集、能建什么 */ gather?: boolean; builds?: string[]; /** D-167 起记下：生产用时、能生产什么（战报算兵营利用率） */ buildTicks?: number; produces?: string[]; /** D-196 起记下（不是 1 才写）：同时造几个 */ parallel?: number; /** D-186 起记下（有才写）：技能、光环、被动 */ skills?: SkillDef[]; auras?: AuraDef[]; passives?: PassiveDef[]; look: Look }>
+  types: Record<string, { kind: TypeDef["kind"]; w: number; h: number; maxHp: number; moveTicks: number; sight?: number; cost?: TypeDef["cost"]; worker?: boolean; /** D-145 起记下（vs 是克制倍数，D-166） */ attack?: { damage: number; range: number; cooldown: number; vs?: Partial<Record<string, number>>; splash?: number; /** 命中率（D-257，百分数，有才写） */ accuracy?: number }; /** D-148 起记下：能不能采集、能建什么 */ gather?: boolean; builds?: string[]; /** D-167 起记下：生产用时、能生产什么（战报算兵营利用率） */ buildTicks?: number; produces?: string[]; /** D-196 起记下（不是 1 才写）：同时造几个 */ parallel?: number; /** D-186 起记下（有才写）：技能、光环、被动 */ skills?: SkillDef[]; auras?: AuraDef[]; passives?: PassiveDef[]; look: Look }>
   /** 有没有战争迷雾（老回放没有） */
   fog?: boolean
   /** 同队共用一份资源（D-245 起记下，有才写）：每个队友记的资源都是整队的 */
