@@ -485,13 +485,42 @@ export function createBattleArt() {
           box(g,-.24,.05,.12,.26,color,"")
           flag(g,.25,-.41,color)
         }
-      } else if (r === "barracks" || r === "depot" || r === "stable") {
+      } else if (r === "barracks") {
+        // A fortified, flat silhouette and a large shield stay readable when the map is zoomed out.
+        flag(g,.14,-.07,color)
+        masonry(-.42,-.20,.84,.58)
+        polygon(g,[-.44,-.23,-.28,-.37,.34,-.37,.45,-.23],"#747d72")
+        box(g,-.44,-.27,.88,.12,"#cdc7a9")
+        for (const x of [-.43,-.12,.19]) box(g,x,-.43,.23,.23,"#bdb89b")
+        box(g,-.10,.18,.20,.20,"#283730")
+        for (const x of [-.34,.24]) polygon(g,[x,-.12,x+.10,-.12,x+.10,.18,x+.05,.24,x,.18],color)
+        polygon(g,[-.16,-.17,.16,-.17,.13,.04,0,.16,-.13,.04],steel)
+        polygon(g,[-.115,-.125,.115,-.125,.09,.015,0,.10,-.09,.015],color,"",0)
+        line(g,0,-.10,0,.055,gold,.04)
+        line(g,-.055,-.015,.055,-.015,gold,.035)
+      } else if (r === "depot") {
+        // A low timber shed, broad loading bay and stacked cargo differ in both shape and material.
+        box(g,-.43,-.10,.80,.42,"#9d784d")
+        for (const x of [-.32,-.19,-.06,.07,.20]) line(g,x,-.08,x,.30,"#6d5238",.018)
+        box(g,-.29,.025,.39,.295,"#30372c")
+        line(g,-.31,.015,.12,.015,"#d1b07a",.04)
+        line(g,-.30,.03,-.30,.32,"#d1b07a",.04)
+        polygon(g,[-.48,-.11,-.30,-.29,.32,-.29,.44,-.11],"#765d40")
+        polygon(g,[-.48,-.11,.44,-.11,.39,-.025,-.43,-.025],color)
+        line(g,-.29,-.27,.30,-.27,"#c8ac79",.025)
+        // Cargo forms a chunky stepped outline, instead of a single tiny decorative box.
+        for (const [x,y] of [[.14,.14],[.31,.14],[.23,-.04]]) {
+          box(g,x,y,.18,.18,"#cba36a")
+          line(g,x+.035,y+.035,x+.145,y+.145,"#765737",.025)
+          line(g,x+.145,y+.035,x+.035,y+.145,"#765737",.025)
+        }
+        ellipse(g,-.38,.32,.085,.07,"#c6b583",ink)
+      } else if (r === "stable") {
         masonry(-.4,-.08,.8,.43)
         polygon(g,[-.47,-.09,0,-.43,.47,-.09,.32,.04,-.32,.04],color)
         line(g,0,-.4,.4,-.095,"rgba(255,255,255,.34)",.025)
         box(g,-.11,.1,.22,.25,"#354037")
-        if(r==="depot") {box(g,.22,.18,.22,.21,"#bd9960");line(g,.23,.19,.42,.38,"#796240",.025)}
-        else { line(g,-.27,.12,-.27,.31,steel,.05);line(g,-.33,.16,-.21,.16,gold,.035); flag(g,.34,-.14,color) }
+        line(g,-.27,.12,-.27,.31,steel,.05);line(g,-.33,.16,-.21,.16,gold,.035); flag(g,.34,-.14,color)
       } else {
         // Custom structures keep their identifying label rather than pretending to be a known type.
         masonry(-.4,-.3,.8,.65)
