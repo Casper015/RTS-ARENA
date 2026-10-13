@@ -150,7 +150,7 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
   const MONO = 'Consolas, "Cascadia Mono", "Microsoft YaHei", monospace'
   /** 平台的远程仓库：gitee 和 GitHub（片头下方、片尾署名里） */
   const REPO = "gitee.com/mingomin/rts-arena  ·  github.com/Clark760/RTS-ARENA"
-  const C = { bg1: "#10191d", bg2: "#19292b", text: "#eee9db", muted: "#95a7aa", accent: "#dfb76d", line: "#304346", panel: "rgba(23,36,40,0.94)" }
+  const C = { bg1: "#080f20", bg2: "#111f37", text: "#edf5ff", muted: "#8ba5c6", accent: "#53e3ff", line: "#294667", panel: "rgba(13,25,46,0.95)" }
   let canvas = new OffscreenCanvas(W * SCALE, H * SCALE)
   let g = canvas.getContext("2d")!
   /** 输出画布的画笔（横屏时就是 g） */
@@ -183,26 +183,40 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
   const font = (px: number, bold = false, mono = false) => `${bold ? "bold " : ""}${px}px ${mono ? MONO : FONT}`
 
   function background(): void {
-    const grad = g.createLinearGradient(0, 0, W, H)
+    consoleBackdrop(W,H)
+  }
+
+  function consoleBackdrop(width:number,height:number):void {
+    g.save()
+    const grad = g.createLinearGradient(0, 0, width, height)
     grad.addColorStop(0, C.bg1)
     grad.addColorStop(1, C.bg2)
     g.fillStyle = grad
-    g.fillRect(0, 0, W, H)
-    // 淡淡的格子，像地图
-    g.strokeStyle = "rgba(255,255,255,0.035)"
+    g.fillRect(0, 0, width, height)
+    const glow=g.createRadialGradient(width*.2,0,0,width*.2,0,width*.72)
+    glow.addColorStop(0,"#205f9145");glow.addColorStop(1,"#10254e00")
+    g.fillStyle=glow;g.fillRect(0,0,width,height)
+    g.strokeStyle = "rgba(66,125,189,0.075)"
     g.lineWidth = 1
-    for (let x = 0; x <= W; x += 32) {
+    for (let x = 0; x <= width; x += 48) {
       g.beginPath()
       g.moveTo(x + 0.5, 0)
-      g.lineTo(x + 0.5, H)
+      g.lineTo(x + 0.5, height)
       g.stroke()
     }
-    for (let y = 0; y <= H; y += 32) {
+    for (let y = 0; y <= height; y += 48) {
       g.beginPath()
       g.moveTo(0, y + 0.5)
-      g.lineTo(W, y + 0.5)
+      g.lineTo(width, y + 0.5)
       g.stroke()
     }
+    // Edge rails and cut corners stay outside the content; no decorative telemetry.
+    g.strokeStyle="#2c527a";g.lineWidth=1
+    g.beginPath();g.moveTo(18,75);g.lineTo(18,25);g.lineTo(34,9);g.lineTo(width*.34,9);g.stroke()
+    g.beginPath();g.moveTo(width-18,height-75);g.lineTo(width-18,height-25);g.lineTo(width-34,height-9);g.lineTo(width*.67,height-9);g.stroke()
+    g.strokeStyle=C.accent;g.globalAlpha=.55
+    g.beginPath();g.moveTo(34,9);g.lineTo(100,9);g.moveTo(width-100,height-9);g.lineTo(width-34,height-9);g.stroke()
+    g.restore()
   }
 
   /** 不能放在行首的标点：宁可让这一行稍微超出一点 */
@@ -453,7 +467,7 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     const x0 = 820
     const a2 = ease((i - 14) / 20)
     g.globalAlpha = a2
-    roundRect(x0, 70, 400, 380, 12, bust ? "rgba(10,15,26,0.62)" : "#0a0f1a", C.line)
+    broadcastCard(x0,70,400,380)
     g.globalAlpha = 1
     if (s.radar) {
       text("能力雷达（这场联赛的对局数据）", x0 + 18, 98, 15, C.muted, { bold: true, alpha: a2 })
@@ -470,9 +484,9 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
       })
     }
     g.globalAlpha = a2
-    roundRect(x0, 470, 400, 200, 12, bust ? "rgba(16,26,46,0.78)" : C.panel, C.line)
+    broadcastCard(x0,470,400,200)
     g.globalAlpha = 1
-    text("代码", x0 + 20, 504, 18, C.muted, { bold: true, alpha: a2 })
+    g.save();g.globalAlpha=a2;dataHeading("代码与战绩",x0+20,504,360);g.restore()
     s.facts.forEach((f: string, k: number) => text(f, x0 + 20, 532 + k * 26, 18, C.text, { alpha: a2 }))
     s.record.forEach((r: string, k: number) => text(r, x0 + 20, 622 + k * 26, 19, s.color, { bold: true, alpha: a2 }))
     watermark()
@@ -642,7 +656,7 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     if (s.radar) {
       const a2 = ease((i - 14) / 20)
       g.globalAlpha = a2
-      roundRect(SX, y, SW, 400, 14, "rgba(10,15,26,0.6)", C.line)
+      broadcastCard(SX,y,SW,400)
       g.globalAlpha = 1
       g.save()
       g.translate(VW / 2, y + 200)
@@ -837,14 +851,7 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
 
   /** 竖屏：渐变背景 */
   function vBackground(): void {
-    const gr = g.createLinearGradient(0, 0, 0, VH)
-    gr.addColorStop(0, C.bg1)
-    gr.addColorStop(1, C.bg2)
-    g.fillStyle = gr
-    g.fillRect(0, 0, VW, VH)
-    g.save();g.strokeStyle="rgba(173,186,153,.07)";g.lineWidth=1
-    for(const x of [18,VW-18]){g.beginPath();g.moveTo(x,18);g.lineTo(x,VH-18);g.stroke()}
-    g.strokeStyle="rgba(205,178,122,.20)";g.beginPath();g.moveTo(SX,56);g.lineTo(VW-SX,56);g.stroke();g.restore()
+    consoleBackdrop(VW,VH)
   }
 
   /** 地图（D-181 抽出来，横屏回放和竖屏回放共用）：地形（按输出像素画一次缓存）、规则包标记、单位和建筑（主基地画成头像）、攻击线、刚死的红圈；(ox, oy) 是左上角 */
@@ -1182,11 +1189,42 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
   function broadcastCard(x:number,y:number,width:number,height:number,accent=C.line):void {
     g.save()
     const fill=g.createLinearGradient(x,y,x+width,y+height)
-    fill.addColorStop(0,"#203039");fill.addColorStop(1,"#132129")
-    g.beginPath();g.roundRect(x,y,width,height,10);g.fillStyle=fill;g.fill()
+    fill.addColorStop(0,"#172a45");fill.addColorStop(.5,"#0e1b32");fill.addColorStop(1,"#0a1427")
+    const cut=Math.min(10,height*.18)
+    g.beginPath();g.moveTo(x,y);g.lineTo(x+width-cut,y);g.lineTo(x+width,y+cut);g.lineTo(x+width,y+height);g.lineTo(x+cut,y+height);g.lineTo(x,y+height-cut);g.closePath()
+    g.fillStyle=fill;g.shadowColor="#01050b66";g.shadowBlur=12;g.shadowOffsetY=4;g.fill();g.shadowBlur=0;g.shadowOffsetY=0
     g.strokeStyle=accent;g.lineWidth=1;g.stroke()
-    g.beginPath();g.moveTo(x+13,y+.8);g.lineTo(x+Math.min(width-13,75),y+.8);g.strokeStyle="#a6a68b";g.globalAlpha=.38;g.stroke()
+    g.strokeStyle="#4c91bb";g.globalAlpha=.7
+    g.beginPath();g.moveTo(x+12,y+.8);g.lineTo(x+Math.min(width-20,57),y+.8);g.stroke()
+    g.globalAlpha=.4
+    for(let k=0;k<3;k++){g.beginPath();g.moveTo(x+width-15-k*5,y+height-4);g.lineTo(x+width-13-k*5,y+height-8);g.stroke()}
     g.restore()
+  }
+  function dataHeading(label:string,x:number,y:number,width:number):void {
+    g.save();g.fillStyle=C.accent
+    g.fillRect(x,y-9,3,9);g.fillRect(x+5,y-12,3,12)
+    text(label,x+17,y,13,C.text,{bold:true})
+    g.font=font(13,true);const end=x+24+g.measureText(label).width
+    if(end<x+width){g.strokeStyle=C.line;g.beginPath();g.moveTo(end,y-5);g.lineTo(x+width,y-5);g.stroke()}
+    g.restore()
+  }
+  function progressRail(x:number,y:number,width:number,progress:number):void {
+    g.save();g.fillStyle="#213c5e";g.fillRect(x,y,width,4)
+    const length=width*Math.max(0,Math.min(1,progress||0)),fill=g.createLinearGradient(x,y,x+width,y)
+    fill.addColorStop(0,"#3875f5");fill.addColorStop(1,C.accent)
+    g.fillStyle=fill;g.fillRect(x,y,length,4)
+    g.fillStyle=C.accent;g.fillRect(x+length-1,y-2,2,8)
+    g.strokeStyle="#395d81";g.lineWidth=1
+    for(let k=0;k<=10;k++){g.beginPath();g.moveTo(x+k*width/10,y+8);g.lineTo(x+k*width/10,y+11);g.stroke()}
+    g.restore()
+  }
+  function metricIcon(kind:string,x:number,y:number,color:string):void {
+    g.save();g.translate(x,y);g.strokeStyle=color;g.lineWidth=1.2;g.lineJoin="round"
+    g.beginPath()
+    if(kind==="army") {g.moveTo(0,-7);g.lineTo(5,-5);g.lineTo(5,0);g.quadraticCurveTo(4,4,0,7);g.quadraticCurveTo(-4,4,-5,0);g.lineTo(-5,-5);g.closePath();g.moveTo(0,-3);g.lineTo(0,3)}
+    else if(kind==="workers"){g.arc(0,-4,3,0,Math.PI*2);g.moveTo(-5,7);g.lineTo(-5,4);g.quadraticCurveTo(0,-2,5,4);g.lineTo(5,7)}
+    else{g.moveTo(-5,7);g.lineTo(-5,-2);g.lineTo(0,-6);g.lineTo(5,-2);g.lineTo(5,7);g.closePath();g.moveTo(-2,7);g.lineTo(-2,2);g.lineTo(2,2);g.lineTo(2,7)}
+    g.stroke();g.restore()
   }
   function drawBrand(x:number,y:number,width:number):void {
     if(!brandImage)throw new Error("Logo must be loaded with __brand before rendering")
@@ -1196,8 +1234,10 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     drawBrand(x,y-20,160)
   }
   function teamCard(st:Any,c:Any,x:number,y:number,width:number,height:number,seat:number):void {
-    broadcastCard(x,y,width,height)
-    g.fillStyle=st.color;g.fillRect(x+1,y+13,3,height-26)
+    broadcastCard(x,y,width,height,st.color+"70")
+    g.save();const tint=g.createLinearGradient(x,y,x+width,y+height)
+    tint.addColorStop(0,st.color+"22");tint.addColorStop(1,st.color+"00");g.fillStyle=tint;g.fillRect(x+2,y+2,width-14,height-4)
+    g.fillStyle=st.color;g.fillRect(x+1,y+13,3,height-26);g.fillRect(x+width-66,y,48,3);g.restore()
     if(height<60) {
       fitLines(st.name,x+16,y+height/2+5,15,11,width-112,1,st.color,{bold:true})
       text(String(c.score),x+width-16,y+height/2+7,22,C.text,{bold:true,align:"right",mono:true})
@@ -1207,7 +1247,7 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     avatarCircle(st.avatar,st.name,st.color,x+18+avatar,y+18+avatar,avatar)
     fitLines(st.name,x+28+avatar*2,y+27,short?15:19,12,width-avatar*2-104,1,st.color,{bold:true})
     text(c.alive?`P${seat} · 场上`:`P${seat} · 已出局`,x+28+avatar*2,y+45,10,C.muted)
-    text(String(c.score),x+width-16,y+(short?28:32),short?23:29,C.text,{bold:true,align:"right",mono:true})
+    text(String(c.score),x+width-16,y+(short?28:32),short?23:30,C.text,{bold:true,align:"right",mono:true})
     text("得分",x+width-16,y+(short?44:49),10,C.muted,{align:"right"})
     if(short) {
       if(height>62)text(`部队 ${c.army}  /  农民 ${c.workers}  /  建筑 ${c.buildings}`,x+16,y+height-12,12,C.muted)
@@ -1215,9 +1255,10 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
       const cw=(width-32)/3
       for(const [j,key,label] of [[0,"army","作战部队"],[1,"workers","农民"],[2,"buildings","建筑"]] as const) {
         const dx=x+16+cw*j
-        text(String(c[key]),dx,y+height-27,21,C.text,{bold:true,mono:true})
-        text(label,dx,y+height-11,10,C.muted)
-        if(j<2){g.strokeStyle=C.line;g.beginPath();g.moveTo(dx+cw-12,y+height-44);g.lineTo(dx+cw-12,y+height-12);g.stroke()}
+        roundRect(dx-2,y+height-48,cw-6,40,3,"#16284499","#29456566")
+        fitLines(String(c[key]),dx+6,y+height-28,21,12,cw-29,1,C.text,{bold:true})
+        text(label,dx+6,y+height-14,9,C.muted)
+        metricIcon(key,dx+cw-20,y+height-34,st.color)
       }
     }
   }
@@ -1235,9 +1276,11 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     g.strokeStyle=C.accent;g.lineWidth=1.5;g.strokeRect(x0+left*mt,y0+upper*mt,(right-left)*mt,(lower-upper)*mt)
   }
   function fieldFrame(x:number,y:number,width:number,height:number):void {
-    g.save();g.strokeStyle="#4a625e";g.lineWidth=1;g.strokeRect(x-.5,y-.5,width+1,height+1)
-    g.strokeStyle=C.accent;g.lineWidth=2;g.globalAlpha=.72
-    for(const dx of [0,width])for(const dy of [0,height]){const sx=dx? -1:1,sy=dy? -1:1;g.beginPath();g.moveTo(x+dx,y+dy+sy*12);g.lineTo(x+dx,y+dy);g.lineTo(x+dx+sx*12,y+dy);g.stroke()}
+    g.save();g.strokeStyle="#365b7e";g.lineWidth=1;g.strokeRect(x-.5,y-.5,width+1,height+1)
+    g.strokeStyle=C.accent;g.lineWidth=2;g.globalAlpha=.85
+    for(const dx of [0,width])for(const dy of [0,height]){const sx=dx? -1:1,sy=dy? -1:1;g.beginPath();g.moveTo(x+dx,y+dy+sy*21);g.lineTo(x+dx,y+dy);g.lineTo(x+dx+sx*21,y+dy);g.stroke()}
+    g.globalAlpha=.4;g.lineWidth=1
+    for(let k=-2;k<=2;k++){const xx=x+width/2+k*7;g.beginPath();g.moveTo(xx,y-3);g.lineTo(xx+2,y-6);g.stroke()}
     g.restore()
   }
 
@@ -1278,7 +1321,7 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     }
     if(bottom-y>45) {
       broadcastCard(x0,y,pw,bottom-y)
-      text("战况速递",x0+16,y+25,13,C.muted,{bold:true});y+=52
+      dataHeading("战况速递",x0+16,y+25,pw-32);y+=52
       const room=Math.max(1,Math.floor((bottom-y)/49))
       for(const ev of (f.events??[]).slice(-room)) {
         g.fillStyle=C.accent;g.beginPath();g.arc(x0+17,y-4,2.4,0,Math.PI*2);g.fill()
@@ -1287,8 +1330,7 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
       if(!(f.events??[]).length)fitLines("部队正在部署，等待交锋",x0+16,y,14,11,pw-32,2,C.muted)
     }
     const by=MY+mapH+23
-    roundRect(MX,by,mapW,5,3,"#35464a")
-    roundRect(MX,by,Math.max(5,mapW*f.progress),5,3,C.accent)
+    progressRail(MX,by,mapW,f.progress)
     const mode=f.final?"对局结束":f.pace==="quiet"?"全图 · 快进 "+f.speed+"x":"交战 · "+f.speed+"x"+(camera.zoom>1.15?" · 主战场 "+camera.zoom.toFixed(1)+"×":"")
     text(mode,MX,by-8,12,C.accent,{bold:true})
     text("第 "+f.t+" tick",MX+mapW,by-8,12,C.muted,{align:"right",mono:true})
@@ -1327,7 +1369,7 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     const ox = SX + SW/2 - cx*TILE, fieldY = oy + viewH/2 - cy*TILE
     text(camera.zoom>1.15?"主战场":"全局概览",SX,oy-12,17,C.accent,{bold:true})
     if(camera.zoom>1.15)text(camera.zoom.toFixed(1)+"×",SX+SW,oy-12,16,C.muted,{align:"right"})
-    roundRect(SX,oy,SW,viewH,10,"#172428",C.line)
+    broadcastCard(SX-5,oy-5,SW+10,viewH+10)
     g.save();g.beginPath();g.rect(SX,oy,SW,viewH);g.clip()
     drawField(s,f,ox,fieldY,i)
     g.restore()
@@ -1337,8 +1379,7 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
       fitLines(s.result,VW/2,oy+viewH/2+12,34,20,SW-60,1,C.accent,{bold:true,align:"center"})
     }
     const by = oy + viewH + 34
-    roundRect(SX,by,SW,7,4,"rgba(255,255,255,.1)")
-    roundRect(SX,by,Math.max(7,SW*(f.progress??0)),7,4,C.accent)
+    progressRail(SX,by,SW,f.progress??0)
     text("第 "+(f.t??0)+" tick",SX+SW,by-10,17,C.muted,{align:"right"})
     if(!f.final)text(f.pace==="quiet"?"▸▸ 快进 "+f.speed+"x":"▶ 交战 "+f.speed+"x",SX,by-10,17,f.pace==="quiet"?C.accent:C.text,{bold:true})
 
@@ -1347,11 +1388,11 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     const mt=Math.min(miniW/s.width,miniH/s.height),mw=s.width*mt,mh=s.height*mt, mapX=SX+14,mapY=my+43
     const cardH=Math.max(190,mh+57)
     broadcastCard(SX,my,panelW,cardH)
-    text("全局位置",SX+14,my+25,14,C.muted,{bold:true})
+    dataHeading("全局位置",SX+14,my+25,panelW-28)
     miniMap(s,f,mapX,mapY,mt,[cx-viewW/2,cy-viewTilesH/2,cx+viewW/2,cy+viewTilesH/2])
     const tx=SX+panelW+14,tw=SW-panelW-14
     broadcastCard(tx,my,tw,cardH)
-    text("战况速递",tx+16,my+25,14,C.muted,{bold:true})
+    dataHeading("战况速递",tx+16,my+25,tw-32)
     let ey=my+54
     for(const event of (f.events??[]).slice(-2)) {
       g.fillStyle=C.accent;g.beginPath();g.arc(tx+17,ey-5,2.5,0,Math.PI*2);g.fill()

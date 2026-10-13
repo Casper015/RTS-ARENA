@@ -248,6 +248,11 @@ export class Renderer {
   }
 
   fit(): void {
+    const host = this.app.canvas.parentElement
+    if (!host?.clientWidth || !host.clientHeight) return
+    // A tab reveal or responsive layout can happen before Pixi's queued resize.
+    // Fit against the current host size, not the previous desktop-sized canvas.
+    this.app.renderer.resize(host.clientWidth,host.clientHeight)
     const { width, height } = this.replay.map
     const sw = this.app.screen.width
     const sh = this.app.screen.height

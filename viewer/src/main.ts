@@ -95,9 +95,15 @@ function load(replay: Replay): void {
   renderer.selected = null
   renderer.load(replay, state)
   slider.max = String(model.lastTick)
+  // Each bar represents recorded attacks in a time slice, giving the scrubber a real battle overview.
+  const activity = Array<number>(96).fill(0)
+  for (const f of replay.frames) activity[Math.min(95,Math.floor(f.t/Math.max(1,model.lastTick)*96))] += (f.shots?.length??0)/2
+  const peak = Math.max(1,...activity)
+  $("combat-activity").innerHTML = activity.map(n=>`<i style="--intensity:${n/peak};height:${2+18*Math.sqrt(n/peak)}px"></i>`).join("")
   $("empty").hidden = true
   drawPov()
   const r = replay
+  $("replay-page").style.setProperty("--map-aspect",`${r.map.width} / ${r.map.height}`)
   $("match-title").textContent = `${r.ruleset.name} · ${r.players.length} 方对局`
   $("match-title").title = `种子 ${r.seed} · ${r.players.map((p) => p.name).join(" vs ")}`
   $("match-meta").textContent = `种子 ${r.seed} · 地图 ${r.map.width} × ${r.map.height}`
@@ -136,6 +142,7 @@ function setPlaying(p: boolean): void {
 function drawPlayback(): void {
   playBtn.textContent = playing ? "Ⅱ 暂停" : "▶ 播放"
   playBtn.setAttribute("aria-label", playing ? "暂停" : "播放")
+  playBtn.setAttribute("aria-pressed",String(playing))
 }
 
 renderer.onSelect = () => updateUI(true)
@@ -150,6 +157,9 @@ function updateUI(force = false): void {
   $("tick-label").textContent = `${state.tick} / ${model.lastTick}`
   drawPlayback()
   $("status-line").textContent = state.status
+  // The full-match activity graph is omniscient, so show it only in spectator view.
+  $("combat-activity").hidden = pov !== null
+  $("activity-label").hidden = pov !== null
 
   const teamed = new Set(r.players.map((p) => p.team)).size < r.players.length
   const rows = r.players.map((p, i) => {
@@ -165,7 +175,8 @@ function updateUI(force = false): void {
     if(!hidden)for(const e of state!.ents.values())if(e.owner===i){const type=r.types[e.type];if(type?.kind==="building")buildings++;else if(type?.kind==="unit")type.worker?workers++:army++}
     // 分队时在名字后面标队伍（老回放没有 team 字段）
     const team = teamed && typeof p.team === "number" ? ` [队${p.team + 1}]` : ""
-    return html`<article class="player-card ${ps.alive?"":"eliminated"}" style="--player-color:${hex(playerColor(i))}"><div class="player-heading"><div class="player-seat">P${i}</div><div class="player-identity"><div class="player-name">${p.name}</div><div class="player-sub">${ps.alive?"场上":"已出局"}${team}</div></div><div class="player-score">${Math.round(ps.score)}<small>得分</small></div></div><div class="player-metrics"><div><b>${hidden?"？":army}</b>作战部队</div><div><b>${hidden?"？":workers}</b>农民</div><div><b>${hidden?"？":buildings}</b>建筑</div></div><div class="resources">${res}</div></article>`
+    const metrics = [["unit",army,"部队"],["worker",workers,"农民"],["building",buildings,"建筑"]] as const
+    return html`<article class="player-card ${ps.alive?"":"eliminated"}" style="--player-color:${hex(playerColor(i))}"><div class="player-heading"><div class="player-seat">P${i}</div><div class="player-identity"><div class="player-name">${p.name}</div><div class="player-sub"><i class="alive-dot"></i>${ps.alive?"场上":"已出局"}${team}</div></div><div class="player-score">${Math.round(ps.score)}<small>得分</small></div></div><div class="player-metrics">${metrics.map(([icon,n,label])=>html`<div><svg class="ui-icon" aria-hidden="true"><use href="${`#i-${icon}`}"/></svg><b>${hidden?"？":n}</b><span>${label}</span></div>`)}</div><div class="resources">${res}</div></article>`
   })
   $("players").innerHTML = html`${rows}`.s
 
