@@ -216,7 +216,10 @@ export function onTick(view: View, cmd: Commands): void {
   // 目标是离自己最近的、还在场的敌方主基地（两人局就是对手那个）；离哪个敌方主基地比离自己近的矿都算对手那一侧
   const enemyRects = view.objectives.enemyBases.map((b) => ({ x: b.x, y: b.y, w: 3, h: 3 }))
   if (!enemyRects.length) return
-  const enemyRect = enemyRects.reduce((a, r) => (dist(r, base) < dist(a, base) ? r : a))
+  // 按直线距离挑；一样近的（四人各自为战时左右两家）取顺时针那家：四家各打下一家，不会都去打编号小的那家
+  const far = (r: Pos) => Math.hypot(r.x - base.x, r.y - base.y)
+  const side = (r: Pos) => (game.width / 2 - base.x) * (r.y - base.y) - (game.height / 2 - base.y) * (r.x - base.x)
+  const enemyRect = enemyRects.reduce((a, r) => (far(r) < far(a) - 0.5 || (Math.abs(far(r) - far(a)) <= 0.5 && side(r) < side(a)) ? r : a))
   const eb = enemyRect
   const enemyCenter = { x: eb.x + 1, y: eb.y + 1 }
   const home = centerOf(base)
