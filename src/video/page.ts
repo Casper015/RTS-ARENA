@@ -1302,12 +1302,20 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     drawField(s,f,MX+mapW/2-cx*TILE,MY+mapH/2-cy*TILE,i)
     g.restore()
     TILE=baseTile
-    if(camera.zoom>1.02) {
-      const iw=Math.min(190,mapW*.24),mt=iw/s.width,ih=s.height*mt,ix=MX+mapW-iw-10,iy=MY+10
-      g.save();g.globalAlpha=Math.min(1,(camera.zoom-1)/.4)
+    // 多处同时开打（D-242）：右上角的小地图换成另一处战场的小窗，小地图淡出
+    const pip=!f.final?camera.pip:null,pa=pip?.alpha??0
+    if(camera.zoom>1.02&&pa<1) {
+      const iw=Math.min(190,mapW*.24),mt=iw/s.width,ih=s.height*mt,ix=camera.left?MX+10:MX+mapW-iw-10,iy=camera.bottom?MY+mapH-ih-10:MY+10
+      g.save();g.globalAlpha=Math.min(1,(camera.zoom-1)/.4)*(1-pa)
       roundRect(ix-5,iy-5,iw+10,ih+10,6,"rgba(11,18,25,.86)",C.line)
       miniMap(s,f,ix,iy,mt,[cx-viewW/2,cy-viewH/2,cx+viewW/2,cy+viewH/2])
       g.restore()
+    }
+    if(pip) {
+      const pw=Math.min(mapW*.34,mapH*.42*s.width/s.height),ph=pw*s.height/s.width,px=camera.left?MX+10:MX+mapW-pw-10,py=camera.bottom?MY+mapH-ph-10:MY+10
+      pipView(s,f,i,pip,px,py,pw,ph,pa)
+      g.save();g.globalAlpha=pa;roundRect(px+6,py+6,74,20,10,"rgba(11,18,25,.82)");g.restore()
+      text("另一处交战",px+43,py+20,11,C.accent,{bold:true,align:"center",alpha:pa})
     }
     fieldFrame(MX,MY,mapW,mapH)
     const x0=MX+mapW+24,pw=W-x0-24,bottom=Math.max(MY+mapH,H-68)
@@ -1388,8 +1396,11 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     const mt=Math.min(miniW/s.width,miniH/s.height),mw=s.width*mt,mh=s.height*mt, mapX=SX+14,mapY=my+43
     const cardH=Math.max(190,mh+57)
     broadcastCard(SX,my,panelW,cardH)
-    dataHeading("全局位置",SX+14,my+25,panelW-28)
-    miniMap(s,f,mapX,mapY,mt,[cx-viewW/2,cy-viewTilesH/2,cx+viewW/2,cy+viewTilesH/2])
+    // 多处同时开打（D-242）：卡片里的小地图换成另一处战场的小窗
+    const pip=!f.final?camera.pip:null,pa=pip?.alpha??0
+    dataHeading(pa>.5?"另一处交战":"全局位置",SX+14,my+25,panelW-28)
+    if(pa<1){g.save();g.globalAlpha=1-pa;miniMap(s,f,mapX,mapY,mt,[cx-viewW/2,cy-viewTilesH/2,cx+viewW/2,cy+viewTilesH/2]);g.restore()}
+    if(pip)pipView(s,f,i,pip,mapX,mapY,panelW-28,cardH-57,pa)
     const tx=SX+panelW+14,tw=SW-panelW-14
     broadcastCard(tx,my,tw,cardH)
     dataHeading("战况速递",tx+16,my+25,tw-32)
@@ -1401,6 +1412,35 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     if(!(f.events??[]).length)fitLines(f.status||"部队正在部署，等待交锋",tx+16,ey,18,14,tw-32,3,C.muted)
     if(s.win)drawWin(s.win,f.t??0,SX,my+cardH+30,SW,50,16)
 
+  }
+
+  /**
+   * 画中画（D-242）：另一处战场按 pip 镜头画进 (x, y, w, h)。先画到离屏画布上再整体淡入淡出（地图里的特效会自己改透明度）；
+   * 小窗里横着看到 地图宽 / pip.zoom 格
+   */
+  let pipCanvas: OffscreenCanvas | null = null
+  function pipView(s: Any, f: Any, i: number, pip: Any, x: number, y: number, w: number, h: number, alpha: number): void {
+    const rs = VERT ? VS : SCALE
+    const pw = Math.ceil(w * rs), ph = Math.ceil(h * rs)
+    if (!pipCanvas || pipCanvas.width !== pw || pipCanvas.height !== ph) pipCanvas = new OffscreenCanvas(pw, ph)
+    const pg = pipCanvas.getContext("2d")!
+    pg.setTransform(1, 0, 0, 1, 0, 0)
+    pg.clearRect(0, 0, pw, ph)
+    pg.setTransform(rs, 0, 0, rs, 0, 0)
+    const outer = g, base = TILE
+    g = pg
+    TILE = w / (s.width / pip.zoom)
+    const vw = w / TILE, vh = h / TILE
+    const cx = vw >= s.width ? s.width / 2 : Math.max(vw / 2, Math.min(s.width - vw / 2, pip.x))
+    const cy = vh >= s.height ? s.height / 2 : Math.max(vh / 2, Math.min(s.height - vh / 2, pip.y))
+    drawField(s, f, w / 2 - cx * TILE, h / 2 - cy * TILE, i)
+    g = outer
+    TILE = base
+    g.save()
+    g.globalAlpha = alpha
+    roundRect(x - 4, y - 4, w + 8, h + 8, 6, "rgba(11,18,25,.92)", C.accent)
+    g.drawImage(pipCanvas, x, y, w, h)
+    g.restore()
   }
 
   /** 对阵格子的底色：赢多输少偏绿、输多赢少偏红，越悬殊越深（D-223） */

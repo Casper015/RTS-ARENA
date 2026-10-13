@@ -271,3 +271,57 @@ test("交战缩放（D-236）：一段交战里死的单位不到 2 个就不放
   assert.ok(zoom.some(Boolean))
   assert.ok(zoom.every((z, i) => !z || pace.mode(i) === "fight"))
 })
+
+/** 64×64 的空地，几对一直站着对打的兵：A (5,5)、B (58,58)、C (22,6)、D (58,5)；每帧 1 tick */
+function arena(): Replay {
+  const r = fixture()
+  r.map = { ...r.map, width: 64, height: 64, terrain: Array(64).fill(".".repeat(64)) }
+  const e = (id: number, owner: number, x: number, y: number) => ({ id, type: "soldier", owner, x, y, hp: 100, ord: "idle" })
+  r.initial.entities = [e(1, 0, 5, 5), e(2, 1, 6, 5), e(3, 0, 58, 58), e(4, 1, 59, 58), e(5, 0, 22, 6), e(6, 1, 23, 6), e(7, 0, 58, 5), e(8, 1, 59, 5)]
+  r.frames = Array.from({ length: 300 }, (_, i) => ({ t: i + 1 }))
+  return r
+}
+const shoot = (r: Replay, from: number, to: number, pairs: number[]) => {
+  for (let k = from; k < to; k++) r.frames[k] = { ...r.frames[k], shots: [...(r.frames[k].shots ?? []), ...pairs] }
+}
+const frameTicks = Array.from({ length: 300 }, (_, i) => i)
+
+test("镜头不反复拉扯（D-242）：两仗中间回全图凑不够「退 + 停 2 秒 + 推」就一直放大着；中间够长才回全图", () => {
+  const r = arena()
+  shoot(r, 0, 300, [1, 2, 1, 2])
+  const short = battleCameraTrack(r, frameTicks, 30, frameTicks.map((i) => i < 90 || (i >= 150 && i < 240)))
+  assert.ok(short.slice(90, 150).every((c) => c.zoom > 2.5), "2 秒的空档不回全图")
+  const long = battleCameraTrack(r, frameTicks, 30, frameTicks.map((i) => i < 90 || (i >= 260 && i < 290)))
+  assert.ok(long.slice(90, 260).some((c) => c.zoom === 1), "5 秒以上的空档回全图")
+  assert.ok(long.slice(240, 260).every((c) => c.zoom === 1), "回了全图至少停一会儿")
+})
+
+test("多处同时开打（D-242）：远处的另一处放进小窗、近处的框进同一个画面；主战场被盖过两倍才换，换了和小窗对调", () => {
+  const far = arena()
+  shoot(far, 0, 300, [1, 2, 1, 2, 1, 2, 1, 2])
+  shoot(far, 0, 300, [3, 4, 3, 4])
+  const a = battleCameraTrack(far, frameTicks, 30)[200]
+  assert.ok(a.zoom > 2.5 && a.x < 15 && a.y < 15, JSON.stringify(a))
+  assert.ok(a.pip && a.pip.alpha === 1 && a.pip.x > 50 && a.pip.y > 50, JSON.stringify(a.pip))
+  const near = arena()
+  shoot(near, 0, 300, [1, 2, 1, 2])
+  shoot(near, 0, 300, [5, 6, 5, 6])
+  const b = battleCameraTrack(near, frameTicks, 30)[200]
+  assert.ok(!b.pip && b.x > 9 && b.x < 19 && b.zoom > 2, JSON.stringify(b))
+  const swap = arena()
+  shoot(swap, 0, 150, [1, 2, 1, 2, 1, 2, 1, 2, 3, 4, 3, 4])
+  shoot(swap, 150, 300, [1, 2, 1, 2, 3, 4, 3, 4, 3, 4, 3, 4, 3, 4, 3, 4, 3, 4, 3, 4])
+  const c = battleCameraTrack(swap, frameTicks, 30)[290]
+  assert.ok(c.x > 45 && c.y > 45 && c.pip && c.pip.x < 15, JSON.stringify(c))
+})
+
+test("小地图、小窗避开主战场（D-242）：主战场在右上角时放到左下角", () => {
+  const r = arena()
+  shoot(r, 0, 300, [7, 8, 7, 8])
+  const path = battleCameraTrack(r, frameTicks, 30)
+  assert.ok(path[200].zoom > 2.5 && path[200].left === true && path[200].bottom === true, JSON.stringify(path[200]))
+  const home = arena()
+  shoot(home, 0, 300, [1, 2, 1, 2])
+  const p = battleCameraTrack(home, frameTicks, 30)[200]
+  assert.ok(p.zoom > 2.5 && !p.left && !p.bottom, JSON.stringify(p))
+})
