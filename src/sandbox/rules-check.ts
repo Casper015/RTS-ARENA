@@ -25,6 +25,23 @@ const isObj = (v: unknown): v is Obj => v !== null && typeof v === "object" && !
 const isInt = (v: unknown, min: number, max = Number.MAX_SAFE_INTEGER): v is number =>
   typeof v === "number" && Number.isInteger(v) && v >= min && v <= max
 
+const str = (v: unknown, max: number): v is string => typeof v === "string" && v.length > 0 && v.length <= max
+
+/** 联赛视频选手页的看点（D-249） */
+function checkSpotlight(s: unknown, bad: (msg: string) => void): void {
+  const form = "spotlight 要写成 1～4 项的数组：[{ stat, unit?, lower?, note? }]"
+  if (!Array.isArray(s) || s.length === 0 || s.length > 4) return bad(form)
+  s.forEach((it, k) => {
+    const at = `spotlight[${k}]`
+    if (!isObj(it)) return bad(`${at} 要写成 { stat, unit?, lower?, note? }`)
+    for (const key of Object.keys(it)) if (!["stat", "unit", "lower", "note"].includes(key)) bad(`${at} 只能写 stat、unit、lower、note（多了 ${key}）`)
+    if (!str(it.stat, 20)) bad(`${at}.stat 要写对局结果 stats 里的名字（1～20 字）`)
+    if (it.unit !== undefined && !str(it.unit, 4)) bad(`${at}.unit 要是 1～4 字`)
+    if (it.lower !== undefined && typeof it.lower !== "boolean") bad(`${at}.lower 要是 true / false`)
+    if (it.note !== undefined && !str(it.note, 40)) bad(`${at}.note 要是 1～40 字`)
+  })
+}
+
 /** 返回所有问题；空数组表示没问题 */
 export function checkRulesetData(d: unknown, callbacks: string[]): string[] {
   const errs: string[] = []
@@ -39,6 +56,7 @@ export function checkRulesetData(d: unknown, callbacks: string[]): string[] {
     bad(`players 要写成 { min, max }，1 ≤ min ≤ max ≤ ${RULES_HARD.players}`)
   if (d.teams !== undefined && typeof d.teams !== "boolean") bad("teams 要是 true / false")
   if (d.sharedResources !== undefined && typeof d.sharedResources !== "boolean") bad("sharedResources 要是 true / false")
+  if (d.spotlight !== undefined) checkSpotlight(d.spotlight, bad)
   if (!isInt(d.maxTicks, 1, RULES_HARD.maxTicks)) bad(`maxTicks 要是 1～${RULES_HARD.maxTicks} 的整数`)
   if (typeof d.tickRate !== "number" || !(d.tickRate >= 1 && d.tickRate <= 120)) bad("tickRate 要是 1～120 的数")
   if (!isInt(d.decisionInterval, 1, 1000)) bad("decisionInterval 要是 1～1000 的整数")

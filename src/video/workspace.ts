@@ -228,11 +228,12 @@ function videoPrompt(
       ? `- **选手的参赛报告**：${[...reportFile].map(([n, f]) => `${n} → \`${f}\``).join("，")}${reportFile.size < brief.players.length ? `（${brief.players.filter((p) => !reportFile.has(p.name)).map((p) => p.name).join("、")} 没有报告）` : ""}。是选手自己写的：打法、每一版改了什么、为什么选最终这版、自测成绩。**选手介绍从三处来：代码、参赛报告、这场联赛的对战数据**（下面的成绩、速查、每局数据和 \`reports/\` 的战报）。报告里的自测成绩是它对参考 bot 打的，不是这场联赛，别混着写；报告里自夸的地方拿代码和这场的数据核对，对不上就写实际情况。`
       : "- **选手的参赛报告**：这次没有（选手的代码旁边有 `<名字>.REPORT.md`，或者 bot 目录里有 `REPORT.md` 时，`video-init` 会复制到 `bots/`）。",
   )
+  out.push(`- **称号**（\`players[].award\`，${L.award} 字以内，可以不写）：选手页名次旁边的金色小牌子。看下面的规则包看点（有的话）和对局数据自己分析着起，比如共用金子的 2v2 里花队友的钱最多的可以叫「最坑队友」、一直倒贴的叫「扶贫大户」；要有数字撑着，别两个人用同一个，没什么可说的就删掉。`)
   out.push("- **介绍要有依据**：文件名、代码、参赛报告、下面的成绩和 `reports/` 的战报里看得到的才写，数字照抄，不编造没发生的事。成绩差的写它的特点和输在哪，可以调侃，但别贬低。")
   out.push("- **不知道的事别写成事实**：平台不知道每个 bot 是怎么写出来的、改了几轮。代码里的版本号（v3、v6 之类）和自称的绝招都是作者自己写的，只能说\"自称\"\"注释里写着\"。")
   out.push(`- **每个选手的高光对局**：模板里已经给每个参赛选手挑好了一局（\`players[].highlight\`，\`highlights\` 里同一局待填标题和解说），可以换成更能代表他的一局（最多 ${L.highlights} 局）。**别挑后半局没人打仗的局**：打满时间比分的局常常是前面打几仗、后面两边都在家挂机等时间到，回放里观众只能看着进度条快进（最后一仗打完还剩整局 30% 以上的，命令会提醒）；挑仗打到最后、拆家结束的。**每局的 \`title\` 和 \`commentary\` 都要照这一局写**：对阵双方是谁、谁赢了，查「全部对局」表和战报，别从别的视频的脚本里抄（命令会提醒标题、解说里提到了不在这局的选手）。下面"精彩对局"里是联赛自动挑的，也可以从"全部对局"里挑别的（表里有每局双方的采集、损失、击杀和看点，找"最快""最险""最惨烈"的局用得上），换局时 \`players[].highlight\` 和 \`highlights\` 一起改。解说里说的事要在战报里查得到：\`reports/\` 里有这几局：${reported.map((i) => `第 ${i} 局`).join("、")}；其他局在这个目录里运行 \`rts-arena report <回放文件>\` 看，回放文件名在"全部对局"表里。战报里的 P0、P1 是座位，顺序和对阵里的名字一样。`)
-  out.push(`- **字数上限**（按字符算：汉字、字母、数字、空格、标点都算 1 个）：displayName ${L.displayName}、byline ${L.byline}、tagline ${L.tagline}、intro 1～${L.introLines} 句（建议 4～5 句）每句 ${L.introLine}、精彩对局 title ${L.hlTitle}、commentary ${L.commentary}、outro ${L.outro}。超了命令会报出来。`)
-  out.push("- **粗体字段别写\"一\"**：`tagline`、精彩对局的 `title` 和 `commentary`、`outro` 是粗体，\"一\"在粗体下就是一道横线，像破折号（\"唯一一胜\"看成\"唯——胜\"，\"只输一局\"看成\"只输—局\"）。数量写阿拉伯数字（\"只输 1 局\"），别的换个说法（\"一波\"→\"突袭\"，\"一边倒\"→\"倒向对面\"）；`intro` 是常规字重，不受影响。")
+  out.push(`- **字数上限**（按字符算：汉字、字母、数字、空格、标点都算 1 个）：displayName ${L.displayName}、byline ${L.byline}、tagline ${L.tagline}、award ${L.award}、intro 1～${L.introLines} 句（建议 4～5 句）每句 ${L.introLine}、精彩对局 title ${L.hlTitle}、commentary ${L.commentary}、outro ${L.outro}。超了命令会报出来。`)
+  out.push("- **粗体字段别写\"一\"**：`tagline`、`award`、精彩对局的 `title` 和 `commentary`、`outro` 是粗体，\"一\"在粗体下就是一道横线，像破折号（\"唯一一胜\"看成\"唯——胜\"，\"只输一局\"看成\"只输—局\"）。数量写阿拉伯数字（\"只输 1 局\"），别的换个说法（\"一波\"→\"突袭\"，\"一边倒\"→\"倒向对面\"）；`intro` 是常规字重，不受影响。")
   out.push("- 平台署名（开场阵容底部、规则页底部、片尾）是自动加的；介绍和解说里不要冒充平台的口吻。")
   out.push("")
   out.push("## 脚本格式（script.json）")
@@ -243,7 +244,7 @@ function videoPrompt(
       {
         hook: { text: "开场的一句大字（30 字以内，可以不写）" },
         rules: ["规则介绍 1～4 句：怎么赢、关键机制"],
-        players: [{ name: "参赛选手在联赛里的名字（必须和下面一样）", displayName: "显示名", byline: "一行小字（也上片尾名单）", tagline: "一句话定位", intro: ["介绍 4～5 句"], highlight: 1, portrait: "portraits/形象图.png（可以不写）" }],
+        players: [{ name: "参赛选手在联赛里的名字（必须和下面一样）", displayName: "显示名", byline: "一行小字（也上片尾名单）", tagline: "一句话定位", award: "称号（可以不写）", intro: ["介绍 4～5 句"], highlight: 1, portrait: "portraits/形象图.png（可以不写）" }],
         highlights: [{ index: 1, title: "这局的标题", commentary: "一句话解说" }],
         outro: "一句总结（可以不写）",
       },
@@ -290,6 +291,8 @@ function videoPrompt(
     out.push(`- 视频里的颜色：${PALETTE_NAMES[i % PALETTE_NAMES.length]}色（选手页、回放里都是这个颜色）`)
     out.push(`- 对每个对手（胜-平-负）：${Object.entries(p.headToHead).map(([k, v]) => `${k} ${v}`).join("；")}`)
     if (p.perGame) out.push(`- 每局平均：${Object.entries(p.perGame).map(([k, v]) => `${k} ${v}`).join("，")}`)
+    // 规则包看点（D-249）：选手页上自动显示，写介绍时可以顺着说
+    if (p.spotlight) out.push(`- 规则包看点（选手页上自动显示）：${p.spotlight.map((r) => `${r.label} 每局 ${r.value}（参赛 ${r.of} 人里第 ${r.rank}）${r.note ? `（${r.note}）` : ""}`).join("；")}`)
     out.push(`- 出错：报错 ${p.trouble.errors}、燃料耗尽 ${p.trouble.fuelOuts}、被拒命令 ${p.trouble.rejected}`)
     const c = p.code
     if (c) {

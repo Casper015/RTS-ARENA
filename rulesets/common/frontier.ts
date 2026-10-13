@@ -16,6 +16,8 @@ import {
   symmetricTerrain,
 } from "./standard.ts"
 
+/** 开局每人的金子（分队共用时整队是人数倍） */
+export const START_GOLD = 300
 export const FRONTIER_W = 56
 export const FRONTIER_H = 40
 
@@ -110,7 +112,7 @@ export function frontierSetup(ctx: SetupContext, types: Record<string, TypeSpec>
         ]),
   ])
   if (map) for (const m of map.mines) ctx.spawn("goldmine", -1, m.x, m.y, { amount: 700 })
-  for (let p = 0; p < ctx.playerCount; p++) ctx.setResources(p, { gold: 300 })
+  for (let p = 0; p < ctx.playerCount; p++) ctx.setResources(p, { gold: START_GOLD })
 }
 
 /** 击杀价值：建好的建筑是造价的 2 倍，没建好的按造价算；主基地 1000；单位按造价 */
@@ -228,6 +230,6 @@ export function frontierCornersSetup(ctx: SetupContext, types: Record<string, Ty
       const r = rotateK(S, { x: it.x, y: it.y, ...size(it.type) }, corner)
       ctx.spawn(it.type, p, r.x, r.y)
     }
-    ctx.setResources(p, { gold: 300 * (shared ? ctx.teams.filter((t) => t === ctx.teams[p]).length : 1) })
+    ctx.setResources(p, { gold: START_GOLD * (shared ? ctx.teams.filter((t) => t === ctx.teams[p]).length : 1) })
   })
 }

@@ -181,6 +181,11 @@ test("攻城拓荒 3～4 人（D-244、D-245）：64×64 四角，2v2 队友坐�
   const seatStats = gameSeatStats(team)
   assert.equal(seatStats[0].income, team.gathered![0].gold)
   assert.equal(seatStats[1].income, 0)
+  // 每人花掉的也分开记（D-249）：只有 P0 下命令花钱；规则包报吃队友的钱 = 花掉的 − 挣来的 − 开局那份 300（P1 一分没花，倒贴 300）
+  const st = team.result.stats!
+  assert.ok(st["花掉的钱"][0] > 0 && st["花掉的钱"][1] === 0, JSON.stringify(st))
+  assert.deepEqual(st["吃队友的钱"], [0, 1, 2, 3].map((p) => st["花掉的钱"][p] - st["挣来的钱"][p] - 300))
+  assert.equal(st["吃队友的钱"][1], -300)
   const ffa = runMatch({
     ruleset: { ...siegeFrontier, maxTicks: 50 },
     seed: 3,
@@ -189,4 +194,6 @@ test("攻城拓荒 3～4 人（D-244、D-245）：64×64 四角，2v2 队友坐�
   assert.equal(ffa.sharedResources, true)
   assert.deepEqual(ffa.initial.players.map((p) => p.resources.gold), [300, 300, 300, 300])
   assert.equal(ffa.initial.entities.filter((e) => e.type === "scout").length, 4)
+  // 各自为战没有队友，不报吃队友的钱
+  assert.equal(ffa.result.stats!["吃队友的钱"], undefined)
 })

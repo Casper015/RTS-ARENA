@@ -122,7 +122,7 @@ export function rulesPreludeSource(maxLines: number, maxLine: number): string {
     spawn: function (type, owner, x, y, o) { var id = H.spawn(type, owner, x, y, amountOf(o)); entsChanged(); return id; },
     setResources: function (p, res) {
       H.setResources(p, stringify(res));
-      if (cache.players) for (var k in res) cache.players[p].resources[k] = res[k];
+      cache.players = null;
     },
     setMarkers: function (m) { H.setMarkers(stringify(m)); },
     setStatus: function (t) { H.setStatus(String(t)); },
@@ -149,7 +149,7 @@ export function rulesPreludeSource(maxLines: number, maxLine: number): string {
     },
     addScore: function (p, n) { H.addScore(p, n); if (cache.players) cache.players[p].score += n; },
     setScore: function (p, n) { H.setScore(p, n); if (cache.players) cache.players[p].score = n; },
-    addResource: function (p, r, n) { H.addResource(p, r, n); if (cache.players) cache.players[p].resources[r] += n; },
+    addResource: function (p, r, n) { H.addResource(p, r, n); cache.players = null; },
     spawnNear: function (type, owner, x, y, o) {
       var id = H.spawnNear(type, owner, x, y, amountOf(o));
       entsChanged();
@@ -184,7 +184,7 @@ export function rulesPreludeSource(maxLines: number, maxLine: number): string {
   }
 
   var R = null;
-  var KEYS = ["id", "name", "summary", "players", "teams", "sharedResources", "maxTicks", "tickRate", "decisionInterval", "fuel", "unitCap", "fog", "resources", "terrain", "types"];
+  var KEYS = ["id", "name", "summary", "players", "teams", "sharedResources", "spotlight", "maxTicks", "tickRate", "decisionInterval", "fuel", "unitCap", "fog", "resources", "terrain", "types"];
   var FNS = ["setup", "onTick", "objectives", "result", "timeUp", "buildCheck", "onCast"];
 
   G.__rules = {

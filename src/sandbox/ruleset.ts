@@ -437,7 +437,7 @@ class RulesBox {
         return s(JSON.stringify(w().entities({ owner, type, kind }).map(entJson)))
       },
       entitiesIn: (x, y, ww, hh) => s(JSON.stringify(w().entitiesIn(num(x, "x"), num(y, "y"), num(ww, "w"), num(hh, "h")).map(entJson))),
-      players: () => s(JSON.stringify(w().players.map((p) => ({ id: p.id, name: p.name, alive: p.alive, score: p.score, resources: p.resources })))),
+      players: () => s(JSON.stringify(w().players.map((p) => ({ id: p.id, name: p.name, alive: p.alive, score: p.score, resources: p.resources, gathered: p.gathered, spent: p.spent })))),
       events: () => s(JSON.stringify(w().events)),
       addScore: (p, v) => {
         w().addScore(player(p), num(v, "分数"))

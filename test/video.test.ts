@@ -5,7 +5,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
 import { after, test } from "node:test"
-import { checkScript, codeFacts, contestantNames, factTags, gameScores, highlightPlayerWarnings, isReferenceBot, readSeries, resolveBotFile, scriptWarnings, videoBrief, type SeriesFile, type VideoScript } from "../src/video/brief.ts"
+import { checkScript, codeFacts, contestantNames, factTags, spotlightFor, gameScores, highlightPlayerWarnings, isReferenceBot, readSeries, resolveBotFile, scriptWarnings, videoBrief, type SeriesFile, type VideoScript } from "../src/video/brief.ts"
 import { findBrowser } from "../src/video/browser.ts"
 import { buildScenes, colorGap, contrastColors, fightWindows, idleHighlightWarnings, PALETTE, pacing, relabelSeats, tidy, timelineOf } from "../src/video/render.ts"
 import { analyzeLeague, baseTypeOf, fitWinModel, twoSides, winCurve } from "../src/video/analysis.ts"
@@ -52,6 +52,25 @@ export function onTick(view: View, cmd: Commands): void {
   assert.equal(f.features["实测或调参注释"], 3) // "实测" 两处、"调出来" 一处
   // 只数注释里的感叹号（代码里的 ! 不算）
   assert.equal(f.features["注释里的感叹号"], 1)
+})
+
+test("规则包看点（D-249）：每局平均、在参赛选手里排第几（参考 bot 不比，一样多并列）；lower 越小越前；没报过的项不显示", () => {
+  const bot = (name: string, games: number, custom: Record<string, number>) => ({ name, games, custom })
+  const series = {
+    ruleset: { id: "siege-frontier", name: "攻城拓荒", spotlight: [{ stat: "吃队友的钱", unit: "金", note: "花掉的 − 挣来的" }, { stat: "白送", lower: true }, { stat: "没人报" }] },
+    participants: [{ name: "A", file: "A.ts" }, { name: "B", file: "B.ts" }, { name: "C", file: "C.ts" }, { name: "baseline", file: "rulesets/siege-frontier/bots/baseline.ts" }],
+    summary: { stats: { bots: [bot("A", 10, { 吃队友的钱: 14100, 白送: 30 }), bot("B", 10, { 吃队友的钱: -4930, 白送: 4 }), bot("C", 4, { 吃队友的钱: 5640, 白送: 1.2 }), bot("baseline", 10, { 吃队友的钱: 99999, 白送: 0 })] } },
+  } as unknown as SeriesFile
+  const own = contestantNames(series)
+  const a = spotlightFor(series, own, "A")!
+  assert.deepEqual(a[0], { label: "吃队友的钱", value: "1410 金", rank: 1, of: 3, note: "花掉的 − 挣来的" }, "参考 bot 吃得更多也不比")
+  assert.equal(a.length, 2, "没人报的那项不显示")
+  assert.deepEqual([a[1].value, a[1].rank], ["3", 3])
+  const b = spotlightFor(series, own, "B")!
+  assert.deepEqual([b[0].value, b[0].rank], ["−493 金", 3])
+  const c = spotlightFor(series, own, "C")!
+  assert.deepEqual([c[0].value, c[0].rank, c[1].value, c[1].rank], ["1410 金", 1, "0.3", 1], "C 打得少，按自己的局数平均；1410 和 A 并列第一")
+  assert.equal(spotlightFor({ ...series, ruleset: { id: "x", name: "x" } }, own, "A"), null, "规则包没写看点")
 })
 
 test("只介绍参赛 bot（D-221）：规则包 bots/ 里的参考 bot 是陪练，不用写进 players、不出现在视频的选手页；全是参考 bot 时都算参赛", () => {

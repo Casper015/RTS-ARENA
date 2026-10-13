@@ -47,6 +47,7 @@ const ruleset: Ruleset = {
   players: { min: 2, max: 2 },
   teams: false,            // 支持 --teams 分队时写 true，并且自己按队伍摆位置、判胜负
   sharedResources: false,  // 分队时同队共用一份资源：交货、扣钱、addResource 都算整队的，setResources 给任何一个队友设就是设整队（默认各管各的）
+  spotlight: [ ... ],      // 可选：联赛视频选手页的看点（挑结果里 stats 的几项），见下面「自己的统计」
   maxTicks: 4000,
   tickRate: 10,            // 回放每秒播多少 tick
   decisionInterval: 5,     // 每几个 tick 调一次 bot
@@ -94,7 +95,7 @@ export default ruleset
 - `terrain` 是地形，每行一个字符串，`terrain[y][x]` 是 (x, y) 的地形字符，能不能走看你自己定义的 `terrain` 表。buildCheck 里判断"贴着路""在草地上"这类规则时用。
 - 编号：玩家编号从 0 开始，命令行、战报、对战页都写成 P0、P1……（和 `view.me`、`ctx.players[i].id` 一样）；队伍编号也从 0 开始，但显示成「队1」「队2」……（「队1」就是队伍 0）。状态文字、叠加层里写玩家时也用 P0 起，免得和平台的输出对不上。
 - `teams[p]` 是座位 p 的队伍编号，从 0 开始：命令行、战报、对战页里的「队1」就是队伍 0。不分队时 `teams[p] === p`。命令行和对战页给的分队，同一队的座位总是连在一起、队伍编号按座位从小到大（2v2 是 [0, 0, 1, 1]，3v1 是 [0, 0, 0, 1]）；哪个 bot 坐哪个座位会轮换。
-- 读：`seed`（对局种子）、`tick`、`maxTicks`、`playerCount`、`teams`、`isAlly(a, b)`、`width`、`height`、`entities()`（按创建顺序；可以筛选：`entities({ owner: 0, type: "base", kind: "building" })`，不写的项不限）、`get(id)`、`entitiesIn(x, y, w, h)`、`players`（分数、资源、是否在场）、`events`（本 tick 的 died、created、deposit、built）、`dist(a, b)`。
+- 读：`seed`（对局种子）、`tick`、`maxTicks`、`playerCount`、`teams`、`isAlly(a, b)`、`width`、`height`、`entities()`（按创建顺序；可以筛选：`entities({ owner: 0, type: "base", kind: "building" })`，不写的项不限）、`get(id)`、`entitiesIn(x, y, w, h)`、`players`（分数、资源、是否在场；`gathered`、`spent` 是这个人整局挣到的、花掉的，同队共用资源时靠它们分清谁挣谁花）、`events`（本 tick 的 died、created、deposit、built）、`dist(a, b)`。
 - 写：`addScore(player, n)`、`setScore(player, n)`、`addResource(player, "gold", n)`（一次加一种，和 setResources 不一样）、`spawnNear(type, owner, x, y, { amount })`（找空位刷实体，找不到返回 null）、`remove(id)`（移除：回放和战报里记成"规则包移除"，不算死亡和损失；规则包和 bot 收到的 `died` 事件带 `removed: true`）、`eliminate(player)`（出局：不再调用他的 bot，实体留着，要清掉自己 remove）、`setStatus(text)`（回放顶部的一行字，最多 200 字）。
 - 叠加层 `setMarkers([...])`（回放里画，bot 看不到）：区域 `{ kind: "zone", x, y, w, h, owner, label?, color? }`（owner 是玩家编号或 null，按它上色；写了 `color: "#rrggbb"` 就用这个颜色），文字 `{ kind: "label", x, y, text, owner? }`；文字最多 40 字，最多 500 个。每次调用整个替换，不变就不用每 tick 都设。
 - 溅射伤害：类型的 `attack.splash`（1～3，D-217）——打中目标时，目标占的格子往外扩这么多格的方圈里别的敌方实体也挨一下，伤害按各自的类型算 `vs`、算增益，打玩家的东西时不溅到中立的；平台在落点放一个橙色的画面特效。
@@ -132,6 +133,7 @@ export default ruleset
 - 速度：取全部实体要把它们都传进沙箱（几百个实体约 0.3 毫秒），同一 tick 里的几次回调共用这一份。只关心某些实体时用筛选（`entities({ owner, type, kind })`）或 `entitiesIn`：没取过全部实体时，筛选在沙箱外面做，只传筛出来的，快得多。每 tick 找主基地这种事一定要用筛选。
 - `objectives` 的返回值要能转成 JSON，最多 6.4 万字；`result` / `timeUp` 返回 `{ winner, reason }`（可选 `winners`、`ranking`、`stats`），格式不对会报错。
 - **自己的统计** `stats`：结果里可以带上规则包自己的指标，每项是按玩家编号排的数组，比如 `{ winner, reason, stats: { 劫到商队: [3, 5], 被抢走: [1, 0] } }`（最多 12 项，名字最长 20 字）。联赛按 bot 累计、显示每局平均，战报也会列出来，用来检查你设计的机制到底有没有发生、谁用得多。在顶层变量里一边打一边记，结束时放进结果就行（每局都会重新加载，不用自己清零）。规则包改归属（setOwner）的次数联赛会自动统计（"换主人"），不用自己记。
+- **选手页看点** `spotlight`：统计里有值得在联赛视频里讲的，在规则包对象上写 `spotlight: [{ stat, unit?, lower?, note? }]`（1～4 项；`stat` 是 stats 里的名字，`unit` 最长 4 字、`note` 40 字）。视频的选手页多一张小卡片，列出这个选手每项的每局平均和在参赛选手里排第几（参考 bot 不比；`lower: true` 是越小越靠前），`note` 是写在这项下面的一行小字。这些数字也写进给写视频脚本的大模型看的联赛数据里，它看着起选手的称号（规则包不给称号）。只在部分对局里报的项（比如只在分队时报）也行，一局都没报过的项不显示。
 - `reason` 里的数字联赛会归一成 N 再归类（"时间到，3105 : 3840" 和 "时间到，2000 : 900" 算一类），但 P1、队2、#3 这样的编号会留着。
 
 ## 写好之后

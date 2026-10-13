@@ -27,6 +27,10 @@ export type SceneData = (
       portrait: string | null
       /** 能力雷达图（analysis.ts 算的），没有就画代码开头 */
       radar: { label: string; text: string; score: number }[] | null
+      /** 规则包看点（D-249，brief.ts spotlightFor）：一张小卡片列出几项数字和排名；规则包没写就是 null */
+      spotlight?: { label: string; value: string; rank: number; of: number; note: string | null }[] | null
+      /** 称号（D-249，脚本里写的），挂在名次旁边 */
+      award?: string | null
     }
   | {
       kind: "rules"
@@ -151,6 +155,8 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
   const MONO = 'Consolas, "Cascadia Mono", "Microsoft YaHei", monospace'
   /** 平台的远程仓库：gitee 和 GitHub（片头下方、片尾署名里） */
   const REPO = "gitee.com/mingomin/rts-arena  ·  github.com/Clark760/RTS-ARENA"
+  /** 称号的金色（D-249） */
+  const GOLD = "#ffc94a"
   const C = { bg1: "#080f20", bg2: "#111f37", text: "#edf5ff", muted: "#8ba5c6", accent: "#53e3ff", line: "#294667", panel: "rgba(13,25,46,0.95)" }
   let canvas = new OffscreenCanvas(W * SCALE, H * SCALE)
   let g = canvas.getContext("2d")!
@@ -441,7 +447,14 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     // 左边一条选手颜色
     g.fillStyle = s.color
     g.fillRect(0, 0, 14 * p, H)
-    text(`选手 ${s.rank <= s.total ? `· 联赛第 ${s.rank} 名` : ""}`, 70, 92, 24, s.color, { bold: true, alpha: p })
+    const head = `选手 ${s.rank <= s.total ? `· 联赛第 ${s.rank} 名` : ""}`
+    text(head, 70, 92, 24, s.color, { bold: true, alpha: p })
+    // 称号（D-249，脚本里写的）挂在名次旁边
+    if (s.award) {
+      g.font = font(24, true)
+      awardPill(s.award, 70 + g.measureText(head).width + 18, 92, 20, ease((i - 8) / 14))
+    }
+    const sp = s.spotlight
     text(s.displayName, 70, 164, 58, C.text, { bold: true, alpha: p })
     let y = 206
     if (s.byline) {
@@ -465,18 +478,21 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
       y += ls.length * 31 + 11
     })
     // 右边：能力雷达图（没有就是代码开头）和战绩；有半身像时卡片半透明，透出后面的人
+    // 有规则包看点时（D-249）雷达卡片缩小、代码与战绩压成三行，中间放看点卡片
     const x0 = 820
     const a2 = ease((i - 14) / 20)
+    const radarH = sp ? 330 : 380
     g.globalAlpha = a2
-    broadcastCard(x0,70,400,380)
+    broadcastCard(x0,70,400,radarH)
     g.globalAlpha = 1
     if (s.radar) {
       text("能力雷达（这场联赛的对局数据）", x0 + 18, 98, 15, C.muted, { bold: true, alpha: a2 })
-      radar(s.radar, x0 + 200, 272, 108, s.color, ease((i - 16) / 24))
+      if (sp) radar(s.radar, x0 + 200, 248, 94, s.color, ease((i - 16) / 24))
+      else radar(s.radar, x0 + 200, 272, 108, s.color, ease((i - 16) / 24))
     } else {
       text(s.name + ".ts", x0 + 18, 100, 16, C.muted, { mono: true, alpha: a2 })
       // 文件开头的 12 行：注释绿色、代码灰色
-      s.codeHeader.slice(0, 12).forEach((l: string, k: number) => {
+      s.codeHeader.slice(0, sp ? 10 : 12).forEach((l: string, k: number) => {
         g.font = font(15, false, true)
         let shown = l
         while (shown && g.measureText(shown).width > 364) shown = shown.slice(0, -1)
@@ -484,12 +500,22 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
         text(shown + (shown.length < l.length ? "…" : ""), x0 + 18, 132 + k * 24, 15, isComment ? "#7fb37a" : "#c9d3e6", { mono: true, alpha: a2 })
       })
     }
+    let cy = 70 + radarH + 12
+    if (sp) {
+      spotlightCard(sp, x0, cy, 400, s.color, a2, 1)
+      cy += spotlightHeight(sp, 1) + 12
+    }
     g.globalAlpha = a2
-    broadcastCard(x0,470,400,200)
+    broadcastCard(x0,cy,400,670-cy)
     g.globalAlpha = 1
-    g.save();g.globalAlpha=a2;dataHeading("代码与战绩",x0+20,504,360);g.restore()
-    s.facts.forEach((f: string, k: number) => text(f, x0 + 20, 532 + k * 26, 18, C.text, { alpha: a2 }))
-    s.record.forEach((r: string, k: number) => text(r, x0 + 20, 622 + k * 26, 19, s.color, { bold: true, alpha: a2 }))
+    g.save();g.globalAlpha=a2;dataHeading("代码与战绩",x0+20,cy+34,360);g.restore()
+    if (sp) {
+      text(s.facts[0] ?? "", x0 + 20, cy + 58, 17, C.text, { alpha: a2 })
+      s.record.forEach((r: string, k: number) => text(r, x0 + 20, cy + 84 + k * 24, 18, s.color, { bold: true, alpha: a2 }))
+    } else {
+      s.facts.forEach((f: string, k: number) => text(f, x0 + 20, cy + 62 + k * 26, 18, C.text, { alpha: a2 }))
+      s.record.forEach((r: string, k: number) => text(r, x0 + 20, cy + 152 + k * 26, 19, s.color, { bold: true, alpha: a2 }))
+    }
     watermark()
   }
 
@@ -646,7 +672,14 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     }
     g.fillStyle = s.color
     g.fillRect(0, 0, VW, 10 * p)
-    text(`选手 · 联赛第 ${s.rank} 名`, SX, 80, 24, s.color, { bold: true, alpha: p })
+    const head = `选手 · 联赛第 ${s.rank} 名`
+    text(head, SX, 80, 24, s.color, { bold: true, alpha: p })
+    // 称号（D-249，脚本里写的）挂在名次旁边；规则包看点卡片放在雷达图下面
+    if (s.award) {
+      g.font = font(24, true)
+      awardPill(s.award, SX + g.measureText(head).width + 16, 80, 20, ease((i - 8) / 14))
+    }
+    const sp = s.spotlight
     fitLines(s.displayName, SX, 148, 60, 30, SW, 1, C.text, { bold: true })
     let y = 190
     if (s.byline) {
@@ -657,14 +690,18 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     if (s.radar) {
       const a2 = ease((i - 14) / 20)
       g.globalAlpha = a2
-      broadcastCard(SX,y,SW,400)
+      broadcastCard(SX,y,SW,sp ? 340 : 400)
       g.globalAlpha = 1
       g.save()
-      g.translate(VW / 2, y + 200)
-      g.scale(1.2, 1.2)
+      g.translate(VW / 2, y + (sp ? 168 : 200))
+      if (!sp) g.scale(1.2, 1.2)
       radar(s.radar, 0, 0, 110, s.color, ease((i - 16) / 24))
       g.restore()
-      y += 414
+      y += sp ? 354 : 414
+    }
+    if (sp) {
+      spotlightCard(sp, SX, y, SW, s.color, ease((i - 14) / 20), 1.25)
+      y += spotlightHeight(sp, 1.25) + 14
     }
     vBullets(s.intro, SX + 22, y, SW - 22, VH - 96 - y, 26, 18, s.color, i - 8)
     if (s.record?.length) fitLines(s.record.join(" · "), VW / 2, VH - 40, 24, 14, SW, 1, s.color, { bold: true, align: "center" })
@@ -1200,6 +1237,34 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     g.globalAlpha=.4
     for(let k=0;k<3;k++){g.beginPath();g.moveTo(x+width-15-k*5,y+height-4);g.lineTo(x+width-13-k*5,y+height-8);g.stroke()}
     g.restore()
+  }
+  /** 称号（D-249）：金色小牌子，左边从 x 开始；y 是旁边那行字的基线 */
+  function awardPill(award:string,x:number,y:number,px:number,a:number):void {
+    const h=px+14,top=y-px*0.85-7,label="★ "+award
+    g.font=font(px,true)
+    const tw=g.measureText(label).width
+    g.globalAlpha=a
+    roundRect(x,top,tw+px*1.4,h,h/2,GOLD)
+    text(label,x+px*0.7,top+h/2+px*0.36,px,"#2a1d00",{bold:true,alpha:a})
+    g.globalAlpha=1
+  }
+  /** 看点卡片多高（k 是缩放：横屏 1、竖屏 1.25） */
+  function spotlightHeight(rows:Any[],k:number):number {
+    return Math.round((20+rows.length*28+rows.filter((r:Any)=>r.note).length*16)*k)
+  }
+  /** 规则包看点卡片（D-249）：每项一行——名字、每局平均、在参赛选手里排第几；有说明的在下面一行小字写怎么算的（不要标题，用户：省地方） */
+  function spotlightCard(rows:Any[],x:number,y:number,w:number,color:string,a:number,k:number):void {
+    g.globalAlpha=a
+    broadcastCard(x,y,w,spotlightHeight(rows,k))
+    g.globalAlpha=1
+    let ry=y+32*k
+    for(const r of rows) {
+      text(r.label,x+20*k,ry,Math.round(17*k),C.text,{alpha:a})
+      text(r.value,x+w-96*k,ry,Math.round(19*k),color,{bold:true,align:"right",alpha:a})
+      text(`第 ${r.rank} / ${r.of}`,x+w-20*k,ry,Math.round(14*k),r.rank===1?C.text:C.muted,{align:"right",alpha:a})
+      if(r.note){ry+=16*k;fitLines(r.note,x+20*k,ry,Math.round(12*k),9,w-40*k,1,C.muted,{alpha:a})}
+      ry+=28*k
+    }
   }
   /** 座位按队伍分组（D-248）：同队的挨着、队按第一个座位的先后；不分队时每人一组 */
   function teamGroups(seats:Any[]):number[][] {

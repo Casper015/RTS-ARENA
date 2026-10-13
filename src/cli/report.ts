@@ -854,7 +854,7 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
   let any = false
   const costOf = (t: (typeof types)[string]) => Object.values(t.cost ?? {}).reduce((a: number, c) => a + (c ?? 0), 0)
   const cheapest = Math.min(...Object.values(types).map(costOf).filter((c) => c > 0))
-  // 最便宜的兵（D-227，攻城拓荒试写反馈：城墙才 15 金，平均留着 70 就报「囤着」，其实是在攒一个兵的钱）
+  // 最便宜的兵（D-227，攻城拓荒试写反馈：城墙很便宜（当时 15 金），平均留着 70 就报「囤着」，其实是在攒一个兵的钱）
   const cheapestArmy = Math.min(...Object.values(types).filter((t) => t.kind === "unit" && !t.worker).map(costOf).filter((c) => c > 0))
   for (const p of hintFor) {
     const hints: string[] = []

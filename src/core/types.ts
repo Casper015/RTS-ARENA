@@ -320,6 +320,21 @@ export interface RuleContext {
   note(text: string, player?: number): void
 }
 
+/**
+ * 联赛视频选手页上的「规则包看点」（D-249）的一项：挑对局结果 stats 里的一项，选手页列出这个选手的每局平均、在参赛选手里排第几。
+ * 只算报了这一项的对局（比如只在分队时报），联赛里一局都没报过的项不显示。称号不由规则包给，写视频脚本的大模型看着这些数字自己起
+ */
+export interface SpotlightItem {
+  /** result.stats 里的名字 */
+  stat: string
+  /** 单位（最长 4 字），比如「金」 */
+  unit?: string
+  /** true 表示越小排名越靠前（默认越大越靠前） */
+  lower?: boolean
+  /** 一句话说怎么算的（最长 40 字），写在这一项下面 */
+  note?: string
+}
+
 export interface Ruleset {
   id: string
   name: string
@@ -333,6 +348,8 @@ export interface Ruleset {
    * 默认 false（各管各的，D-116）
    */
   sharedResources?: boolean
+  /** 可选：联赛视频选手页上的「规则包看点」（D-249），1～4 项，比如攻城拓荒 2v2 共用金子时每人吃了队友多少钱 */
+  spotlight?: SpotlightItem[]
   /** 一局最多多少 tick */
   maxTicks: number
   /** 回放每秒播放多少 tick（只影响观看） */
@@ -417,6 +434,10 @@ export interface RulePlayer {
   alive: boolean
   score: number
   resources: Record<string, number>
+  /** 整局累计挣到的（D-249）：自己的工人交的货 + 规则包 addResource 给的。同队共用一份资源时 resources 是整队的，靠它分清是谁挣的 */
+  gathered: Record<string, number>
+  /** 整局累计花掉的（D-249）：自己下命令造建筑、生产、放技能扣的，取消时退回的会减掉 */
+  spent: Record<string, number>
 }
 
 export interface EntityState extends RuleEntity {

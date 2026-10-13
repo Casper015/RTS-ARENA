@@ -610,7 +610,7 @@ function gathering(w: World): void {
       if (rectDist(e, drop) > 1) continue
       const { resource, amount } = e.carrying
       w.players[e.owner].resources[resource] += amount
-      w.gathered[e.owner][resource] += amount
+      w.players[e.owner].gathered[resource] += amount
       w.events.push({ kind: "deposit", player: e.owner, resource, amount, by: e.id })
       e.carrying = null
       o.returning = false

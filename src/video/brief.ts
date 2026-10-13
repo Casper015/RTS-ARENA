@@ -5,15 +5,15 @@
 import { existsSync, readFileSync } from "node:fs"
 import { basename, dirname, join, resolve } from "node:path"
 import { finalScores } from "../cli/highlights.ts"
-import type { Replay } from "../core/types.ts"
+import type { Replay, SpotlightItem } from "../core/types.ts"
 import { PKG_ROOT } from "../paths.ts"
 
 /** 联赛汇总文件（*.series.json）里视频要用到的部分 */
 export interface SeriesFile {
   format: string
   kind?: string
-  /** summary 是规则包的一句话简介、dir 是规则包目录（D-145 起记下，视频的规则介绍用） */
-  ruleset: { id: string; name: string; summary?: string; dir?: string }
+  /** summary 是规则包的一句话简介、dir 是规则包目录（D-145 起记下，视频的规则介绍用）；spotlight 是规则包的选手页看点（D-249 起记下，有才写） */
+  ruleset: { id: string; name: string; summary?: string; dir?: string; spotlight?: SpotlightItem[] }
   startedAt: string
   games: number
   /** 跑的时候加了 --no-replays 就是 false（D-175 起记），这种联赛做不了视频 */
@@ -130,6 +130,8 @@ export interface VideoBrief {
     headToHead: Record<string, string>
     /** 每局平均：采集、造单位、损失、击杀 */
     perGame: Record<string, number> | null
+    /** 规则包的选手页看点（D-249）：每项的每局平均、在参赛选手里排第几；规则包没写看点、参考 bot 是 null */
+    spotlight: SpotlightRow[] | null
     trouble: { errors: number; fuelOuts: number; rejected: number }
     code: CodeFacts | null
   }[]
@@ -153,6 +155,8 @@ export interface VideoScript {
     byline?: string
     /** 一句话定位（最多 30 字） */
     tagline: string
+    /** 称号（D-249，最多 8 字，可以不写）：选手页名次旁边的金色小牌子，看规则包看点和对局数据自己起，比如共用金子的 2v2 里花队友的钱最多的叫「最坑队友」 */
+    award?: string
     /** 介绍，1～5 句（建议 4～5 句），每句最多 65 字 */
     intro: string[]
     /** 接在这个选手介绍后面放的高光对局（联赛的局号）；不写就从精彩对局里自动挑一局有他的（D-183；D-221 横屏也这样） */
@@ -178,7 +182,7 @@ export const PLAYER_PAGE_MIN = 160
 /** 规则介绍合计最多 130 字（D-183、D-221 规则页时长两次减半，最长 3 秒，字数不变） */
 export const RULES_PAGE_CHARS = 130
 
-export const SCRIPT_LIMITS = { hook: 30, rulesLine: 45, rulesLines: 4, displayName: 28, byline: 40, tagline: 30, introLine: 65, introLines: 5, hlTitle: 24, commentary: 80, outro: 60, highlights: 16 }
+export const SCRIPT_LIMITS = { hook: 30, rulesLine: 45, rulesLines: 4, displayName: 28, byline: 40, tagline: 30, award: 8, introLine: 65, introLines: 5, hlTitle: 24, commentary: 80, outro: 60, highlights: 16 }
 
 /**
  * 平台自带的参考 bot（陪练）：联赛汇总里记的文件在规则包的 bots/ 目录（rulesets/<规则包>/bots/）里。
@@ -189,6 +193,45 @@ export function isReferenceBot(file: string, rulesetId: string): boolean {
 }
 
 /** 参赛选手的名字（按参赛顺序）；联赛里全是参考 bot 时（平台自己的演示、测试）都算参赛选手 */
+/** 选手页上规则包看点的一项（D-249）：value 是每局平均（带单位），rank 是在 of 个参赛选手里排第几 */
+export interface SpotlightRow {
+  label: string
+  value: string
+  rank: number
+  of: number
+  note: string | null
+}
+
+/**
+ * 规则包看点（D-249）：规则包 spotlight 挑的每一项（对局结果 stats 里的），这个选手的每局平均、在参赛选手里排第几（参考 bot 不比，
+ * 一样多的并列）。规则包没写看点、这个选手一项都没报过就是 null
+ */
+export function spotlightFor(series: SeriesFile, contestants: string[], name: string): SpotlightRow[] | null {
+  const sp = series.ruleset.spotlight
+  const bots = series.summary?.stats?.bots
+  if (!sp || !bots) return null
+  const avgOf = (n: string, stat: string): number | null => {
+    const b = bots[series.participants.findIndex((p) => p.name === n)]
+    const v = b?.custom?.[stat]
+    return b && b.games > 0 && typeof v === "number" ? v / b.games : null
+  }
+  const rows: SpotlightRow[] = []
+  for (const it of sp) {
+    const mine = avgOf(name, it.stat)
+    if (mine === null) continue
+    const all = contestants.map((n) => avgOf(n, it.stat)).filter((v): v is number => v !== null)
+    const rank = 1 + all.filter((v) => (it.lower ? v < mine - 1e-9 : v > mine + 1e-9)).length
+    rows.push({ label: it.stat, value: spotlightNumber(mine) + (it.unit ? ` ${it.unit}` : ""), rank, of: all.length, note: it.note ?? null })
+  }
+  return rows.length ? rows : null
+}
+
+/** 每局平均：10 以上取整，以下留一位小数；负数用减号 */
+function spotlightNumber(v: number): string {
+  const r = Math.abs(v) >= 10 ? Math.round(v) : Math.round(v * 10) / 10
+  return r < 0 ? `−${-r}` : String(r)
+}
+
 export function contestantNames(series: SeriesFile): string[] {
   const all = series.participants.map((p) => p.name)
   const own = series.participants.filter((p) => !isReferenceBot(p.file, series.ruleset.id)).map((p) => p.name)
@@ -232,6 +275,7 @@ export function checkScript(s: unknown, series: SeriesFile): string[] {
       str(p.displayName, `${where}.displayName`, L.displayName)
       str(p.byline, `${where}.byline`, L.byline)
       str(p.tagline, `${where}.tagline`, L.tagline, true)
+      str(p.award, `${where}.award`, L.award)
       if (!Array.isArray(p.intro) || p.intro.length < 1 || p.intro.length > L.introLines) errs.push(`${where}.intro 要是 1～${L.introLines} 句的数组`)
       else p.intro.forEach((line, j) => str(line, `${where}.intro[${j}]`, L.introLine, true))
       if (p.portrait !== undefined && (typeof p.portrait !== "string" || !p.portrait.trim())) errs.push(`${where}.portrait 要是图片文件的路径`)
@@ -302,7 +346,7 @@ export function scriptWarnings(s: unknown, otherRulesets: string[] = []): string
   if (!s || typeof s !== "object") return []
   const o = s as VideoScript
   const bold: [string, unknown][] = [["hook.text", o.hook?.text], ["outro", o.outro]]
-  if (Array.isArray(o.players)) o.players.forEach((p, i) => bold.push([`players[${i}].tagline`, p?.tagline]))
+  if (Array.isArray(o.players)) o.players.forEach((p, i) => bold.push([`players[${i}].tagline`, p?.tagline], [`players[${i}].award`, p?.award]))
   if (Array.isArray(o.highlights))
     o.highlights.forEach((h, i) => {
       bold.push([`highlights[${i}].title`, h?.title])
@@ -428,6 +472,7 @@ export function playerGames(series: SeriesFile, players: { name: string; highlig
 export function videoBrief(seriesFile: string): VideoBrief {
   const s = readSeries(seriesFile)
   const sum = s.summary!
+  const own = contestantNames(s)
   const players = s.participants.map((p, i) => {
     const st = sum.standings.find((x) => x.index === i) ?? null
     const b = sum.stats?.bots[i]
@@ -448,16 +493,16 @@ export function videoBrief(seriesFile: string): VideoBrief {
       standing: st && { rank: st.rank, rate: st.rate, wins: st.wins, draws: st.draws, losses: st.losses, elo: st.elo },
       headToHead: h2h,
       perGame: b ? { 采集: avg(b.income), 造单位: avg(b.produced), 损失单位: avg(b.lostUnits), 损失工人: avg(b.lostWorkers ?? 0), 击杀单位: avg(b.killedUnits), 拆建筑: avg(b.killedBuildings), 每局时长: avg(b.ticks) } : null,
+      spotlight: own.includes(p.name) ? spotlightFor(s, own, p.name) : null,
       trouble: { errors: b?.errors ?? 0, fuelOuts: b?.fuelOuts ?? 0, rejected: b?.rejected ?? 0 },
       code: file ? codeFacts(readFileSync(file, "utf8")) : null,
     }
   })
-  const own = contestantNames(s)
   const games = playerGames(s, own.map((name) => ({ name })), [])
   const scriptTemplate: VideoScript = {
     hook: { text: "待填：开场的一句大字（30 字以内，可删）" },
     rules: ["待填：怎么赢（照 RULES.md 写给没玩过的观众）", "待填：最关键的机制或特别的单位"],
-    players: own.map((name) => ({ name, displayName: "待填", byline: "待填", tagline: "待填", intro: ["待填", "待填", "待填", "待填"], ...(games.get(name) ? { highlight: games.get(name)! } : {}) })),
+    players: own.map((name) => ({ name, displayName: "待填", byline: "待填", tagline: "待填", award: "待填：称号（8 字以内，可删）", intro: ["待填", "待填", "待填", "待填"], ...(games.get(name) ? { highlight: games.get(name)! } : {}) })),
     highlights: [...games.values()].filter((x): x is number => x !== null).map((index) => ({ index, title: "待填（可删）", commentary: "待填（可删）" })),
     outro: "待填：一句话总结",
   }
@@ -472,6 +517,7 @@ export function videoBrief(seriesFile: string): VideoBrief {
       "文件名常见的写法是 \"模型名-编程工具\"，比如 \"ModelX2.0-ToolY\" 是 ToolY 里的 ModelX 2.0（只是格式的例子）；拆不开、只是外号时就照原样用，不要猜是哪家模型；不知道作者就不写 byline",
       "语气轻松、像赛事解说，但不贬低任何一方；成绩差的写它的特点和输在哪",
       "每个选手 1～5 句介绍（建议 4～5 句，tagline 加 intro 一共 180～260 字），每句不超过 65 字；tagline 不超过 30 字；byline 会出现在片尾的选手名单里",
+      "称号 award（可以不写，8 字以内）挂在选手页名次旁边：看规则包看点（players[].spotlight）和对局数据自己分析着起，要有依据，别两个人用同一个",
       "只介绍参赛选手（players 里不用写平台自带的参考 bot，视频里没有它们）；每个参赛选手的介绍后面接着放他的一局高光对局（players[].highlight），这局的标题和解说写在 highlights 里，照这一局写，解说一句话（不超过 80 字）；index 用联赛的局号",
       "平台署名（规则页底部、片尾的 RTS Arena）由渲染器固定加上，不用写进脚本，也去不掉",
     ],

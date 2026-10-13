@@ -113,6 +113,38 @@ test("格式检查：克制倍数 attack.vs 写错（类型不存在、倍数超
   assert.match(errs, /archer\.attack\.vs 要写成/)
 })
 
+test("格式检查：选手页看点 spotlight 写错（缺 stat、多了字段、单位太长、项数不对）会报出来（D-249）", async () => {
+  const r = JSON.parse(JSON.stringify(await importRuleset("siege-frontier")))
+  const fns = ["setup", "onTick", "objectives", "result", "timeUp"]
+  assert.ok(r.spotlight, "攻城拓荒写了看点")
+  r.spotlight = [{ unit: "金" }, { stat: "吃队友的钱", unit: "金子金子金", award: "最坑队友" }]
+  const errs = checkRulesetData(r, fns).join("\n")
+  assert.match(errs, /spotlight\[0\]\.stat/)
+  assert.match(errs, /spotlight\[1\]\.unit 要是 1～4 字/)
+  assert.match(errs, /多了 award/, "称号由写视频脚本的大模型起，规则包不能写")
+  r.spotlight = []
+  assert.match(checkRulesetData(r, fns).join("\n"), /1～4 项/)
+})
+
+test("攻城拓荒 2v2 放进沙箱（D-249）：规则包读到的每人花掉、挣来的和直接跑一样，吃队友的钱 = 花掉的 − 挣来的 − 300", async () => {
+  const native = await importRuleset("siege-frontier")
+  const boxed = await loadSandboxedRuleset(join(ROOT, "rulesets", "siege-frontier"))
+  const dir = join(ROOT, "rulesets", "siege-frontier", "bots")
+  const play = async (rules: Ruleset) =>
+    runMatch({
+      ruleset: { ...rules, maxTicks: 1500 },
+      seed: 5,
+      teams: [0, 0, 1, 1],
+      bots: [await sandboxBot(join(dir, "rush.ts"), 0, rules), await sandboxBot(join(dir, "baseline.ts"), 1, rules), await sandboxBot(join(dir, "turtle.ts"), 2, rules), await sandboxBot(join(dir, "counter.ts"), 3, rules)],
+    })
+  const a = await play(native)
+  const st = a.result.stats!
+  assert.ok(st["花掉的钱"].every((x) => x > 0), JSON.stringify(st))
+  assert.deepEqual(st["挣来的钱"], a.gathered!.map((g) => g.gold))
+  st["吃队友的钱"].forEach((x, p) => assert.equal(x, st["花掉的钱"][p] - st["挣来的钱"][p] - 300))
+  assert.equal(stable(await play(boxed)), stable(a))
+})
+
 test("new-rules 的模板：加载通过，基准 bot 打赢不动的对手", async () => {
   const dir = join(TMP, "gold-rush")
   await writeRulesTemplate(dir, ["koth"])

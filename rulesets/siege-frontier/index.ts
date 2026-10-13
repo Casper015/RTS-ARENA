@@ -1,13 +1,15 @@
 // 攻城拓荒（D-217）：克制拓荒的地图、建造和胜负，加上城墙和炮，三种兵重新调克制；主基地会开火
 // 地图、开局和胜负判定在 ../common/frontier.ts，单位和建筑在 ../common/siege.ts
 // 3～4 人（各自为战或分队，D-244）：64×64 四角地图，主基地被拆就出局清场，最后剩下的一队赢（同混战，../common/corners.ts）
-import type { Ruleset } from "../../src/core/types.ts"
+// 分队时队友共用金子（D-245）；对局结果另报每人花掉、挣来的和「吃队友的钱」，联赛视频选手页上列出来（D-249，../common/teammates.ts）
+import type { RuleContext, Ruleset } from "../../src/core/types.ts"
 import { STANDARD_TERRAIN } from "../common/standard.ts"
-import { cornerBaseStart, enemyBasesOf, FRONTIER_H, FRONTIER_W, frontierCornersSetup, frontierResult, frontierSetup, frontierTimeUp, scoreKills } from "../common/frontier.ts"
+import { cornerBaseStart, enemyBasesOf, FRONTIER_H, FRONTIER_W, frontierCornersSetup, frontierResult, frontierSetup, frontierTimeUp, scoreKills, START_GOLD } from "../common/frontier.ts"
 import { eliminatedPlayers, seatCorners, teamResult, teamStatus, teamTimeUp } from "../common/corners.ts"
 import { spawnScouts } from "../common/counter.ts"
 import { siegeTypes } from "../common/siege.ts"
 import { farmInfo, farmStats, farmTick, resetFarms } from "../common/farm.ts"
+import { TEAMMATE_SPOTLIGHT, teammateStats } from "../common/teammates.ts"
 import type { Objectives } from "./objectives.ts"
 
 const types = siegeTypes()
@@ -20,6 +22,8 @@ const ruleset: Ruleset = {
   teams: true,
   // 分队时队友共用一份金子（D-245，用户）
   sharedResources: true,
+  // 联赛视频选手页的看点：每人吃了队友多少钱（D-249，用户）
+  spotlight: TEAMMATE_SPOTLIGHT,
   maxTicks: 9000,
   tickRate: 10,
   decisionInterval: 5,
@@ -61,9 +65,14 @@ const ruleset: Ruleset = {
 
   result(ctx) {
     const r = ctx.playerCount > 2 ? teamResult(ctx) : frontierResult(ctx)
-    return r && { ...r, stats: farmStats(ctx.playerCount) }
+    return r && { ...r, stats: stats(ctx) }
   },
-  timeUp: (ctx) => ({ ...(ctx.playerCount > 2 ? teamTimeUp(ctx) : frontierTimeUp(ctx)), stats: farmStats(ctx.playerCount) }),
+  timeUp: (ctx) => ({ ...(ctx.playerCount > 2 ? teamTimeUp(ctx) : frontierTimeUp(ctx)), stats: stats(ctx) }),
+}
+
+/** 农田收入；分队时加上每人花掉、挣来的和吃队友的钱 */
+function stats(ctx: RuleContext): Record<string, number[]> {
+  return { ...farmStats(ctx.playerCount), ...teammateStats(ctx, "gold", START_GOLD) }
 }
 
 export default ruleset

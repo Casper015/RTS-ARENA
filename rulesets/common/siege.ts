@@ -74,7 +74,8 @@ export function siegeTypes(): Record<string, TypeSpec> {
   out.wall = {
     kind: "building",
     maxHp: 400,
-    cost: { gold: 15 },
+    // 15 → 5（D-250，用户：两人局 4 个模型写的 bot 都没造墙）
+    cost: { gold: 5 },
     buildTicks: 40,
     sight: 2,
     look: { shape: "square", label: "墙", name: "城墙" },

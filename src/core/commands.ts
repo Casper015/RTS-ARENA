@@ -112,15 +112,13 @@ function applyOne(w: World, p: number, c: unknown): string | null {
     }
     case "cancel": {
       if (e.construction) {
-        const res = w.players[p].resources
-        for (const [r, n] of Object.entries(e.def.cost)) res[r] += Math.floor((n ?? 0) * SITE_REFUND)
+        for (const [r, n] of Object.entries(e.def.cost)) refund(w, p, r, Math.floor((n ?? 0) * SITE_REFUND))
         w.destroy(e, -1)
         return null
       }
       const q = e.queue.pop()
       if (!q) return `#${e.id} 的生产队列是空的`
-      const res = w.players[p].resources
-      for (const [r, n] of Object.entries(w.types[q.type].cost)) res[r] += n ?? 0
+      for (const [r, n] of Object.entries(w.types[q.type].cost)) refund(w, p, r, n ?? 0)
       return null
     }
     case "build": {
@@ -190,7 +188,10 @@ function castSkill(w: World, p: number, e: EntityState, cmd: Record<string, unkn
   if (!w.rules.onCast) return `规则包没有实现技能的效果（onCast），${sk.name} 放不了`
   const veto = w.rules.onCast(w, info)
   if (veto) return veto
-  for (const [r, n] of Object.entries(sk.cost)) res[r] -= n ?? 0
+  for (const [r, n] of Object.entries(sk.cost)) {
+    res[r] -= n ?? 0
+    w.players[p].spent[r] += n ?? 0
+  }
   // onCast 里实体可能已经没了（比如技能是自爆）
   if (e.alive) e.skillCooldowns[sk.id] = sk.cooldown
   w.casts.push(info)
@@ -203,8 +204,17 @@ function pay(w: World, p: number, def: TypeDef): string | null {
   for (const [r, n] of Object.entries(def.cost)) {
     if ((res[r] ?? 0) < (n ?? 0)) return `${r} 不够：需要 ${n}，现有 ${res[r] ?? 0}`
   }
-  for (const [r, n] of Object.entries(def.cost)) res[r] -= n ?? 0
+  for (const [r, n] of Object.entries(def.cost)) {
+    res[r] -= n ?? 0
+    w.players[p].spent[r] += n ?? 0
+  }
   return null
+}
+
+/** 取消时退钱，也从这个玩家花掉的里减掉（D-249） */
+function refund(w: World, p: number, r: string, n: number): void {
+  w.players[p].resources[r] += n
+  w.players[p].spent[r] -= n
 }
 
 /**

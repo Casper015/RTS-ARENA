@@ -6,7 +6,7 @@ import { basename, dirname, join, resolve } from "node:path"
 import { applyFrame, ReplayModel, type State } from "../core/replay-model.ts"
 import type { Replay } from "../core/types.ts"
 import { findBrowser, launchBrowser } from "./browser.ts"
-import { checkScript, codeFacts, contestantNames, highlightPlayerWarnings, playerGames, PLAYER_PAGE_CHARS, PLAYER_PAGE_MIN, readSeries, resolveBotFile, RULES_PAGE_CHARS, SCRIPT_LIMITS, scriptWarnings, type SeriesFile, type VideoScript } from "./brief.ts"
+import { checkScript, codeFacts, contestantNames, highlightPlayerWarnings, spotlightFor, playerGames, PLAYER_PAGE_CHARS, PLAYER_PAGE_MIN, readSeries, resolveBotFile, RULES_PAGE_CHARS, SCRIPT_LIMITS, scriptWarnings, type SeriesFile, type VideoScript } from "./brief.ts"
 import { installVideoPage, type ReplayFrame, type SceneData } from "./page.ts"
 import { createBattleArt, type BattleAttack } from "./battle-art.ts"
 import { FACTION_COLORS, FACTION_COLOR_NAMES } from "./battle-colors.ts"
@@ -240,6 +240,9 @@ export function buildScenes(
         // 背后的半透明半身像、能力雷达图（D-177）
         portrait: imageOf(p.name),
         radar: analysis?.radar[p.name] ?? null,
+        // 规则包看点（D-249，比如攻城拓荒 2v2 每人吃了队友多少钱）和脚本里大模型起的称号
+        spotlight: spotlightFor(series, [...own], p.name),
+        award: p.award || null,
       },
     }
   }
@@ -1040,6 +1043,8 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
       const r = await importRuleset(series.ruleset.id)
       specs = r.types as TypeSpecs
       series.ruleset.summary ??= r.summary
+      // D-249 之前跑的联赛没记看点：照现在的规则包补上（对局结果里没报这几项的话还是不显示）
+      if (r.spotlight) series.ruleset.spotlight ??= r.spotlight
     }
   } catch {
     specs = undefined
