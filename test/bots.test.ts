@@ -6,7 +6,7 @@ import { referenceBots } from "../src/cli/catalog.ts"
 import { buildDts, buildPrompt, rulesetDir, typecheck } from "../src/cli/docgen.ts"
 import { runMatch } from "../src/core/match.ts"
 import { gameSeatStats } from "../src/cli/league-stats.ts"
-import type { Ruleset } from "../src/core/types.ts"
+import type { Replay, Ruleset } from "../src/core/types.ts"
 import { compileBot, createBot } from "../src/sandbox/quickjs.ts"
 import annihilation from "../rulesets/annihilation/index.ts"
 import frontier from "../rulesets/frontier/index.ts"
@@ -22,8 +22,11 @@ import counterAnnihilation from "../rulesets/counter-annihilation/index.ts"
 import counterFrontier from "../rulesets/counter-frontier/index.ts"
 import regicideAnnihilation from "../rulesets/regicide-annihilation/index.ts"
 import siegeFrontier from "../rulesets/siege-frontier/index.ts"
+import { fnBot, idle } from "./helpers.ts"
 
 const ROOT = join(import.meta.dirname, "..")
+/** 从不进攻的陪练（D-251 攻城拓荒 hog：抢钱队友），打不动的对手也赢不了 */
+const NEVER_ATTACKS = new Set(["siege-frontier/hog"])
 
 const load = async (rules: Ruleset, file: string, p: number) => {
   const c = compileBot(readFileSync(file, "utf8"))
@@ -63,9 +66,10 @@ for (const rules of [annihilation, koth, harvest, melee, frontier, tech, beacons
   })
 
   for (const b of referenceBots(rulesetDir(rules.id)).filter((x) => x.name !== "idle" && x.name !== "baseline"))
-    test(`「${rules.name}」的参考 bot ${b.name} 打不动的对手：能赢，不报错、不被拒命令`, async () => {
+    test(`「${rules.name}」的参考 bot ${b.name} 打不动的对手：能赢，不报错、不被拒命令${NEVER_ATTACKS.has(`${rules.id}/${b.name}`) ? "（从不进攻的陪练：不输就行）" : ""}`, async () => {
       const replay = runMatch({ ruleset: rules, seed: 2, bots: [await load(rules, join(ROOT, "bots", "idle.ts"), 0), await load(rules, b.file, 1)] })
-      assert.equal(replay.result.winner, 1, replay.result.reason)
+      if (NEVER_ATTACKS.has(`${rules.id}/${b.name}`)) assert.notEqual(replay.result.winner, 0, replay.result.reason)
+      else assert.equal(replay.result.winner, 1, replay.result.reason)
       assert.equal(replay.bots[1].errors + replay.bots[1].fuelOuts + replay.bots[1].rejected, 0)
     })
 
@@ -151,6 +155,32 @@ test("混战 2v2：按队伍判胜负，什么都不做的队友也算赢", asyn
     replay.players.map((p) => p.team),
     [0, 0, 1, 1],
   )
+})
+
+test("同一 tick 各家的命令按这次调用用的燃料从少到多执行（D-251）：共用金子只够一个工人时燃料少的队友拿到，一样多的随机先后", () => {
+  // 开局整队只有 50 金：两个队友第 0 tick 都要在主基地造一个工人（50 金）
+  const poor: Ruleset = {
+    ...siegeFrontier,
+    maxTicks: 3,
+    setup(ctx) {
+      siegeFrontier.setup(ctx)
+      for (let p = 0; p < ctx.playerCount; p++) ctx.setResources(p, { gold: 50 })
+    },
+  }
+  const worker = (fuel: number) => {
+    const r = fnBot((v, cmd) => {
+      const b = v.entities.find((e) => e.owner === v.me && e.type === "base")
+      if (v.tick === 0 && b) cmd.produce(b, "worker")
+    })
+    return { ...r, tick: (json: string) => ({ ...r.tick(json), fuel }) }
+  }
+  const play = (f0: number, f1: number, seed = 1): Replay =>
+    runMatch({ ruleset: poor, seed, teams: [0, 0, 1, 1], bots: [0, 1, 2, 3].map((p) => ({ name: `b${p}`, file: "", runner: p === 0 ? worker(f0) : p === 1 ? worker(f1) : idle() })) })
+  const got = (r: Replay) => [0, 1].filter((p) => r.bots[p].rejected === 0)
+  assert.deepEqual(got(play(5, 0)), [1], "P1 燃料少，先扣到钱")
+  assert.deepEqual(got(play(0, 5)), [0])
+  const first = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((seed) => got(play(2, 2, seed))[0]))
+  assert.deepEqual([...first].sort(), [0, 1], "燃料一样多时谁先随种子变")
 })
 
 test("攻城拓荒 3～4 人（D-244、D-245）：64×64 四角，2v2 队友坐相邻的角、共用一份金子（开局整队 600），各自为战每人 300", async () => {

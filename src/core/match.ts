@@ -1,6 +1,7 @@
 // 对局循环：调 bot → 执行命令 → 结算 → 规则包 → 判胜负 → 记回放
 import { applyCommands } from "./commands.ts"
 import { Recorder } from "./recorder.ts"
+import { Mulberry32, mixSeed } from "./rng.ts"
 import { step } from "./sim.ts"
 import type { BotCall, BotRunner, BotStats, Frame, MatchResult, Replay, Ruleset } from "./types.ts"
 import { buildView } from "./view.ts"
@@ -137,6 +138,11 @@ function play(opts: MatchOptions, w: World): Replay {
   }
 
   const cmds: unknown[][] = []
+  /** 这次决策每个玩家用的燃料（D-251：玩家之间的命令按它从少到多执行） */
+  const fuelNow: number[] = new Array(n).fill(0)
+  /** 燃料一样多时排先后用的随机数（单独一路，不动地图、移动这些别的随机） */
+  const orderRng = new Mulberry32(mixSeed(opts.seed, "order"))
+  const order: number[] = []
   let peakEntities = w.ents.size
   let simMs = 0
   while (!w.ended) {
@@ -146,13 +152,22 @@ function play(opts: MatchOptions, w: World): Replay {
       for (let p = 0; p < n; p++) {
         const runner = runners[p]
         if (!runner || !w.players[p].alive) continue
-        cmds[p] = handle(p, runner.tick(JSON.stringify(buildView(w, p))))
+        const r = runner.tick(JSON.stringify(buildView(w, p)))
+        fuelNow[p] = r.fuel
+        cmds[p] = handle(p, r)
       }
     }
     for (let p = 0; p < n; p++) if (!runners[p] || !w.players[p].alive) w.players[p].pending.length = 0
     w.tick++
-    for (let p = 0; p < n; p++) {
-      if (!cmds[p] || cmds[p].length === 0) continue
+    // 玩家之间的先后（D-251，用户：谁先算完给谁）：这次调用燃料用得少的先执行，一样多的随机排。按燃料不按真实耗时，
+    // 同一个种子结果不变。同一格抢放地基、共用资源的队友同时花钱时，先执行的成功（原来固定按座位号，P0 总是先）
+    order.length = 0
+    for (let p = 0; p < n; p++) if (cmds[p] && cmds[p].length > 0) order.push(p)
+    if (order.length > 1) {
+      orderRng.shuffle(order)
+      order.sort((a, b) => fuelNow[a] - fuelNow[b])
+    }
+    for (const p of order) {
       for (const [c, reason] of applyCommands(w, p, cmds[p])) {
         stats[p].rejected++
         pushErr(p, `命令被拒：${reason}  ${clip(JSON.stringify(c) ?? "", 200)}`)
