@@ -538,6 +538,163 @@ export function createBattleArt() {
           line(g,x+.145,y+.035,x+.035,y+.145,"#765737",.025)
         }
         ellipse(g,-.38,.32,.085,.07,"#c6b583",ink)
+      } else if (r === "forge") {
+        // An open smithy: the tall brick chimney, hot hearth and broad anvil read without a label.
+        box(g,-.40,-.12,.79,.47,"#94724b")
+        for (const x of [-.31,-.13,.05,.23]) line(g,x,-.10,x,.33,"#614b35",.018)
+        box(g,-.04,-.02,.36,.34,"#28302c")
+        polygon(g,[-.44,-.15,-.19,-.37,.27,-.37,.44,-.15,.35,-.04,-.36,-.04],color)
+        line(g,-.18,-.34,.26,-.34,"rgba(255,255,255,.35)",.025)
+        line(g,-.03,-.02,-.03,.32,"#d3b17c",.04)
+        line(g,.33,-.02,.33,.32,"#d3b17c",.04)
+        // The chimney is part of the furnace, rather than a roof decoration.
+        box(g,-.37,-.56,.19,.52,"#85695a")
+        for (const y of [-.44,-.32,-.20]) line(g,-.36,y,-.19,y,"#503e37",.017)
+        box(g,-.40,-.61,.25,.08,"#b6a087")
+        box(g,-.36,-.595,.17,.025,"#30302b","")
+        masonry(-.40,-.09,.30,.42)
+        polygon(g,[-.36,.28,-.36,.07,-.31,.01,-.20,.01,-.15,.07,-.15,.28],"#3d3027")
+        ellipse(g,-.255,.23,.085,.055,"#d45c2f")
+        polygon(g,[-.32,.24,-.29,.15,-.27,.20,-.23,.08,-.20,.19,-.19,.24],"#ffc768","",0)
+        line(g,-.35,.29,-.16,.29,"#51483a",.035)
+        // A heavy, pale steel horn is the smithy's main foreground silhouette.
+        box(g,.03,.24,.19,.14,"#78573c")
+        polygon(g,[-.025,.14,.20,.14,.34,.09,.31,.19,.20,.22,.17,.28,.04,.28,.06,.21,-.025,.20],"#aabcc2")
+        line(g,-.01,.15,.20,.15,steel,.035)
+        line(g,.22,.155,.30,.13,steel,.022)
+        line(g,.24,-.02,.14,.09,"#ba9568",.035)
+        box(g,.18,-.07,.14,.065,"#bac7c9")
+      } else if (r === "armory") {
+        // A high gabled armour hall, with a full breastplate instead of the barracks' shield.
+        masonry(-.38,-.18,.76,.55)
+        polygon(g,[-.43,-.20,0,-.55,.43,-.20,.34,-.07,-.34,-.07],color)
+        line(g,0,-.51,.36,-.21,"rgba(255,255,255,.34)",.025)
+        polygon(g,[-.24,-.12,0,-.34,.24,-.12],"#715b44")
+        line(g,-.26,-.11,0,-.36,"#d2b785",.035)
+        line(g,0,-.36,.26,-.11,"#d2b785",.035)
+        for (const x of [-.36,.29]) {
+          box(g,x,-.12,.07,.47,"#b9b296")
+          polygon(g,[x+.005,-.06,x+.06,-.06,x+.06,.20,x+.033,.25,x+.005,.20],color,"",0)
+        }
+        box(g,-.22,-.02,.44,.34,"#37413b")
+        line(g,0,-.06,0,.31,"#886b4c",.04)
+        // Steel shoulders, a dark neck opening, curved waist and helmet form an unmistakable suit.
+        polygon(g,[-.10,-.025,-.20,.015,-.18,.10,-.12,.09,-.10,.22,0,.28,.10,.22,.12,.09,.18,.10,.20,.015,.10,-.025,.06,.025,-.06,.025],"#a9bbc2")
+        polygon(g,[-.06,.04,0,.075,.06,.04,.07,.18,0,.225,-.07,.18],steel,"",0)
+        line(g,0,.08,0,.22,"#8199a3",.022)
+        polygon(g,[-.08,-.13,-.05,-.21,.04,-.23,.08,-.15,.07,-.07,-.07,-.07],"#c8d7dc")
+        line(g,-.055,-.13,.055,-.13,"#35444c",.035)
+        line(g,0,-.125,0,-.075,"#35444c",.022)
+        for (const x of [-.27,.27]) {
+          line(g,x,.04,x,.36,"#8f6c45",.025)
+          polygon(g,[x-.025,.04,x,-.04,x+.025,.04],steel)
+        }
+        box(g,-.14,.33,.28,.055,"#aaa78b")
+      } else if (r === "range") {
+        // An open practice yard and two large bullseyes give the range a low, wide silhouette.
+        box(g,-.46,-.35,.92,.73,"#a48c5e")
+        for (const x of [-.13,.20]) {
+          line(g,x-.09,.30,x-.05,-.10,"#d2bb83",.035)
+          line(g,x+.09,.30,x+.05,-.10,"#d2bb83",.035)
+        }
+        for (const x of [-.44,.44]) {
+          line(g,x,-.25,x,.32,"#6f573c",.035)
+          for (const y of [-.29,-.03,.26]) box(g,x-.024,y,.048,.12,"#d0ac76")
+        }
+        // A small timber shelter holds the shooting equipment; it does not cover the targets.
+        box(g,-.43,-.24,.19,.35,"#786044")
+        polygon(g,[-.48,-.26,-.35,-.43,-.21,-.27,-.23,-.18,-.46,-.18],color)
+        line(g,-.39,-.14,-.39,.11,"#d2b583",.032)
+        for (const x of [-.075,.235]) {
+          line(g,x-.06,-.04,x-.09,.13,"#5d4934",.025)
+          line(g,x+.06,-.04,x+.09,.13,"#5d4934",.025)
+          ellipse(g,x,-.145,.125,.145,"#e3cca0",ink)
+          ellipse(g,x,-.145,.086,.10,"#b34d38")
+          ellipse(g,x,-.145,.049,.058,"#f0dfb5")
+          ellipse(g,x,-.145,.019,.025,"#b34d38")
+          line(g,x+.01,-.14,x+.10,-.08,"#3d4037",.022)
+          line(g,x+.08,-.10,x+.12,-.10,steel,.018)
+        }
+        // Foreground rack: long steel barrels and a curved bow also acknowledge musket training.
+        for (const x of [-.36,-.27]) {
+          line(g,x,.31,x+.045,.07,"#725237",.055)
+          line(g,x+.025,.20,x+.05,.035,steel,.025)
+        }
+        g.beginPath();g.moveTo(-.17,.06);g.quadraticCurveTo(-.06,.19,-.17,.33);g.strokeStyle="#d6b178";g.lineWidth=.025;g.stroke()
+        line(g,-.17,.06,-.17,.33,"#ece1bd",.012)
+        line(g,-.41,.23,-.14,.23,"#91724d",.035)
+        polygon(g,[.34,.18,.43,.18,.43,.34,.385,.38,.34,.34],color)
+      } else if (r === "mining") {
+        // A timber headframe, winding wheel and rail cart distinguish mining from a cargo depot.
+        box(g,-.43,-.06,.40,.38,"#987349")
+        for (const x of [-.34,-.22,-.10]) line(g,x,-.04,x,.30,"#654c34",.018)
+        polygon(g,[-.47,-.09,-.27,-.29,-.02,-.09,-.05,-.015,-.44,-.015],"#735b40")
+        polygon(g,[-.47,-.09,-.02,-.09,-.05,-.015,-.44,-.015],color)
+        box(g,-.31,.09,.17,.23,"#30352d")
+        line(g,-.34,.08,-.11,.08,"#cfad76",.035)
+        polygon(g,[.01,.22,.02,-.08,.32,-.08,.42,.22],"#343930")
+        line(g,.02,.28,.08,-.47,"#5d4631",.075)
+        line(g,.39,.28,.30,-.47,"#5d4631",.075)
+        line(g,.02,.26,.32,-.37,"#b8935e",.035)
+        line(g,.39,.26,.07,-.37,"#b8935e",.035)
+        line(g,.04,-.38,.34,-.38,"#bfa06d",.065)
+        polygon(g,[-.005,-.49,.19,-.62,.39,-.49,.35,-.43,.03,-.43],color)
+        ellipse(g,.19,-.385,.092,.095,"#5b655d",ink)
+        ellipse(g,.19,-.385,.026,.027,gold)
+        for (const angle of [0,Math.PI/3,Math.PI*2/3]) {
+          line(g,.19-Math.cos(angle)*.07,-.385-Math.sin(angle)*.07,.19+Math.cos(angle)*.07,-.385+Math.sin(angle)*.07,"#c8b080",.018)
+        }
+        line(g,.19,-.29,.19,.13,"#d5c59a",.016)
+        for (const y of [.24,.33,.41]) line(g,-.015,y,.43,y,"#6e5235",.045)
+        line(g,.06,.15,.04,.44,"#aab8b5",.025)
+        line(g,.31,.15,.37,.44,"#aab8b5",.025)
+        ellipse(g,.095,.355,.048,.05,"#303936",ink)
+        ellipse(g,.30,.355,.048,.05,"#303936",ink)
+        polygon(g,[.015,.15,.35,.15,.31,.32,.07,.32],"#7e9396")
+        polygon(g,[.045,.15,.09,.055,.17,.085,.22,.025,.31,.085,.33,.15],"#d3ac59")
+        line(g,.08,.27,.30,.27,"#bdcbcb",.027)
+        // A crossed pick sign belongs to the office, apart from the machinery.
+        line(g,-.37,.035,-.19,-.12,"#d2b27a",.026)
+        line(g,-.35,-.12,-.19,.025,"#d2b27a",.026)
+        line(g,-.27,-.15,-.15,-.06,steel,.04)
+        line(g,-.39,-.07,-.29,-.16,steel,.04)
+      } else if (r === "gunworks") {
+        // A broad stone arsenal, twin flues, powder barrels and a wheeled cannon.
+        masonry(-.42,-.13,.73,.48)
+        box(g,.28,-.05,.15,.34,"#88704d")
+        polygon(g,[.25,-.08,.36,-.23,.48,-.08,.44,.005,.28,.005],"#79664b")
+        for (const x of [-.34,-.13]) {
+          box(g,x,-.51,.12,.31,"#65716c")
+          box(g,x-.025,-.55,.17,.075,"#a6aa90")
+          line(g,x+.025,-.535,x+.10,-.535,"#29332e",.028)
+        }
+        polygon(g,[-.47,-.15,-.25,-.36,.18,-.36,.35,-.15,.30,-.04,-.41,-.04],color)
+        line(g,-.24,-.33,.17,-.33,"rgba(255,255,255,.35)",.025)
+        for (const x of [-.23,-.07,.09]) line(g,x,-.31,x+.14,-.15,"rgba(16,25,31,.25)",.015)
+        box(g,-.13,.04,.29,.29,"#293731")
+        line(g,-.15,.03,.18,.03,"#c4b98f",.035)
+        // Crossed muskets above the wide assembly bay stay separate from the forge's hot furnace.
+        for (const side of [-1,1]) {
+          line(g,-.09*side,-.005,.035*side,-.10,"#a17b4c",.045)
+          line(g,0,-.08,.11*side,-.165,steel,.025)
+        }
+        for (const [x,y] of [[-.33,.22],[.355,.25]]) {
+          box(g,x-.075,y-.12,.15,.23,"#987343")
+          ellipse(g,x,y-.115,.075,.037,"#c09b5e",ink)
+          for (const dy of [-.055,.055]) line(g,x-.075,y+dy,x+.075,y+dy,"#b7c1b8",.035)
+          line(g,x,y-.08,x,y+.08,"#644d32",.014)
+        }
+        // Large wheels and a long bored barrel show that this workshop produces artillery too.
+        line(g,-.03,.34,.28,.34,"#876747",.09)
+        for (const x of [.015,.25]) {
+          ellipse(g,x,.33,.078,.085,"#b89660",ink)
+          line(g,x-.05,.33,x+.05,.33,"#5c4833",.022)
+          line(g,x,.275,x,.385,"#5c4833",.022)
+          ellipse(g,x,.33,.02,.024,"#536360")
+        }
+        polygon(g,[-.025,.20,.28,.13,.32,.18,.31,.24,.015,.285],"#788f94")
+        line(g,.01,.205,.28,.155,"#d0e0e4",.028)
+        ellipse(g,.303,.185,.032,.055,"#26363d",ink)
       } else if (r === "stable") {
         masonry(-.4,-.08,.8,.43)
         polygon(g,[-.47,-.09,0,-.43,.47,-.09,.32,.04,-.32,.04],color)
