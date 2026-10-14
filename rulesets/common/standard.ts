@@ -170,12 +170,31 @@ export function rotationalTerrain(size: number, fill: string, features: Feature[
   return g.map((row) => row.join(""))
 }
 
+/** 长方形四角地图（D-261，攻城拓荒、火药科技的 3～4 人局）：左上角那一份在第 k 个角的样子——0 左上、1 右上、2 右下、3 左下
+ *  （和正方形图 rotateK 转 k 次落到的角一样），右边的左右翻、下边的上下翻 */
+export function cornerImage(width: number, height: number, r: { x: number; y: number; w: number; h: number }, k: number): { x: number; y: number; w: number; h: number } {
+  const fx = k === 1 || k === 2
+  const fy = k === 2 || k === 3
+  return { x: fx ? width - r.x - r.w : r.x, y: fy ? height - r.y - r.h : r.y, w: r.w, h: r.h }
+}
+
+/** 先铺满 fill，再画 features，每个 feature 同时画到左右翻、上下翻、都翻的位置（长方形四角地图） */
+export function mirror4Terrain(width: number, height: number, fill: string, features: Feature[]): string[] {
+  const g: string[][] = Array.from({ length: height }, () => Array<string>(width).fill(fill))
+  for (const f of features)
+    for (let k = 0; k < 4; k++) {
+      const r = cornerImage(width, height, f, k)
+      for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) g[y][x] = f.ch
+    }
+  return g.map((row) => row.join(""))
+}
+
 /** 各人数下玩家坐哪个角（转几次 90°）：两人坐对角，三人空一个角，四人坐满 */
 export function cornersFor(players: number): number[] {
   return players === 2 ? [0, 2] : [0, 1, 2, 3].slice(0, players)
 }
 
-// ---------- 随机地图（按种子生成；两人图中心对称、四人图四重旋转对称，每家看到的完全一样） ----------
+// ---------- 随机地图（按种子生成；两人图中心对称、四人图四重旋转对称或左右上下都对称，每家看到的一样或是镜像） ----------
 
 /** 矩形（左上角和宽高） */
 export interface Box {
@@ -188,12 +207,13 @@ export interface Cell {
   x: number
   y: number
 }
-/** point：两人图的中心对称（对面的东西在 mirror 的位置）；rot4：正方形图绕中心转 90° 的四重对称 */
-export type Symmetry = "point" | "rot4"
+/** point：两人图的中心对称（对面的东西在 mirror 的位置）；rot4：正方形图绕中心转 90° 的四重对称；mirror4：长方形图左右、上下都对称（D-261） */
+export type Symmetry = "point" | "rot4" | "mirror4"
 
 /** 一个矩形（对称前那一份）在各个对称位置的样子，第 0 个是它自己 */
 export function symmetricImages(sym: Symmetry, width: number, height: number, b: Box): Box[] {
   if (sym === "point") return [b, { ...mirror(width, height, b.x, b.y, b.w, b.h), w: b.w, h: b.h }]
+  if (sym === "mirror4") return [0, 1, 2, 3].map((k) => cornerImage(width, height, b, k))
   return [0, 1, 2, 3].map((k) => rotateK(width, b, k))
 }
 

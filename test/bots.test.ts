@@ -26,7 +26,7 @@ import { fnBot, idle } from "./helpers.ts"
 
 const ROOT = join(import.meta.dirname, "..")
 /** 从不进攻的陪练（D-251 攻城拓荒 hog：抢钱队友），打不动的对手也赢不了 */
-const NEVER_ATTACKS = new Set(["siege-frontier/hog"])
+const NEVER_ATTACKS = new Set(["siege-frontier/hog", "gunpowder/hog"])
 
 const load = async (rules: Ruleset, file: string, p: number) => {
   const c = compileBot(readFileSync(file, "utf8"))
@@ -183,7 +183,7 @@ test("同一 tick 各家的命令按这次调用用的燃料从少到多执行�
   assert.deepEqual([...first].sort(), [0, 1], "燃料一样多时谁先随种子变")
 })
 
-test("攻城拓荒 3～4 人（D-244、D-245）：64×64 四角，2v2 队友坐相邻的角、共用一份金子（开局整队 600），各自为战每人 300", async () => {
+test("攻城拓荒 3～4 人（D-244、D-245、D-261）：80×56 四角，2v2 队友坐相邻的角、共用一份金子（开局整队 600），各自为战每人 300", async () => {
   const idle = join(ROOT, "bots", "idle.ts")
   const baseline = join(ROOT, "rulesets", "siege-frontier", "bots", "baseline.ts")
   const team = runMatch({
@@ -192,10 +192,10 @@ test("攻城拓荒 3～4 人（D-244、D-245）：64×64 四角，2v2 队友坐�
     teams: [0, 0, 1, 1],
     bots: [await load(siegeFrontier, baseline, 0), await load(siegeFrontier, idle, 1), await load(siegeFrontier, idle, 2), await load(siegeFrontier, idle, 3)],
   })
-  assert.equal(team.map.width, 64)
+  assert.deepEqual([team.map.width, team.map.height], [80, 56])
   assert.equal(team.sharedResources, true)
   const bases = team.initial.entities.filter((e) => e.type === "base").sort((a, b) => a.owner - b.owner)
-  assert.deepEqual(bases.map((b) => [b.x, b.y]), [[3, 3], [3, 58], [58, 58], [58, 3]], "队友（P0、P1）坐左边相邻的两个角")
+  assert.deepEqual(bases.map((b) => [b.x, b.y]), [[3, 3], [3, 50], [74, 50], [74, 3]], "队友（P0、P1）坐左边相邻的两个角")
   assert.deepEqual(team.initial.players.map((p) => p.resources.gold), [600, 600, 600, 600])
   // 只有 P0 在花钱、采矿：队友 P1 的金子一直跟着变，另一队不动
   let moved = false

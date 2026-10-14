@@ -639,55 +639,47 @@ function decide(view: View, cmd: Commands): void {
 
 // ======================= 换到「自己在左上角」的视角里决策（D-246，几个参考 bot 共用） =======================
 // 同一份写法坐在不同的角，找建筑位置（findBuildSpot 一样近时先试左边、下边）、toward 的取整和找空格的顺序都偏向某个方向，
-// 对称的座位会摆出不对称的布局（差一两格），4 人 2v2 里右边那队赢 88%。这里把局面转成「自己的主基地在左上角」再交给上面的
-// decide，它下的命令再转回去：两人局（长方形地图，你在左上或右下）转 0° 或 180°，3～4 人局（正方形）按坐的角转 0°、90°、180°、270°。
-// decide 运行时 game 换成转好的那份（地形跟着转），findBuildSpot、canBuild、pathDistances 也按它算。
+// 对称的座位会摆出不对称的布局（差一两格），4 人 2v2 里右边那队赢 88%。这里把局面翻成「自己的主基地在左上角」再交给上面的
+// decide，它下的命令再翻回去：坐在右半边的左右翻，坐在下半边的上下翻。两人局（中心对称）你在左上或右下，右下就是左右、上下都翻；
+// 3～4 人局的长方形四角地图左右、上下都对称（D-261），四个角都翻得到左上角。
+// decide 运行时 game 换成翻好的那份（地形跟着翻），findBuildSpot、canBuild、pathDistances 也按它算。
 
-let turn = -1
+/** 要不要左右翻、上下翻（null 是还没定，第一次 onTick 看自己的主基地在哪半边） */
+let flipX: boolean | null = null
+let flipY = false
 let realGame: Game
 let turnedGame: Game
 
-/** 格子 (x, y) 顺时针转 k 次 90°（正方形地图）；长方形地图只会转 180° */
-function turnCell(x: number, y: number, k: number): [number, number] {
-  const W = realGame.width
-  const H = realGame.height
-  if (k === 2) return [W - 1 - x, H - 1 - y]
-  for (let i = 0; i < k; i++) [x, y] = [W - 1 - y, x]
-  return [x, y]
+/** 格子 (x, y) 翻过去；翻两次回到原处，所以真实坐标和「左上角」视角的坐标互相换都用它 */
+function turnCell(x: number, y: number): [number, number] {
+  return [flipX ? realGame.width - 1 - x : x, flipY ? realGame.height - 1 - y : y]
 }
 
-/** 占地矩形（左上角 x, y，宽 w、高 h）顺时针转 k 次 90° */
-function turnRect(x: number, y: number, w: number, h: number, k: number): [number, number, number, number] {
-  const W = realGame.width
-  const H = realGame.height
-  if (k === 2) return [W - x - w, H - y - h, w, h]
-  for (let i = 0; i < k; i++) [x, y, w, h] = [W - y - h, x, h, w]
-  return [x, y, w, h]
+/** 占地矩形（左上角 x, y，宽 w、高 h）翻过去 */
+function turnRect(x: number, y: number, w: number, h: number): [number, number, number, number] {
+  return [flipX ? realGame.width - x - w : x, flipY ? realGame.height - y - h : y, w, h]
 }
 
 export function onTick(view: View, cmd: Commands): void {
-  if (turn < 0) {
+  if (flipX === null) {
     const b = view.entities.find((e) => e.owner === view.me && e.type === "base")
     if (!b) return
     realGame = game
-    const left = b.x + b.w / 2 < game.width / 2
-    const top = b.y + b.h / 2 < game.height / 2
-    turn = game.width !== game.height ? (left ? 0 : 2) : left ? (top ? 0 : 3) : top ? 1 : 2
+    flipX = b.x + b.w / 2 >= game.width / 2
+    flipY = b.y + b.h / 2 >= game.height / 2
     const terrain: string[] = []
     for (let y = 0; y < game.height; y++) {
       let row = ""
       for (let x = 0; x < game.width; x++) {
-        const [rx, ry] = turnCell(x, y, turn)
+        const [rx, ry] = turnCell(x, y)
         row += game.terrain[ry][rx]
       }
       terrain.push(row)
     }
     turnedGame = { ...game, terrain }
   }
-  /** 真实坐标转到「自己在左上角」要转几次（反过来转 turn 次） */
-  const back = (4 - turn) % 4
-  const cell = (x: number, y: number) => turnCell(x, y, back)
-  const box = (x: number, y: number, w: number, h: number) => turnRect(x, y, w, h, back)
+  const cell = (x: number, y: number) => turnCell(x, y)
+  const box = (x: number, y: number, w: number, h: number) => turnRect(x, y, w, h)
   const entities = view.entities.map((e) => {
     const [x, y] = box(e.x, e.y, e.w, e.h)
     const out: Entity = { ...e, x, y }
@@ -716,7 +708,7 @@ export function onTick(view: View, cmd: Commands): void {
     const [x, y] = cell(ev.x, ev.y)
     return { ...ev, x, y }
   })
-  const to = (x: number, y: number) => turnCell(x, y, turn)
+  const to = (x: number, y: number) => turnCell(x, y)
   const turnedCmd: Commands = {
     move: (u, x, y) => cmd.move(u, ...to(x, y)),
     attack: (u, t) => cmd.attack(u, t),
@@ -727,7 +719,7 @@ export function onTick(view: View, cmd: Commands): void {
     cancel: (b) => cmd.cancel(b),
     build: (u, type, x, y) => {
       const d = realGame.types[type]
-      const [bx, by] = turnRect(x, y, d.w ?? 1, d.h ?? 1, turn)
+      const [bx, by] = turnRect(x, y, d.w ?? 1, d.h ?? 1)
       cmd.build(u, type, bx, by)
     },
     cast: (u, skill, t) => {

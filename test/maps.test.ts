@@ -50,14 +50,20 @@ test("每个自带规则包：地图随种子变、同一个种子一样、严�
       assert.deepEqual(setupWorld(rules, n, undefined, s).terrain, T, `${id} 种子 ${s} 两次生成不一样`)
       const W = w.width
       const H = w.height
+      // 3～4 人：正方形图四重旋转对称，长方形四角图（攻城拓荒、火药科技，D-261）左右、上下都对称；两人图中心对称
       const rot4 = W === H && n >= 3
+      const mirror4 = W !== H && n >= 3
       for (let y = 0; y < H; y++)
-        for (let x = 0; x < W; x++) assert.equal(T[y][x], rot4 ? T[x][W - 1 - y] : T[H - 1 - y][W - 1 - x], `${id} 种子 ${s} (${x}, ${y}) 不对称`)
+        for (let x = 0; x < W; x++) {
+          assert.equal(T[y][x], rot4 ? T[x][W - 1 - y] : T[H - 1 - y][W - 1 - x], `${id} 种子 ${s} (${x}, ${y}) 不对称`)
+          if (mirror4) assert.equal(T[y][x], T[y][W - 1 - x], `${id} 种子 ${s} (${x}, ${y}) 左右不对称`)
+        }
       const res = w.entities().filter((e) => e.def.kind === "resource")
       const at = new Set(res.map((e) => `${e.x},${e.y}`))
       for (const e of res) {
         const m = rot4 ? { x: W - e.y - e.h, y: e.x } : { x: W - e.x - e.w, y: H - e.y - e.h }
         assert.ok(at.has(`${m.x},${m.y}`), `${id} 种子 ${s} 资源点 (${e.x}, ${e.y}) 没有对称的`)
+        if (mirror4) assert.ok(at.has(`${W - e.x - e.w},${e.y}`), `${id} 种子 ${s} 资源点 (${e.x}, ${e.y}) 没有左右对称的`)
       }
       const bases = w.entities().filter((e) => e.type === "base")
       const walk = (ch: string) => rules.terrain[ch]?.walkable === true
