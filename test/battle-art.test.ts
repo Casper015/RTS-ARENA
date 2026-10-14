@@ -4,7 +4,9 @@ import type { EntSnap, Replay } from "../src/core/types.ts"
 import { createBattleArt } from "../src/video/battle-art.ts"
 import { pacing, replayScene, zoomFrames } from "../src/video/render.ts"
 import { faceToward, farmWorkers, homeFacing, legacySplashEffects, trainingQueue, workerPose } from "../src/video/visual-state.ts"
-import { battleCameraTrack } from "../src/video/battle-camera.ts"
+import { battleCameraTrack, interpolateBattleCamera } from "../src/video/battle-camera.ts"
+import { directorTrack } from "../src/video/fights.ts"
+import { zoomBattleTicks } from "../src/video/combat.ts"
 
 function fixture(): Replay {
   const unit = (range: number) => ({ kind: "unit" as const, w: 1, h: 1, maxHp: 100, moveTicks: 4, look: { shape: "circle" as const }, attack: { damage: 10, range, cooldown: 8 } })
@@ -171,6 +173,8 @@ test("portrait camera follows the busiest battle smoothly, then returns to the o
   replay.map={...replay.map,width:56,height:40,terrain:Array(40).fill(".".repeat(56))}
   replay.initial.entities.push({id:31,type:"soldier",owner:0,x:50,y:34,hp:100,ord:"idle"},{id:32,type:"soldier",owner:1,x:51,y:34,hp:100,ord:"idle"})
   replay.frames=Array.from({length:120},(_,i)=>({t:i+1,...(i<40&&i%2===0?{shots:[1,2,1,2,1,2,1,2,31,32]}:{})}))
+  losses(replay, 30, 5, 5)
+  losses(replay, 30, 50, 34)
   const ticks=Array.from({length:360},(_,i)=>Math.floor(i/3))
   const path=battleCameraTrack(replay,ticks,30)
   assert.equal(path[0].zoom,1)
@@ -189,6 +193,7 @@ test("quiet video segments show the exact complete map after a bounded return ev
   const replay=fixture()
   replay.map={...replay.map,width:56,height:40,terrain:Array(40).fill(".".repeat(56))}
   replay.frames=Array.from({length:120},(_,i)=>({t:i+1,shots:[1,2]}))
+  losses(replay, 30, 5, 5)
   const ticks=Array.from({length:250},(_,i)=>Math.floor(i/3))
   const path=battleCameraTrack(replay,ticks,30,ticks.map((_,i)=>i<100))
   assert.ok(path[99].zoom>2.7)
@@ -259,17 +264,53 @@ test("击退拖尾只认真正的击退（D-235）：让路时一 tick 挪 3 格
   assert.equal(sc.frame!(i).knockFx, undefined)
 })
 
-test("交战缩放（D-236）：一段交战里死的单位不到 2 个就不放大，2 个以上才放大；横屏竖屏用同一条镜头轨迹", () => {
+test("交战缩放：同一处 60 tick 内至少死 4 个单位，视频和网页使用同一门槛", () => {
   const one = fixture()
   let pace = pacing(one, 30)
   assert.ok(pace.mode(0) === "fight" || [...Array(pace.playFrames).keys()].some((i) => pace.mode(i) === "fight"))
   assert.ok(!zoomFrames(one, pace, pace.playFrames).some(Boolean))
-  const two = fixture()
-  two.frames[9] = { ...two.frames[9], die: [2, 3], hp: [2, 0, 3, 0] }
-  pace = pacing(two, 30)
-  const zoom = zoomFrames(two, pace, pace.playFrames)
+  const three = fixture()
+  three.frames[9] = { ...three.frames[9], die: [2, 3, 4] }
+  pace = pacing(three, 30)
+  assert.ok(!zoomFrames(three, pace, pace.playFrames).some(Boolean))
+  assert.ok(directorTrack(three).every((c) => c.zoom === 1))
+  const four = fixture()
+  four.map = { ...four.map, width: 56, height: 40, terrain: Array(40).fill(".".repeat(56)) }
+  four.frames[9] = { ...four.frames[9], die: [2, 3, 4] }
+  four.frames[39].die = [6]
+  pace = pacing(four, 30)
+  const zoom = zoomFrames(four, pace, pace.playFrames)
   assert.ok(zoom.some(Boolean))
   assert.ok(zoom.every((z, i) => !z || pace.mode(i) === "fight"))
+  assert.ok(directorTrack(four).some((c) => c.zoom > 1.15))
+})
+
+function losses(r: Replay, t: number, x: number, y: number, count = 4, type = "soldier", removed = false): void {
+  const ids = Array.from({ length: count }, (_, j) => 10000 + r.initial.entities.length + j)
+  r.initial.entities.push(...ids.map((id) => ({ id, type, owner: id % 2, x, y, hp: 100, ord: "idle" })))
+  const f = r.frames[t - 1]
+  f.die = [...(f.die ?? []), ...ids]
+  if (removed) f.removed = [...(f.removed ?? []), ...ids]
+}
+
+test("四个死亡不能跨远处战场、跨过 60 tick 或拿建筑和主动移除凑数", () => {
+  const cases = [arena(), arena(), arena(), arena()]
+  losses(cases[0], 30, 5, 5, 2); losses(cases[0], 30, 58, 58, 2)
+  for (const t of [10, 40, 70, 100]) losses(cases[1], t, 5, 5, 1)
+  losses(cases[2], 30, 5, 5, 2); losses(cases[2], 30, 5, 5, 2, "base")
+  losses(cases[3], 30, 5, 5, 2); losses(cases[3], 30, 5, 5, 2, "soldier", true)
+  for (const r of cases) {
+    const pace = pacing(r, 30)
+    assert.ok(!zoomBattleTicks(r).some(Boolean))
+    assert.ok(!zoomFrames(r, pace, pace.playFrames).some(Boolean))
+    assert.ok(directorTrack(r).every((c) => c.zoom === 1))
+  }
+  const boundary = arena()
+  losses(boundary, 10, 5, 5, 3); losses(boundary, 70, 5, 5, 1)
+  assert.ok(zoomBattleTicks(boundary).some(Boolean), "60 tick 边界包含在窗口内")
+  boundary.frames[70].die = boundary.frames[69].die
+  delete boundary.frames[69].die
+  assert.ok(!zoomBattleTicks(boundary).some(Boolean), "61 tick 不算短时间")
 })
 
 /** 64×64 的空地，几对一直站着对打的兵：A (5,5)、B (58,58)、C (22,6)、D (58,5)；每帧 1 tick */
@@ -279,12 +320,100 @@ function arena(): Replay {
   const e = (id: number, owner: number, x: number, y: number) => ({ id, type: "soldier", owner, x, y, hp: 100, ord: "idle" })
   r.initial.entities = [e(1, 0, 5, 5), e(2, 1, 6, 5), e(3, 0, 58, 58), e(4, 1, 59, 58), e(5, 0, 22, 6), e(6, 1, 23, 6), e(7, 0, 58, 5), e(8, 1, 59, 5)]
   r.frames = Array.from({ length: 300 }, (_, i) => ({ t: i + 1 }))
+  r.maxTicks = r.result.tick = 300
   return r
 }
 const shoot = (r: Replay, from: number, to: number, pairs: number[]) => {
   for (let k = from; k < to; k++) r.frames[k] = { ...r.frames[k], shots: [...(r.frames[k].shots ?? []), ...pairs] }
+  for (const id of new Set(pairs.filter((_, i) => i % 2 === 0))) {
+    const e = r.initial.entities.find((e) => e.id === id)!
+    for (let t = from + 25; t <= to; t += 50) losses(r, t, e.x, e.y)
+  }
 }
 const frameTicks = Array.from({ length: 300 }, (_, i) => i)
+
+/** 2v2 的两处近战：主战场不停，另一处每 100 tick 打 35 tick，死亡保证视频、网页都进入交战导播。 */
+function intermittentTeamFight(): Replay {
+  const r = arena()
+  r.map = { ...r.map, width: 80, height: 56, terrain: Array(56).fill(".".repeat(80)) }
+  r.players = Array.from({ length: 4 }, (_, p) => ({ name: `P${p}`, bot: "", team: p < 2 ? 0 : 1 }))
+  r.initial.players = Array.from({ length: 4 }, () => ({ resources: {}, score: 0, alive: true }))
+  r.initial.entities = r.initial.entities.slice(0, 4)
+  for (let p = 0; p < 4; p++) Object.assign(r.initial.entities[p], { owner: [0, 2, 1, 3][p], x: 39 + p % 2, y: p < 2 ? 14 : 40 })
+  r.maxTicks = r.result.tick = 1200
+  r.result.winners = [0, 1]
+  r.frames = Array.from({ length: 1200 }, (_, i) => {
+    const t = i + 1, ids = Array.from({ length: 4 }, (_, j) => 1000 + Math.floor(t / 50) * 4 + j)
+    return { t, shots: [1, 2, 1, 2, 1, 2, 1, 2, ...(i % 100 < 35 ? [3, 4] : [])],
+      ...(t % 50 === 1 ? { spawn: ids.map((id) => ({ id, type: "soldier", owner: id % 2 ? 0 : 2, x: 40, y: 14, hp: 100, ord: "idle" })) } : {}),
+      ...(t % 50 === 11 ? { die: ids } : {}),
+    }
+  })
+  return r
+}
+
+test("2v2 只有攻击、没有足够死亡的另一处交火不再造成视频和网页反复缩放", () => {
+  const r = intermittentTeamFight(), pace = pacing(r, 30)
+  const video = battleCameraTrack(r, Array.from({ length: pace.playFrames }, (_, i) => pace.tickOf(i)), 30, zoomFrames(r, pace, pace.playFrames))
+  const web = directorTrack(r)
+  for (const [name, path, settle] of [["视频", video, 150], ["网页", web, 200]] as const) {
+    const shot = path.slice(settle, -100)
+    const zooms = shot.map((c) => c.zoom), ys = shot.map((c) => c.y)
+    assert.ok(Math.max(...zooms) - Math.min(...zooms) < .25, `${name}反复缩放：${Math.min(...zooms)}～${Math.max(...zooms)}`)
+    assert.ok(Math.max(...ys) - Math.min(...ys) < 1, `${name}因另一处停火反复平移`)
+    assert.ok(shot.every((c) => c.zoom > 3.7 && c.y < 16), `${name}只拍达到门槛的主战场`)
+  }
+})
+
+test("远处换战场直接切镜头，不在两个战场中间缓慢滑过", () => {
+  const r = intermittentTeamFight()
+  for (let i = 500; i < r.frames.length; i++) r.frames[i].shots = [1, 2, 1, 2, 1, 2, 1, 2]
+  // After the second front has stopped, the remaining fight relocates to the far side of the map.
+  r.frames[849].move = [1, 69, 14, 2, 70, 14]
+  for (const frame of r.frames.slice(849)) for (const e of frame.spawn ?? []) e.x = 70
+  for (const [name, fps] of [["视频", 30], ["网页", 40]] as const) {
+    const ticks = Array.from({ length: Math.floor(1200 * fps / 40) }, (_, i) => Math.floor(i * 40 / fps))
+    const path = battleCameraTrack(r, ticks, fps)
+    const beforeMove = path[ticks.findIndex((t) => t >= 820)]
+    assert.ok(beforeMove.zoom > 3.6 && beforeMove.y < 17, `${name}停火后没有推近：${JSON.stringify(beforeMove)}`)
+    const followed = path[ticks.findIndex((t) => t >= 1150)]
+    assert.ok(followed.x > 65 && followed.zoom > 3.6, `${name}没有跟随移动：${JSON.stringify(followed)}`)
+    const jump = path.findIndex((c, i) => i > 0 && c.x - path[i - 1].x > 20)
+    assert.ok(jump > 0 && path[jump].x >= 69, `${name}远处战场没有直接切过去`)
+    assert.equal(path[jump].cut, true)
+    for (const f of [.1, .5, .99]) assert.equal(interpolateBattleCamera(path[jump - 1], path[jump], f).x, path[jump - 1].x, "网页补间不能扫过两个战场之间")
+    assert.equal(interpolateBattleCamera(path[jump - 1], path[jump], 1).x, path[jump].x)
+    assert.ok(!path.some((c, i) => ticks[i] > 820 && ticks[i] < 1100 && c.x > 48 && c.x < 62), `${name}滑过了中间空地`)
+  }
+})
+
+test("近处跟随保留平滑和速度，不切镜头、不越过目标，30/60 fps 响应一致", () => {
+  const r = intermittentTeamFight()
+  r.frames[499].move = [1, 46, 14, 2, 47, 14]
+  for (const f of r.frames.slice(499)) for (const e of f.spawn ?? []) e.x = 47
+  const tracks = [30, 60].map((fps) => {
+    const ticks = Array.from({ length: 1200 * fps / 40 }, (_, i) => Math.floor(i * 40 / fps))
+    return battleCameraTrack(r, ticks, fps)
+  })
+  for (const [k, fps] of [30, 60].entries()) {
+    const path = tracks[k].slice(Math.ceil(500 * fps / 40), Math.ceil(850 * fps / 40))
+    assert.ok(path.some((c) => c.x > 41 && c.x < 46), "经过中间位置，保留平滑")
+    assert.ok(path.every((c, i) => i === 0 || Math.abs(c.x - path[i - 1].x) < .6), "附近不跳镜头")
+    assert.ok(path.every((c) => !c.cut), "附近不标记切镜头")
+    assert.ok(path.every((c) => c.x >= 39.9 && c.x <= 47.55), "没有超过目标")
+    assert.ok(path.at(-1)!.x > 46.8, "能及时跟上战场")
+  }
+  for (let i = 400; i < 600; i++) assert.ok(Math.abs(tracks[0][i].x - tracks[1][2 * i + 1].x) < .15, "响应不随帧率改变")
+  assert.deepEqual(interpolateBattleCamera({ x: 40, y: 14, zoom: 3 }, { x: 47, y: 14, zoom: 3 }, .5), { x: 43.5, y: 14, zoom: 3 })
+})
+
+test("缩放资格只跟随死亡达标的战场，远处大量射击不能抢走主镜头", () => {
+  const r = arena()
+  for (let k = 0; k < r.frames.length; k++) r.frames[k].shots = [1, 2, 1, 2, 1, 2, 7, 8]
+  losses(r, 25, 58, 5)
+  const c = battleCameraTrack(r, frameTicks, 30)[60]
+  assert.ok(c.x > 50 && c.y < 15 && c.zoom > 2.5, JSON.stringify(c))
+})
 
 test("镜头不反复拉扯（D-242）：两仗中间回全图凑不够「退 + 停 2 秒 + 推」就一直放大着；中间够长才回全图", () => {
   const r = arena()

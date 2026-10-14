@@ -31,6 +31,7 @@ let pov: number | null = null
 let director = false
 let directorCache: { replay: Replay; track: BattleCamera[] } | null = null
 let lastLogDraw = 0
+let loadRequest = 0
 
 /** 回放文件可能是别人给的，拼进 HTML 的值一律转义 */
 function esc(v: unknown): string {
@@ -63,6 +64,7 @@ function hex(c: number): string {
 // ---------- 加载 ----------
 
 async function refreshList(prefer?: string): Promise<void> {
+  const request = loadRequest
   let list: { name: string; mtime: number; size: number }[] = []
   try {
     const res = await fetch("/api/replays")
@@ -70,6 +72,7 @@ async function refreshList(prefer?: string): Promise<void> {
   } catch {
     // 静态部署时没有列表接口，只能打开本地文件
   }
+  if (request !== loadRequest) return
   select.innerHTML = html`${list.map((r) => html`<option value="${r.name}">${r.name}（${(r.size / 1024).toFixed(0)} KB）</option>`)}`.s
   const want = prefer ?? new URLSearchParams(location.search).get("replay") ?? list[0]?.name
   if (want && list.some((r) => r.name === want)) {
@@ -79,24 +82,57 @@ async function refreshList(prefer?: string): Promise<void> {
 }
 
 async function loadByName(name: string): Promise<void> {
-  const res = await fetch(`/replays/${encodeURIComponent(name)}`)
-  if (!res.ok) return alert(`读取 ${name} 失败：${res.status}`)
-  load(await res.json())
-  const url = new URL(location.href)
-  url.searchParams.set("replay", name)
-  history.replaceState(null, "", url)
+  const request = ++loadRequest
+  try {
+    const res = await fetch(`/replays/${encodeURIComponent(name)}`)
+    if (!res.ok) throw new Error(String(res.status))
+    const replay: Replay = await res.json()
+    if (request !== loadRequest || !load(replay)) return
+    const url = new URL(location.href)
+    url.searchParams.set("replay", name)
+    history.replaceState(null, "", url)
+  } catch (e) {
+    if (request === loadRequest) alert(`读取 ${name} 失败：${(e as Error).message}`)
+  }
 }
 
-function load(replay: Replay): void {
+/** 文件选择和地图拖入共用入口；后发的加载请求优先，失败时继续保留当前对局。 */
+async function loadFile(file: File): Promise<void> {
+  const request = ++loadRequest
   try {
-    model = new ReplayModel(replay)
+    if (!/\.json$/i.test(file.name)) throw new Error("请选择 RTS Arena 回放 .json 文件")
+    const replay: Replay = JSON.parse(await file.text())
+    if (request !== loadRequest || !load(replay)) return
+    select.querySelector("[data-local-replay]")?.remove()
+    const option = new Option(`本地：${file.name}`, "", true, true)
+    option.disabled = true
+    option.dataset.localReplay = "true"
+    select.add(option, 0)
+    const url = new URL(location.href)
+    url.searchParams.delete("replay")
+    history.replaceState(null, "", url)
+  } catch (e) {
+    if (request === loadRequest) alert(`读取 ${file.name} 失败：${(e as Error).message}`)
+  }
+}
+
+function load(replay: Replay): boolean {
+  try {
+    if (!replay || replay.format !== "rts-arena-replay") throw new Error("不是 rts-arena 回放文件")
+    if (!replay.map || !Number.isInteger(replay.map.width) || !Number.isInteger(replay.map.height) || replay.map.width < 1 || replay.map.height < 1 ||
+      !Array.isArray(replay.map.terrain) || !replay.map.colors || !replay.types || !Array.isArray(replay.players) || !replay.ruleset || !replay.result || !Array.isArray(replay.bots)) throw new Error("回放数据不完整")
+    const next = new ReplayModel(replay)
+    if (replay.initial.entities.some((e) => !replay.types[e.type])) throw new Error("回放中缺少单位类型")
+    model = next
   } catch (e) {
     alert((e as Error).message)
-    return
+    return false
   }
   state = model.stateAt(0)
   now = 0
   playing = false
+  logFilter = null
+  directorCache = null
   renderer.selected = null
   renderer.load(replay, state)
   slider.max = String(model.lastTick)
@@ -115,6 +151,7 @@ function load(replay: Replay): void {
   drawFilter()
   drawBotStats()
   updateUI(true)
+  return true
 }
 
 // ---------- 播放 ----------
@@ -404,14 +441,44 @@ slider.addEventListener("input", () => seek(Number(slider.value)))
 select.addEventListener("change", () => loadByName(select.value))
 $("refresh").addEventListener("click", () => refreshList(select.value || undefined))
 $<HTMLInputElement>("file-input").addEventListener("change", async (ev) => {
-  const file = (ev.target as HTMLInputElement).files?.[0]
+  const input = ev.target as HTMLInputElement
+  const file = input.files?.[0]
   if (!file) return
-  try {
-    load(JSON.parse(await file.text()))
-  } catch (e) {
-    alert(`读取失败：${(e as Error).message}`)
-  }
+  await loadFile(file)
+  input.value = ""
 })
+
+// 只响应文件拖入；地图原来的鼠标拖动、缩放和选中实体继续使用 Renderer 的指针事件。
+const stage = $("stage")
+let fileDragDepth = 0
+const hasFiles = (ev: DragEvent) => Array.from(ev.dataTransfer?.types ?? []).includes("Files")
+const clearFileDrag = () => {
+  fileDragDepth = 0
+  stage.classList.remove("file-drag-over")
+}
+stage.addEventListener("dragenter", (ev) => {
+  if (!hasFiles(ev)) return
+  ev.preventDefault()
+  fileDragDepth++
+  stage.classList.add("file-drag-over")
+})
+stage.addEventListener("dragover", (ev) => {
+  if (!hasFiles(ev)) return
+  ev.preventDefault()
+  ev.dataTransfer!.dropEffect = "copy"
+})
+stage.addEventListener("dragleave", () => {
+  if (fileDragDepth > 0 && --fileDragDepth === 0) clearFileDrag()
+})
+stage.addEventListener("drop", (ev) => {
+  const files = ev.dataTransfer?.files
+  if (!hasFiles(ev)) return
+  ev.preventDefault()
+  clearFileDrag()
+  if (files?.length !== 1) return alert("请一次拖入一份回放文件")
+  void loadFile(files[0])
+})
+window.addEventListener("dragend", clearFileDrag)
 window.addEventListener("keydown", (ev) => {
   if (!model || !state || ["INPUT","SELECT","TEXTAREA","BUTTON"].includes((ev.target as HTMLElement).tagName)) return
   const big = ev.shiftKey ? 50 : 1

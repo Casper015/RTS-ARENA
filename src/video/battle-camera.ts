@@ -1,12 +1,20 @@
 import { applyFrame, type State } from "../core/replay-model.ts"
 import type { Replay } from "../core/types.ts"
+import { zoomBattles } from "./combat.ts"
 
 /** 画中画（D-242）：另一处战场的镜头，zoom 按小窗自己的宽度算（小窗里横着看到 地图宽 / zoom 格）；alpha 是小窗的淡入淡出 */
 export interface PipCamera { x: number; y: number; zoom: number; alpha: number }
 /**
  * left、bottom：横屏地图里的小地图、小窗放在哪个角（默认右上；主战场靠到右上那块时换到对角，D-242，免得挡住交战），只在为 true 时有这个字段
  */
-export interface BattleCamera { x: number; y: number; zoom: number; pip?: PipCamera; left?: true; bottom?: true }
+export interface BattleCamera { x: number; y: number; zoom: number; cut?: true; pip?: PipCamera; left?: true; bottom?: true }
+
+/** 网页在 tick 之间补间，但到切镜头的帧才跳过去，不扫过中间空地。 */
+export function interpolateBattleCamera(a: BattleCamera, b: BattleCamera, fraction: number): BattleCamera {
+  const f = Math.max(0, Math.min(1, fraction))
+  if (b.cut) return f < 1 ? a : b
+  return { ...a, x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, zoom: a.zoom + (b.zoom - a.zoom) * f }
+}
 
 /** 一处战场：最近一段时间的攻击、死亡连成的一团（坐标是格），w 是热度（攻击 1、单位死亡 4、建筑倒塌 6，越早的越轻） */
 interface Front { id: number; x: number; y: number; x0: number; y0: number; x1: number; y1: number; w: number }
@@ -35,6 +43,9 @@ const PIP_WEIGHT = 6
 const PIP_SHOW = 0.4
 const PIP_HOLD = 2
 const PIP_TILES = 16
+/** 移动超过当前取景范围的 85% 就切镜头；附近用临界阻尼弹簧，约 0.8 秒到达 95%，保留跟随速度。 */
+const CUT_DISTANCE = .85
+const FOLLOW_OMEGA = 6
 
 /** 回放里每 tick 的攻击（攻守双方中点）和死亡（不算资源、规则包移除的），按 tick 排好 */
 function combatEvents(replay: Replay, lastTick: number): { t: number; x: number; y: number; w: number }[] {
@@ -101,10 +112,10 @@ function cluster(ev: { t: number; x: number; y: number; w: number }[], lo: numbe
 /**
  * 整局的镜头（D-242 起先排镜头再播，原来是每帧追最近 0.65 秒的攻击点）：预先算好，拖进度、预览图、连续导出用的是同一条。横屏、竖屏共用。
  * 1. 战场：最近 WINDOW tick 的攻击、死亡按空间连成几团，按位置跟踪成同一处战场（编号不变）；
- * 2. 什么时候放大：combat[i] 为 false 的帧（不是交战、或者这段交战死的单位不到 2 个，D-236）不放大；放大镜头至少拍 MIN_SHOT 秒，
+ * 2. 什么时候放大：同一处 60 tick 内至少死 4 个单位，combat[i] 为 false 的帧也不放大；放大镜头至少拍 MIN_SHOT 秒，
  *    两个镜头中间凑不够「退回全图 + 停 MIN_OVERVIEW 秒 + 推近」就不回全图（用户：镜头缩放中间间隔太短导致反复拉扯）；
  * 3. 拍哪：主战场至少拍 DWELL 秒，另一处热 SWITCH 倍才换过去；几处框进来还能放大 UNION_ZOOM 倍就一起拍；中间没仗的帧从上一处平移到下一处；
- *    目标没挪出画面中间那块（各方向 20%）、倍数变化不到 15% 就不动，免得来回晃；
+ *    目标没挪出画面中间那块（各方向 20%）、倍数变化不到 15% 就不动；远距离换战场直接切，近距离以临界阻尼跟随；
  * 4. 小窗（用户：2v2、多方混战选画中画）：离得远、拍不进主画面的另一处战场放进小窗，开了至少留 PIP_HOLD 秒，两处都打完才回全图
  */
 export function battleCameraTrack(replay: Replay, ticks: number[], fps: number, combat?: boolean[]): BattleCamera[] {
@@ -112,14 +123,22 @@ export function battleCameraTrack(replay: Replay, ticks: number[], fps: number, 
   const center = { x: W / 2, y: H / 2 }
   const maxZoom = Math.max(1, Math.min(3.8, W / 20))
   const events = combatEvents(replay, ticks.reduce((a, b) => Math.max(a, b), 0))
+  const battles = zoomBattles(replay)
   // 1. 每帧的战场，按位置接上一帧的编号
   const fronts: Front[][] = []
-  let lo = 0, hi = 0, prev: Front[] = [], nextId = 1
+  let lo = 0, hi = 0, prev: Front[] = [], nextId = 1, battleHi = 0
+  let activeBattles: typeof battles = []
   for (let i = 0; i < n; i++) {
     const t = ticks[i]
     while (hi < events.length && events[hi].t <= t) hi++
     while (lo < hi && events[lo].t <= t - WINDOW) lo++
-    const cur = cluster(events, lo, hi, t)
+    while (battleHi < battles.length && battles[battleHi].start <= t) activeBattles.push(battles[battleHi++])
+    activeBattles = activeBattles.filter((b) => b.end >= t)
+    const cur = cluster(events, lo, hi, t).filter((f) => activeBattles.some((b) => {
+      // Match the qualifying deaths to their own front; a hotter but insignificant fight elsewhere cannot steal the zoom.
+      const x = Math.max(f.x0, Math.min(f.x1, b.x)), y = Math.max(f.y0, Math.min(f.y1, b.y))
+      return Math.hypot(x - b.x, y - b.y) <= LINK
+    }))
     const taken = new Set<number>()
     for (const f of cur) {
       let best: Front | null = null, bd = LINK
@@ -155,7 +174,14 @@ export function battleCameraTrack(replay: Replay, ticks: number[], fps: number, 
   const fit = (b: Box) => Math.max(1, Math.min(maxZoom, W / Math.max(1, b[2] - b[0]), H / Math.max(1, b[3] - b[1])))
   const padded = (f: Front): Box => [f.x0 - 3, f.y0 - 3, f.x1 + 3, f.y1 + 3]
   const union = (a: Box, b: Box): Box => [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])]
-  const target: ({ x: number; y: number; zoom: number } | null)[] = new Array(n).fill(null)
+  type Framing = { x: number; y: number; zoom: number }
+  const farApart = (a: Framing, b: Framing): boolean => {
+    const z = Math.max(a.zoom, b.zoom), vw = W / z, vh = H / z
+    const cx = (x: number) => Math.max(vw / 2, Math.min(W - vw / 2, x))
+    const cy = (y: number) => Math.max(vh / 2, Math.min(H - vh / 2, y))
+    return Math.hypot((cx(a.x) - cx(b.x)) / vw, (cy(a.y) - cy(b.y)) / vh) >= CUT_DISTANCE
+  }
+  const target: (Framing | null)[] = new Array(n).fill(null)
   const pipCands: Front[][] = fronts.map(() => [])
   let primary = -1, since = 0, lost = -1
   let last: { x: number; y: number } | null = null
@@ -197,17 +223,23 @@ export function battleCameraTrack(replay: Replay, ticks: number[], fps: number, 
     const a = i > 0 && on[i - 1] ? target[i - 1] : null, b = j < n && on[j] ? target[j] : null
     for (let k = i; k < j; k++) {
       const p = (k - i + 1) / (j - i + 1), q = p * p * (3 - 2 * p)
-      target[k] = a && b ? { x: a.x + (b.x - a.x) * q, y: a.y + (b.y - a.y) * q, zoom: a.zoom + (b.zoom - a.zoom) * q } : (a ?? b)
+      target[k] = a && b ? farApart(a, b) ? a : { x: a.x + (b.x - a.x) * q, y: a.y + (b.y - a.y) * q, zoom: a.zoom + (b.zoom - a.zoom) * q } : (a ?? b)
     }
     i = j
   }
-  // 4. 平滑：主镜头指数缓动（目标在死区里不动），回全图限时 OUT 秒；小窗单独跟
+  // 4. 远切近跟：弹簧使用解析解，帧率不同也有相同的响应；换目标保留速度，切镜头或回全图才清零。
   const ease = 1 - Math.exp(-1 / (fps * 0.55))
+  const dt = 1 / fps, decay = Math.exp(-FOLLOW_OMEGA * dt)
+  const spring = (p: number, v: number, to: number): [number, number] => {
+    const d = p - to, c = v + FOLLOW_OMEGA * d
+    return [to + (d + c * dt) * decay, (v - FOLLOW_OMEGA * c * dt) * decay]
+  }
   const fade = 1 / Math.max(1, fps * 0.3)
   const pipZoom = Math.max(1, W / PIP_TILES)
   const track: BattleCamera[] = []
   let cam = { ...center, zoom: 1 }
-  let held: { x: number; y: number; zoom: number } | null = null
+  let held: Framing | null = null
+  let velocity = { x: 0, y: 0, zoom: 0 }
   let overview: { frame: number; from: { x: number; y: number; zoom: number } } | undefined
   type PipState = { id: number; x: number; y: number; zoom: number; since: number; alpha: number; on: boolean }
   let pip: PipState | null = null
@@ -216,12 +248,27 @@ export function battleCameraTrack(replay: Replay, ticks: number[], fps: number, 
   let corner = { left: false, bottom: false }, cornerSince = -fps
   for (let i = 0; i < n; i++) {
     const tg = on[i] ? target[i] : null
+    let cutFrame = false
     if (tg) {
-      if (!held || Math.abs(tg.x - held.x) > (0.2 * W) / held.zoom || Math.abs(tg.y - held.y) > (0.2 * H) / held.zoom || Math.abs(tg.zoom - held.zoom) > 0.15 * held.zoom) held = tg
+      const cut = held && cam.zoom > 1.15 && farApart(held, tg)
+      if (!held || cut || Math.abs(tg.x - held.x) > .2 * W / held.zoom || Math.abs(tg.y - held.y) > .2 * H / held.zoom || Math.abs(tg.zoom - held.zoom) > .15 * held.zoom) held = tg
       overview = undefined
-      cam = { x: cam.x + (held.x - cam.x) * ease, y: cam.y + (held.y - cam.y) * ease, zoom: cam.zoom + (held.zoom - cam.zoom) * ease }
+      if (cut) {
+        cam = { ...held }
+        velocity = { x: 0, y: 0, zoom: 0 }
+        cutFrame = true
+      } else {
+        for (const axis of ["x", "y", "zoom"] as const) [cam[axis], velocity[axis]] = spring(cam[axis], velocity[axis], held[axis])
+        // A retargeted spring can carry a small amount of momentum past a boundary.
+        for (const [axis, max] of [["x", W], ["y", H], ["zoom", maxZoom]] as const) {
+          const min = axis === "zoom" ? 1 : 0, value = Math.max(min, Math.min(max, cam[axis]))
+          if (value !== cam[axis]) velocity[axis] = 0
+          cam[axis] = value
+        }
+      }
     } else {
       held = null
+      velocity = { x: 0, y: 0, zoom: 0 }
       // Finish the return in a bounded time, then show every tile exactly (no asymptotic cropping).
       overview ??= { frame: i, from: cam }
       const p = Math.min(1, (i - overview.frame) / Math.ceil(fps * OUT)), q = p * p * (3 - 2 * p)
@@ -256,7 +303,7 @@ export function battleCameraTrack(replay: Replay, ticks: number[], fps: number, 
         cornerSince = i
       }
     } else if (!tg) corner = { left: false, bottom: false }
-    const out: BattleCamera = { ...cam, ...(corner.left ? { left: true as const } : {}), ...(corner.bottom ? { bottom: true as const } : {}) }
+    const out: BattleCamera = { ...cam, ...(cutFrame ? { cut: true as const } : {}), ...(corner.left ? { left: true as const } : {}), ...(corner.bottom ? { bottom: true as const } : {}) }
     if (pip) out.pip = { x: pip.x, y: pip.y, zoom: pip.zoom, alpha: pip.alpha }
     track.push(out)
   }

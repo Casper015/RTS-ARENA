@@ -15,6 +15,7 @@ import { battleCameraTrack } from "./battle-camera.ts"
 import { excitement, gameFacts } from "../cli/highlights.ts"
 import { fighterTest, groupBattles, isRout } from "../cli/battles.ts"
 import { BIG_BATTLE, deathsOf, FIGHT_SPEED, fightTicks, fightWindows } from "./fights.ts"
+import { zoomBattleTicks } from "./combat.ts"
 // 测试和别的模块原来从这里拿（D-255 挪到 fights.ts）
 export { fightWindows }
 import { importRuleset, listRulesets } from "../cli/catalog.ts"
@@ -425,22 +426,11 @@ export type PaceMode = "fight" | "quiet"
  * 返回一共放多少帧
  */
 /**
- * 哪些帧放大交战（横屏 D-236、竖屏 D-182）：交战段里死的单位（不算建筑）有 2 个以上才放大，
- * 只死 0～1 个的那段照旧看全图（用户：如果死亡单位小于等于 1 则不进行缩放）
+ * 哪些帧放大交战：同一处在 60 tick 内至少死 4 个单位，建筑、资源和规则包移除不凑数；网页也用同一门槛。
  */
 export function zoomFrames(replay: Replay, pace: { mode: (i: number) => PaceMode; tickOf: (i: number) => number }, playFrames: number): boolean[] {
-  const died = deathsOf(replay).filter((d) => d.unit).map((d) => d.t)
-  const zoom = new Array<boolean>(playFrames).fill(false)
-  for (let a = 0; a < playFrames; ) {
-    let b = a
-    while (b < playFrames && pace.mode(b) === pace.mode(a)) b++
-    if (pace.mode(a) === "fight") {
-      const t0 = pace.tickOf(a), t1 = pace.tickOf(b - 1)
-      if (died.filter((t) => t >= t0 && t <= t1).length >= 2) zoom.fill(true, a, b)
-    }
-    a = b
-  }
-  return zoom
+  const ticks = zoomBattleTicks(replay)
+  return Array.from({ length: playFrames }, (_, i) => pace.mode(i) === "fight" && ticks[pace.tickOf(i)] === 1)
 }
 
 export function pacing(replay: Replay, fps: number): { playFrames: number; tickOf: (i: number) => number; mode: (i: number) => PaceMode; speed: (i: number) => number } {

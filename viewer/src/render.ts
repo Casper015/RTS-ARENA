@@ -2,7 +2,7 @@
 import { Application, CanvasSource, Container, Graphics, Sprite, Text, Texture } from "pixi.js"
 import type { EntSnap, Marker, Replay } from "../../src/core/types.ts"
 import { createBattleArt, type BattleAttack, type BattlePose, type BattleType } from "../../src/video/battle-art.ts"
-import type { BattleCamera } from "../../src/video/battle-camera.ts"
+import { interpolateBattleCamera, type BattleCamera } from "../../src/video/battle-camera.ts"
 import { FACTION_COLORS } from "../../src/video/battle-colors.ts"
 import { faceToward, farmWorkers, homeFacing, legacySplashEffects, trainingQueue, workerPose } from "../../src/video/visual-state.ts"
 import type { Delta, State } from "./model.ts"
@@ -264,7 +264,7 @@ export class Renderer {
     const t = Math.max(0, Math.min(d.length - 1, now))
     const k = Math.floor(t), f = t - k
     const a = d[k], b = d[Math.min(d.length - 1, k + 1)]
-    const x = a.x + (b.x - a.x) * f, y = a.y + (b.y - a.y) * f, zoom = a.zoom + (b.zoom - a.zoom) * f
+    const { x, y, zoom } = interpolateBattleCamera(a, b, f)
     const { width, height } = this.replay.map
     const sw = this.app.screen.width, sh = this.app.screen.height
     const scale = Math.min(sw / (width * TILE), sh / (height * TILE)) * 0.96 * zoom
