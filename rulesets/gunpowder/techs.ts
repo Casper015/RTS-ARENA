@@ -42,6 +42,8 @@ export function gunpowderTypes(): Record<string, TypeSpec> {
   t.cavalry = { ...t.cavalry, attack: { ...t.cavalry.attack!, vs: { ...t.cavalry.attack!.vs, musketeer: 1.5 } } }
   t.archer = { ...t.archer, attack: { ...t.archer.attack!, vs: { ...t.archer.attack!.vs, musketeer: 1.5 } } }
   t.barracks = { ...t.barracks, produces: ["spearman", "archer", "cavalry"] }
+  // 箭塔工作量 200 → 400（D-260，用户：塔爆在参考联赛里一家独大）
+  t.tower = { ...t.tower, buildTicks: 400 }
   const building = (name: string, label: string, gold: number, buildTicks: number, maxHp: number, produces?: string[]): TypeSpec => ({
     kind: "building",
     w: 2,
