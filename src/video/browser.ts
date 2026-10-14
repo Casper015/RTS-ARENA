@@ -47,7 +47,9 @@ export async function launchBrowser(executable: string): Promise<Browser> {
   await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok))
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`
   const profile = mkdtempSync(join(tmpdir(), "rts-arena-video-"))
-  const proc: ChildProcess = spawn(executable, ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check", "--disable-extensions", "--mute-audio", url], {
+  // Windows 的绘图与 MF 编码各自选显卡：D3D12 编码优先跟随绘图设备，不支持时 Chromium 回退到 MF。
+  const gpuArgs = process.platform === "win32" ? ["--force-high-performance-gpu", "--enable-features=D3D12VideoEncodeAccelerator"] : []
+  const proc: ChildProcess = spawn(executable, ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check", "--disable-extensions", "--mute-audio", ...gpuArgs, url], {
     stdio: "ignore",
   })
   const exited = new Promise<void>((ok) => proc.once("exit", () => ok()))
