@@ -8,7 +8,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
 import { createArenaApi } from "../src/cli/arena-api.ts"
-import { leagueStandings, leagueTables, los, standingsText, teamSplits, type LeagueGame } from "../src/cli/league.ts"
+import { leagueFocusTables, leagueStandings, leagueTables, los, standingsText, teamSplits, type LeagueGame } from "../src/cli/league.ts"
 import { isRout } from "../src/cli/battles.ts"
 import { excitement, gameFacts, pickHighlights } from "../src/cli/highlights.ts"
 import type { Replay } from "../src/core/types.ts"
@@ -382,6 +382,52 @@ test("联赛分桌：两人局全部两两组合；多人局组合少就全打�
   }
   assert.ok(Math.max(...appear) - Math.min(...appear) <= 1, appear.join())
   assert.equal(leagueTables(8, 4, 1, 3).tables.length, 3)
+})
+
+test("联赛 --focus 的多人局分桌（D-263）：每桌都有第 0 个，别人上场次数差不多；同一个种子排出同一批桌；组合少就全打", () => {
+  const t = leagueFocusTables(10, 4, 7)
+  assert.equal(t.complete, false)
+  assert.equal(t.tables.length, 6)
+  const appear = new Array(10).fill(0)
+  for (const tb of t.tables) {
+    assert.equal(tb[0], 0)
+    assert.equal(new Set(tb).size, 4)
+    for (const i of tb) appear[i]++
+  }
+  assert.equal(appear[0], 6)
+  assert.ok(Math.max(...appear.slice(1)) - Math.min(...appear.slice(1)) <= 1, appear.join())
+  assert.deepEqual(leagueFocusTables(10, 4, 7).tables, t.tables)
+  assert.equal(leagueFocusTables(10, 4, 7, 3).tables.length, 3)
+  const full = leagueFocusTables(5, 4, 1, 4)
+  assert.equal(full.complete, true)
+  assert.deepEqual(full.tables, [[0, 1, 2, 3], [0, 1, 2, 4], [0, 1, 3, 4], [0, 2, 3, 4]])
+})
+
+test("命令行分队（D-263）：league --teams 2v2 --focus 只打有第一个 bot 的桌；compare --teams 2v2 按阵容比；run 第一个写自己的 bot 时不重复", () => {
+  const dir = mkdtempSync(join(tmpdir(), "rts-arena-teams-"))
+  const sh = (args: string[], cwd = dir) => {
+    const r = spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8" })
+    assert.equal(r.status, 0, r.stdout + r.stderr)
+    return r.stdout
+  }
+  const rush = join(ROOT, "rulesets", "annihilation", "bots", "rush.ts")
+  try {
+    const lg = sh(["league", "melee", "baseline", "boom", "rush", "idle", rush, "--teams", "2v2", "--focus", "--tables", "2", "--per-table", "1", "--seed", "3", "--no-check", "--no-replays", "--quiet", "--jobs", "2"])
+    assert.match(lg, /轮换搭档，只打有 baseline 的桌（--focus），抽了 2 桌，每桌 1 局/)
+    const cmp = sh(["compare", "melee", "idle", "baseline", "boom", "rush", rush, "--teams", "2v2", "--per-pair", "2", "--seed", "3", "--no-check", "--no-replays", "--jobs", "3"])
+    assert.match(cmp, /分队 2v2，3 种阵容（队友 boom，对 rush、rush#?\d*|分队 2v2，3 种阵容/)
+    assert.match(cmp, /^阵容 /m)
+    // 表里每种阵容一行（每打完一种阵容报的那行带「组）」）
+    assert.equal(cmp.split("\n").filter((l) => l.startsWith("队友 ") && !l.includes("组）")).length, 3)
+    assert.match(cmp, /^合计 +\d+-\d+-\d+ +\d+-\d+-\d+ +\d+ \/ \d+$/m)
+    // bot 目录里：run bot.ts 队友 对手1 对手2 --teams 2v2 不再报人数超了
+    const bd = join(dir, "bd")
+    sh(["init", "melee", bd])
+    const run = sh(["run", "bot.ts", "baseline", "boom", "rush", "--teams", "2v2", "--games", "1", "--ticks", "50", "--no-check", "--no-replays"], bd)
+    assert.match(run, /第一个参数就是你的 bot\.ts，这次不再自动排一份/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test("命令行 league：多人局（混战每局 3 人），座位轮换一圈，输出平均名次", () => {

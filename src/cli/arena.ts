@@ -29,7 +29,7 @@ import {
 } from "./catalog.ts"
 import { PKG_ROOT } from "../paths.ts"
 import { buildReport, snapshotText } from "./report.ts"
-import { leagueStandings, leagueTables, rateCi, standingsText, teamSplits, type LeagueGame, type LeagueResult } from "./league.ts"
+import { leagueFocusTables, leagueStandings, leagueTables, rateCi, standingsText, teamSplits, type LeagueGame, type LeagueResult } from "./league.ts"
 import { LeagueStats, statsText, type LeagueStatsJson } from "./league-stats.ts"
 import { excitement, finalScores, gameFacts, pickHighlights, type GameFacts, type Highlight } from "./highlights.ts"
 import { highlightPlayerWarnings, readSeries, scriptWarnings, videoBrief, type VideoScript } from "../video/brief.ts"
@@ -105,14 +105,17 @@ league 的选项：
         --tables M    多人局的组合太多时抽几桌（默认：组合不超过 20 桌就全打，否则让每个 bot 大约上场 6 桌）
         --teams 2v2   分队联赛（规则包要支持分队）；--partners mixed 轮换搭档（默认，所有分组方式都打，
                       每个 bot 拿所在队的名次分），--partners same 每队由同一个 bot 组成（bot 不够一局的人数时默认）
-        --focus       只打第一个 bot（在 bot 目录里就是你的 bot）对其余每个，参考 bot 之间不打；两人局用。
-                      比较两个版本：各跑一次 league <规则包> <版本> <对手...> --focus --seed 同一个数，对每个对手的种子一样
+        --focus       只打有第一个 bot（在 bot 目录里就是你的 bot）的局，参考 bot 之间不打：两人局是它对其余每个；
+                      多人局、分队（比如 --teams 2v2 --focus）是每桌都有它、别的 bot 各上场大约 2 桌（--tables 调），局数少一大半。
+                      比较两个版本：各跑一次 league <规则包> <版本> <对手...> --focus --seed 同一个数，对每个对手的种子一样（分队用 compare --teams 更方便）
         --quiet       每局不打一行（每 10 局报一次进度），也不列精彩对局，只看最后的排名、对阵和统计
         --seed、--out、--no-check、--no-replays、--json、--jobs 同 run
                       名次分：第一名 1 分、最后一名 0 分、中间平分（两人局就是胜 1 平 0.5）；
                       等级分（1500 起）把名次拆成两两比较，按全部对局一起算，和打的先后顺序无关
 compare 的选项：
-        --per-pair N  每个对手打几组（默认 10：5 个种子 × 换边）；一组是两个版本各一局，所以一共打 2 × 对手数 × N 局
+        --per-pair N  每个对手打几组（默认 10：5 个种子 × 换边；分队默认 4）；一组是两个版本各一局，所以一共打 2 × 对手数 × N 局
+        --teams 2v2   分队比（规则包要支持分队）：写的 bot 排成一圈，版本轮流和每个 bot 搭档、对上它后面的几个
+                      （2v2 就是「队友 X，对 Y、Z」，X 是第 1 个时 Y、Z 是第 2、3 个），每种排法一行；两边换位置各打一半
         --seed、--out、--no-check 同 run；回放只存两个版本胜负不一样的组，--all-replays 每组都存（想自己统计别的数据时用），--no-replays 一局都不存
         --jobs N      几个线程一起打（默认 CPU 逻辑核数减 2，最多 6；结果和一个线程按顺序打完全一样，--jobs 1 就是一局一局打）
 `
@@ -165,7 +168,7 @@ const OPTIONS: Record<string, Record<string, boolean>> = {
   run: { seed: false, games: false, out: false, teams: false, jobs: false, "no-check": true, json: true, quiet: true, ticks: false, "no-replays": true },
   league: { seed: false, size: false, teams: false, partners: false, "per-table": false, "per-pair": false, tables: false, out: false, jobs: false, "no-check": true, json: true, focus: true, "no-replays": true, quiet: true },
   check: { ticks: false },
-  compare: { seed: false, "per-pair": false, out: false, jobs: false, "no-check": true, "no-replays": true, "all-replays": true },
+  compare: { seed: false, "per-pair": false, teams: false, out: false, jobs: false, "no-check": true, "no-replays": true, "all-replays": true },
   view: { port: false, open: true },
   report: { player: false, every: false, full: true, at: false },
   map: { seed: false },
@@ -614,13 +617,13 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
   const outDir = typeof opt.out === "string" ? opt.out : "replays"
   if (outDir.endsWith(".json")) fail("联赛的 --out 要写目录")
   const noReplays = opt["no-replays"] === true
-  const schedule = leagueTables(N, unit, baseSeed, tablesOpt)
-  // --focus：只打第一个 bot 对其余每个（参考 bot 之间不打）。对序号照原来的算，种子不变：
-  // 换一个候选、用同一个 --seed 再跑，对每个对手用的种子都一样，可以直接比两个候选
+  // --focus：只打有第一个 bot 的桌（参考 bot 之间不打）。两人局（每桌两方）对序号照原来的算，种子不变：
+  // 换一个候选、用同一个 --seed 再跑，对每个对手用的种子都一样，可以直接比两个候选。
+  // 多人局、分队（D-263，2v2 试写反馈：轮换搭档的联赛全打一遍太久）：桌子另排，每桌都有它，别人大约各上场 2 桌（--tables 调），同一个 --seed 排出同一批桌
   const focus = opt.focus === true
+  const schedule = focus && unit > 2 ? leagueFocusTables(N, unit, baseSeed, tablesOpt) : leagueTables(N, unit, baseSeed, tablesOpt)
   // --quiet：每局不打一行，每 10 局报一次进度，不列精彩对局（D-191，试写反馈：60 局每局一行再加精彩对局，信息太多）
   const quiet = opt.quiet === true
-  if (focus && (players !== 2 || sizes)) fail("--focus 只用于两人对打的联赛")
   const tableList = schedule.tables.map((table, ti) => ({ table, ti })).filter((x) => !focus || x.table.includes(0))
   const tables = tableList.map((x) => x.table)
 
@@ -681,10 +684,10 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
     mode === "ffa"
       ? players === 2
         ? `${focus ? `只打 ${labels[0]} 对其余每个（--focus），` : "两两对打，"}${tables.length} 对，每对 ${perTable} 局（${rounds ? "换边" : notFull}）`
-        : `每局 ${players} 人，${schedule.complete ? "所有组合" : "抽了"} ${tables.length} 桌，每桌 ${perTable} 局（${rounds ? "轮换座位" : notFull}）`
+        : `每局 ${players} 人，${focus ? `只打有 ${labels[0]} 的桌（--focus），` : ""}${schedule.complete ? "所有组合" : "抽了"} ${tables.length} 桌，每桌 ${perTable} 局（${rounds ? "轮换座位" : notFull}）`
       : mode === "mixed"
-        ? `分队 ${teamSpec}、轮换搭档，${schedule.complete ? "所有组合" : "抽了"} ${tables.length} 桌，每桌 ${perTable} 局（${rounds ? `每种分法都打${equalSizes ? "、各队轮换位置" : ""}` : notFull}）`
-        : `分队 ${teamSpec}、每队是同一个 bot${partnersOpt === undefined ? `（bot 不够一局的 ${players} 人，自动用这种，没有搭档表；要轮换搭档就给够 ${players} 个 bot）` : ""}，${schedule.complete ? "所有组合" : "抽了"} ${tables.length} 桌，每桌 ${perTable} 局（${rounds ? "轮换位置" : notFull}）`
+        ? `分队 ${teamSpec}、轮换搭档，${focus ? `只打有 ${labels[0]} 的桌（--focus），` : ""}${schedule.complete ? "所有组合" : "抽了"} ${tables.length} 桌，每桌 ${perTable} 局（${rounds ? `每种分法都打${equalSizes ? "、各队轮换位置" : ""}` : notFull}）`
+        : `分队 ${teamSpec}、每队是同一个 bot${focus ? `，只打有 ${labels[0]} 的桌（--focus）` : ""}${partnersOpt === undefined ? `（bot 不够一局的 ${players} 人，自动用这种，没有搭档表；要轮换搭档就给够 ${players} 个 bot）` : ""}，${schedule.complete ? "所有组合" : "抽了"} ${tables.length} 桌，每桌 ${perTable} 局（${rounds ? "轮换位置" : notFull}）`
   say(`联赛：${rules.name}（${rules.id}），${N} 个 bot（${labels.join("、")}），${how}，共 ${total} 局，种子从 ${baseSeed} 起`)
 
   const record: LeagueGame[] = []
@@ -827,13 +830,27 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
  * 地图和先后手的运气抵消掉，比各打各的联赛分得清。回放只存两个版本结果不一样的组：同一张图、同一个对手，一个赢一个输，最值得看
  */
 async function cmdCompare(rules: Ruleset, src: RulesetRef, a: string, b: string, opps: string[], opt: Record<string, string | true>): Promise<void> {
-  if (rules.players.min > 2 || rules.players.max < 2) fail(`「${rules.name}」不能两个人打：compare 只用于两人对打的规则包`)
+  // 分队比（D-263，2v2 试写反馈：compare 不支持 --teams，只能固定种子一局局跑 run）：版本坐第一队，队友和对手从对手列表里轮着排
+  let sizes: number[] | null = null
+  if (opt.teams !== undefined) {
+    const spec = typeof opt.teams === "string" ? opt.teams : ""
+    if (!/^\d+(v\d+)+$/.test(spec)) fail("--teams 要写成 2v2、3v3、2v2v2 这样")
+    sizes = spec.split("v").map(Number)
+    if (sizes.some((x) => x < 1)) fail("--teams 里每队至少 1 人")
+    if (!rules.teams) fail(`「${rules.name}」不支持分队`)
+    const n = sizes.reduce((x, y) => x + y, 0)
+    if (n < rules.players.min || n > rules.players.max) fail(`「${rules.name}」每局 ${rules.players.min}～${rules.players.max} 人，--teams ${spec} 一共 ${n} 人不行`)
+  } else if (rules.players.min > 2 || rules.players.max < 2) fail(`「${rules.name}」不能两个人打：两人对比用不了，分队的规则包加 --teams（比如 --teams 2v2）`)
   const files = resolveBots(rules, src, [a, b, ...opps])
   const [fa, fb] = files
   if (resolve(fa) === resolve(fb)) fail(`两个版本是同一个文件（${fa}）`)
   const foes: string[] = []
   for (const f of files.slice(2)) if (![fa, fb, ...foes].some((g) => resolve(g) === resolve(f))) foes.push(f)
   if (!foes.length) fail("没有对手：写上对手，或者不写（就和所有现成的 bot 打）")
+  const others = sizes ? sizes.reduce((x, y) => x + y, 0) - 1 : 1
+  if (foes.length < others) fail(`--teams ${opt.teams} 一局要 ${others} 个别的 bot（队友加对手），只有 ${foes.length} 个`)
+  /** 每一行的阵容：两人局是一个对手；分队是 [队友..., 对手...]，第 i 行从第 i 个 bot 起轮着取 */
+  const lineups: string[][] = sizes ? foes.map((_, i) => [...Array(others).keys()].map((j) => foes[(i + j) % foes.length])) : foes.map((x) => [x])
   const names = botNames(files)
   let la = names.get(fa)!
   let lb = names.get(fb)!
@@ -845,7 +862,7 @@ async function cmdCompare(rules: Ruleset, src: RulesetRef, a: string, b: string,
     rulesetTypeWarning(src)
   }
   for (const w of checkLimits(rules)) warn(w)
-  const perPair = opt["per-pair"] === undefined ? 10 : Number(opt["per-pair"])
+  const perPair = opt["per-pair"] === undefined ? (sizes ? 4 : 10) : Number(opt["per-pair"])
   if (!Number.isInteger(perPair) || perPair < 1 || perPair > 200) fail("--per-pair 要是 1～200 的整数")
   if (perPair % 2) warn(`--per-pair ${perPair} 是奇数，最后一个种子只打了一边`)
   const baseSeed = typeof opt.seed === "string" ? Number(opt.seed) : Math.floor(Math.random() * 1e9)
@@ -853,30 +870,36 @@ async function cmdCompare(rules: Ruleset, src: RulesetRef, a: string, b: string,
   const outDir = typeof opt.out === "string" ? opt.out : "replays"
   const noReplays = opt["no-replays"] === true
   const allReplays = opt["all-replays"] === true
-  const total = foes.length * perPair * 2
+  const total = lineups.length * perPair * 2
   if (total > 5000) fail(`一共要打 ${total} 局，太多了；少带几个对手或者减小 --per-pair`)
   // D-209（用户：compare 并行；试写反馈一轮里能做的实验有限）：默认开 CPU 逻辑核数一半的线程一起打
   const threads = opt.jobs === undefined ? defaultJobs() : Number(opt.jobs)
   if (!Number.isInteger(threads) || threads < 1 || threads > 32) fail("--jobs 要是 1～32 的整数")
   const runId = randomBytes(3).toString("hex")
   const startStamp = stamp()
+  /** 一行的名字：两人局是对手的名字，分队是「队友 X，对 Y、Z」 */
+  const lineName = (line: string[]) => (sizes ? `队友 ${line.slice(0, sizes[0] - 1).map(label).join("、") || "无"}，对 ${line.slice(sizes[0] - 1).map(label).join("、")}` : label(line[0]))
   say(
-    `对比：${la} → ${lb}，对手 ${foes.length} 个（${foes.map(label).join("、")}），每个对手 ${perPair} 组（${Math.ceil(perPair / 2)} 个种子 × 换边），` +
+    `对比：${la} → ${lb}，${sizes ? `分队 ${opt.teams}，${lineups.length} 种阵容（${lineups.map(lineName).join("；")}），每种` : `对手 ${foes.length} 个（${foes.map(label).join("、")}），每个对手`} ${perPair} 组（${Math.ceil(perPair / 2)} 个种子 × 换边），` +
       `一组是两个版本用同一个种子、坐同一个位置各打一局；共 ${total} 局，种子按 --seed ${baseSeed} 和对手的名字算（带哪些对手都不影响同一个对手打的那几局）；${Math.min(threads, total)} 个线程一起打（--jobs 调）`,
   )
   // D-195（第五轮试写：不写 --seed 时每次换一批种子，两次 compare 的同一个版本成绩差很多，误把噪声当成差距）
   if (typeof opt.seed !== "string") say(`（这次的种子是随机的。和别的 compare 结果对着比，要加 --seed ${baseSeed} 用同一批种子，不然同一个版本两次的成绩也会差很多）`)
-  /** 两人局里坐 seat 的那方得几分：赢 1、平 0.5、输 0 */
+  /** 坐 seat 的那方得几分：赢 1、平 0.5、输 0（分队时按队算：赢的全是这一队才算赢，几队一起算赢是平） */
   const scoreOf = (replay: Replay, seat: number) => {
     const won = replay.result.winners ?? []
+    if (sizes) {
+      const team = (p: number) => replay.players[p]?.team ?? p
+      return won.length === 0 ? 0.5 : won.every((p) => team(p) === team(seat)) ? 1 : won.some((p) => team(p) === team(seat)) ? 0.5 : 0
+    }
     return won.length === 0 || (won.includes(seat) && won.length > 1) ? 0.5 : won.includes(seat) ? 1 : 0
   }
   type Wdl = { w: number; d: number; l: number }
   const tally = (r: Wdl, s: number) => (s === 1 ? r.w++ : s === 0 ? r.l++ : r.d++)
   const wdl = (r: Wdl) => `${r.w}-${r.d}-${r.l}`
-  const rows = foes.map((foe) => ({ name: label(foe), a: { w: 0, d: 0, l: 0 } as Wdl, b: { w: 0, d: 0, l: 0 } as Wdl, better: 0, worse: 0, done: 0 }))
+  const rows = lineups.map((line) => ({ name: lineName(line), a: { w: 0, d: 0, l: 0 } as Wdl, b: { w: 0, d: 0, l: 0 } as Wdl, better: 0, worse: 0, done: 0 }))
   /** 每组版本 B 减版本 A 的得分，按对手、组的顺序 */
-  const diffs: number[] = new Array(foes.length * perPair).fill(0)
+  const diffs: number[] = new Array(lineups.length * perPair).fill(0)
   const saved: { k: number; g: number; foe: string; seed: number; seat: number; sa: number; sb: number; files: string[] }[] = []
   // 两个版本都没赢的组（D-227，试写反馈：compare 里输的局想拿 run 复现，种子对不上）
   const bothLost: { k: number; g: number; foe: string; seed: number; seat: number; s: number }[] = []
@@ -890,15 +913,32 @@ async function cmdCompare(rules: Ruleset, src: RulesetRef, a: string, b: string,
     for (const c of name) h = Math.imul(h ^ c.codePointAt(0)!, 16777619) >>> 0
     return h % 997
   }
-  for (const [k, foe] of foes.entries())
+  /** 版本 f 对第 k 行阵容、第 g 组的座位排法：偶数组版本那一队在前（两人局坐 P0、分队坐左边），奇数组换过来；返回参赛顺序、队伍和版本坐的座位 */
+  const layout = (f: string, k: number, g: number): { order: string[]; teams?: number[]; seat: number } => {
+    const line = lineups[k]
+    if (!sizes) return g % 2 === 0 ? { order: [f, line[0]], seat: 0 } : { order: [line[0], f], seat: 1 }
+    const groups: string[][] = []
+    let at = 0
+    for (const [t, size] of sizes.entries()) {
+      const take = t === 0 ? size - 1 : size
+      groups.push(t === 0 ? [f, ...line.slice(0, take)] : line.slice(at, at + take))
+      at += take
+    }
+    const ordered = g % 2 === 0 ? groups : [...groups.slice(1), groups[0]]
+    const order = ordered.flat()
+    const teams = ordered.flatMap((grp, t) => grp.map(() => t))
+    return { order, teams, seat: order.indexOf(f) }
+  }
+  for (const [k, line] of lineups.entries())
     for (let g = 0; g < perPair; g++) {
-      const seed = baseSeed + foeKey(label(foe)) * 10000 + Math.floor(g / 2) * 100
-      // 偶数组版本坐 P0，奇数组换边
-      const seat = g % 2
-      for (const [v, f] of [fa, fb].entries()) jobs.push({ id: jobs.length + 1, order: seat === 0 ? [f, foe] : [foe, f], seed, k, g, v })
+      const seed = baseSeed + foeKey(sizes ? line.map(label).join("+") : label(line[0])) * 10000 + Math.floor(g / 2) * 100
+      for (const [v, f] of [fa, fb].entries()) {
+        const { order, teams } = layout(f, k, g)
+        jobs.push({ id: jobs.length + 1, order, ...(teams ? { teams } : {}), seed, k, g, v })
+      }
     }
   const half = new Map<number, Replay>()
-  const groups = foes.length * perPair
+  const groups = lineups.length * perPair
   let groupsDone = 0
   let printed = 0
   const t0 = performance.now()
@@ -915,7 +955,7 @@ async function cmdCompare(rules: Ruleset, src: RulesetRef, a: string, b: string,
       }
       half.delete(key)
       const [ra, rb] = v === 0 ? [replay, mate] : [mate, replay]
-      const seat = g % 2
+      const seat = layout(fa, k, g).seat
       const row = rows[k]
       const sa = scoreOf(ra, seat)
       const sb = scoreOf(rb, seat)
@@ -929,8 +969,7 @@ async function cmdCompare(rules: Ruleset, src: RulesetRef, a: string, b: string,
       groupsDone++
       // --all-replays（D-194，试写反馈：只存胜负不同的组，没法汇总塔这类全局统计）：每组都存
       if ((sa !== sb || allReplays) && !noReplays) {
-        const foe = foes[k]
-        const orderOf = (f: string) => (seat === 0 ? [f, foe] : [foe, f])
+        const orderOf = (f: string) => layout(f, k, g).order
         const stem = join(outDir, `${rules.id}-${startStamp}-${runId}-cmp-s${seed}-P${seat}-${safeName(row.name)}`)
         const fileA = `${stem}-${safeName(la)}.json`
         const fileB = `${stem}-${safeName(lb)}.json`
@@ -945,7 +984,7 @@ async function cmdCompare(rules: Ruleset, src: RulesetRef, a: string, b: string,
         const r = rows[printed++]
         const same = perPair - r.better - r.worse
         say(
-          `对 ${r.name}（${perPair} 组）：${la} ${wdl(r.a)}，${lb} ${wdl(r.b)}；` +
+          `${sizes ? "" : "对 "}${r.name}（${perPair} 组）：${la} ${wdl(r.a)}，${lb} ${wdl(r.b)}；` +
             (same === perPair ? "每组胜负都一样" : `胜负不同的 ${perPair - same} 组里 ${lb} 好 ${r.better}、${la} 好 ${r.worse}`),
         )
       }
@@ -970,7 +1009,7 @@ async function cmdCompare(rules: Ruleset, src: RulesetRef, a: string, b: string,
   const pad = (s: string, w: number) => s + " ".repeat(Math.max(0, w - textWidth(s)))
   const col = Math.max(10, textWidth(la) + 2, textWidth(lb) + 2)
   console.log(`\n## 对比：${la} → ${lb}（每组两个版本用同一个种子、坐同一个位置各打一局）`)
-  console.log(`${pad("对手", width)}  ${pad(la, col)}${pad(lb, col)}胜负不同的组（${lb} 好 / ${la} 好）`)
+  console.log(`${pad(sizes ? "阵容" : "对手", width)}  ${pad(la, col)}${pad(lb, col)}胜负不同的组（${lb} 好 / ${la} 好）`)
   for (const r of rows) console.log(`${pad(r.name, width)}  ${pad(wdl(r.a), col)}${pad(wdl(r.b), col)}${r.better} / ${r.worse}`)
   const better = rows.reduce((x, r) => x + r.better, 0)
   const worse = rows.reduce((x, r) => x + r.worse, 0)
@@ -991,7 +1030,7 @@ async function cmdCompare(rules: Ruleset, src: RulesetRef, a: string, b: string,
   else if (saved.length) {
     console.log(`\n${allReplays ? "每组都" : "胜负不同的组"}存了回放（每组两个版本各一局，在 ${outDir}；同一个种子同一个位置，对着看哪里不一样）：`)
     for (const x of saved.slice(0, 12))
-      console.log(`  对 ${x.foe} 种子 ${x.seed}（坐 P${x.seat}）：${la} ${outcome(x.sa)}、${lb} ${outcome(x.sb)}  ${x.files.map((f) => basename(f)).join("  ")}`)
+      console.log(`  ${sizes ? "" : "对 "}${x.foe} 种子 ${x.seed}（坐 P${x.seat}）：${la} ${outcome(x.sa)}、${lb} ${outcome(x.sb)}  ${x.files.map((f) => basename(f)).join("  ")}`)
     if (saved.length > 12) console.log(`  另有 ${saved.length - 12} 组`)
     console.log(`  看某一局：rts-arena report <回放> --player ${saved[0].seat}`)
   }
@@ -1000,12 +1039,14 @@ async function cmdCompare(rules: Ruleset, src: RulesetRef, a: string, b: string,
     console.log(
       `\n两个版本都没赢的组（${bothLost.length} 组）：${bothLost
         .slice(0, 12)
-        .map((x) => `对 ${x.foe} 种子 ${x.seed} 坐 P${x.seat}（${outcome(x.s)}）`)
+        .map((x) => `${sizes ? "" : "对 "}${x.foe} 种子 ${x.seed} 坐 P${x.seat}（${outcome(x.s)}）`)
         .join("；")}${bothLost.length > 12 ? "……" : ""}`,
     )
   if (saved.length || bothLost.length)
     console.log(
-      `复现某一组：rts-arena run ${rules.id} <版本文件> <对手> --seed <种子> --games 2，第 1 局版本坐 P0、第 2 局坐 P1（每组的种子按 --seed、对手名字和组号算，不等于 --seed 写的那个数）`,
+      sizes
+        ? `复现某一组：rts-arena run ${rules.id} <版本文件> <队友> <对手...> --teams ${opt.teams} --seed <种子> --games 2，第 1 局版本那队在左边、第 2 局在右边（每组的种子按 --seed、阵容和组号算，不等于 --seed 写的那个数）`
+        : `复现某一组：rts-arena run ${rules.id} <版本文件> <对手> --seed <种子> --games 2，第 1 局版本坐 P0、第 2 局坐 P1（每组的种子按 --seed、对手名字和组号算，不等于 --seed 写的那个数）`,
     )
 }
 
@@ -1466,6 +1507,12 @@ async function main(): Promise<void> {
     }
     case "run": {
       const t = await target(pos, "run")
+      // 参数里第一个就写了自己的 bot.ts、加上自动排的那份人数就超了（D-263，2v2 试写反馈：run bot.ts 队友 对手1 对手2 报「最多 4 个 bot」）：
+      // 当成是自己写全了参赛的 bot，不再自动加一份
+      if (t.mine && t.bots.length > t.rules.players.max && t.bots.length > 1 && resolve(t.bots[1]) === resolve(t.bots[0])) {
+        t.bots.shift()
+        say(`（第一个参数就是你的 ${t.bots[0]}，这次不再自动排一份）`)
+      }
       // bot 目录里不写对手：打基准 bot，人数不够就都补基准
       if (t.mine && t.bots.length > t.rules.players.max)
         fail(
