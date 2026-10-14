@@ -287,6 +287,52 @@ export function leagueTables(n: number, k: number, seed: number, tables?: number
 }
 
 /**
+ * --focus 的多人局赛程（D-263，2v2 试写反馈：轮换搭档的联赛全打一遍太久，只想看自己的 bot）：每桌都有第 0 个参赛者，
+ * 其余 k−1 个座位从别人里挑。含 0 的组合不超过 tables（不给就是 ⌈(n−1)×2/(k−1)⌉，别人大约各上场 2 桌）时全打，
+ * 否则抽这么多桌：每次从一批随机组合里挑别人上场次数最少、两两碰面最少的那个。同一个 seed 永远排出同一批桌
+ */
+export function leagueFocusTables(n: number, k: number, seed: number, tables?: number): { tables: number[][]; complete: boolean } {
+  const limit = tables ?? Math.ceil(((n - 1) * 2) / (k - 1))
+  if (choose(n - 1, k - 1) <= limit) {
+    const out: number[][] = []
+    const walk = (start: number, cur: number[]) => {
+      if (cur.length === k) return void out.push([...cur])
+      for (let i = start; i < n; i++) walk(i + 1, [...cur, i])
+    }
+    walk(1, [0])
+    return { tables: out, complete: true }
+  }
+  const rng = new Mulberry32(mixSeed(seed, "league-focus-tables"))
+  const appear = new Array<number>(n).fill(0)
+  const met = Array.from({ length: n }, () => new Array<number>(n).fill(0))
+  const out: number[][] = []
+  for (let t = 0; t < limit; t++) {
+    let best: number[] | null = null
+    let bestScore = Infinity
+    for (let c = 0; c < 200; c++) {
+      const ids = [...Array(n - 1).keys()].map((i) => i + 1)
+      rng.shuffle(ids)
+      const pick = [0, ...ids.slice(0, k - 1).sort((a, b) => a - b)]
+      let score = 0
+      for (const i of pick.slice(1)) score += appear[i] * 1000
+      for (let x = 1; x < k; x++) for (let y = x + 1; y < k; y++) score += met[pick[x]][pick[y]]
+      if (score < bestScore) {
+        best = pick
+        bestScore = score
+      }
+    }
+    for (const i of best!) appear[i]++
+    for (let x = 1; x < k; x++)
+      for (let y = x + 1; y < k; y++) {
+        met[best![x]][best![y]]++
+        met[best![y]][best![x]]++
+      }
+    out.push(best!)
+  }
+  return { tables: out, complete: false }
+}
+
+/**
  * 把一桌的人分成给定大小的几队，列出所有不同的分法（一样大的队不分先后）。
  * 比如 4 个人 2v2 有 3 种分法，6 个人 3v3 有 10 种，6 个人 2v2v2 有 15 种
  */
