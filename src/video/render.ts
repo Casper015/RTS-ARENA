@@ -17,6 +17,7 @@ import { fighterTest, groupBattles, isRout } from "../cli/battles.ts"
 import { BIG_BATTLE, deathsOf, FIGHT_SPEED, fightTicks, fightWindows } from "./fights.ts"
 import { zoomBattleTicks } from "./combat.ts"
 import { videoDimensions, videoEncoderConfig } from "./encoding.ts"
+import { VideoOutput } from "./output.ts"
 // 测试和别的模块原来从这里拿（D-255 挪到 fights.ts）
 export { fightWindows }
 import { importRuleset, listRulesets } from "../cli/catalog.ts"
@@ -1026,6 +1027,7 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
   const exe = findBrowser(o.browser)
   if (!exe) throw new Error("找不到 Chrome 或 Edge：视频要用本机的浏览器渲染。装一个，或者用 --browser <路径> / 环境变量 RTS_ARENA_BROWSER 指定")
   const browser = await launchBrowser(exe)
+  let output: VideoOutput | undefined
   const images: string[] = []
   const stem = o.out.replace(/\.mp4$/i, "")
   try {
@@ -1077,7 +1079,16 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
       return { file: null, seconds: total / fps, frames: total, bytes: 0, images, probe: null, timeline, sheet }
     }
     // 等级按尺寸和帧率选择，码率按像素数算：1080p30 约 8 Mbps，4K30 约 32 Mbps。
-    await browser.evaluate(`__init(${JSON.stringify(encoding)})`)
+    output = new VideoOutput(o.out)
+    const drain = async () => {
+      for (;;) {
+        const chunk = await browser.evaluate<{ position: number; data: string } | null>("__chunk()")
+        if (!chunk) return
+        output!.write(chunk.position, Buffer.from(chunk.data, "base64"))
+      }
+    }
+    await browser.evaluate(`__init(${JSON.stringify(encoding)}, ${total})`)
+    await drain()
     let done = 0
     for (const sc of scenes) {
       await browser.evaluate(`__scene(${JSON.stringify(sc.data)})`)
@@ -1086,17 +1097,16 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
         const batch: [number, ReplayFrame | null][] = []
         for (let j = i; j < Math.min(n, i + 10); j++) batch.push([j, sc.frame ? sc.frame(j) : null])
         await browser.evaluate(`__frames(${JSON.stringify(batch)})`)
+        await drain()
         done += batch.length
         o.onProgress?.(done, total)
       }
     }
     const size = await browser.evaluate<number>("__finish()")
-    const parts: Buffer[] = []
-    for (let k = 0; k * 3_000_000 < size; k++) parts.push(Buffer.from(await browser.evaluate<string>(`__chunk(${k})`), "base64"))
-    const bytes = Buffer.concat(parts)
-    writeFileSync(o.out, bytes)
+    await drain()
+    if (output.finish() !== size) throw new Error("视频输出文件大小与编码结果不一致")
     // 用浏览器把成品解一遍：时长、尺寸对不对，顺便截几张图
-    const probe = await browser.evaluate<{ duration: number; width: number; height: number; shots: string[] }>(`__probe(${JSON.stringify(check)})`)
+    const probe = await browser.evaluate<{ duration: number; width: number; height: number; shots: string[] }>(`__probe(${JSON.stringify(check)}, ${JSON.stringify(browser.serveFile(output.path))})`)
     if (check.length) mkdirSync(dirname(pstem), { recursive: true })
     cleanOld(pstem, "check")
     probe.shots.forEach((b64, k) => {
@@ -1104,8 +1114,9 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
       writeFileSync(file, Buffer.from(b64, "base64"))
       images.push(file)
     })
-    return { file: o.out, seconds: total / fps, frames: total, bytes: bytes.length, images, probe: { duration: probe.duration, width: probe.width, height: probe.height }, timeline }
+    output.commit()
+    return { file: o.out, seconds: total / fps, frames: total, bytes: size, images, probe: { duration: probe.duration, width: probe.width, height: probe.height }, timeline }
   } finally {
-    await browser.close()
+    try { await browser.close() } finally { output?.close() }
   }
 }

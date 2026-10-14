@@ -1,11 +1,13 @@
 // 视频渲染用的无头浏览器：用本机装好的 Chrome / Edge（不下载浏览器），通过调试协议（CDP）控制。
 // 页面从本机的 http://127.0.0.1 打开（WebCodecs 只在安全上下文里能用，about:blank 不行）
 import { spawn, type ChildProcess } from "node:child_process"
+import { randomUUID } from "node:crypto"
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { createServer, type Server } from "node:http"
 import type { AddressInfo } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { serveVideoFile } from "./output.ts"
 
 /** 常见的安装位置；也可以用环境变量 RTS_ARENA_BROWSER 或 --browser 指定 */
 const CANDIDATES = [
@@ -35,12 +37,20 @@ export function findBrowser(explicit?: string): string | null {
 export interface Browser {
   /** 在页面里执行一段表达式（可以是 Promise），返回 JSON 化的结果 */
   evaluate<T = unknown>(expression: string): Promise<T>
+  /** 给页面一个只能访问指定文件的本机 URL；支持 Range 分段解码。 */
+  serveFile(file: string): string
   close(): Promise<void>
 }
 
 export async function launchBrowser(executable: string): Promise<Browser> {
   // 一个空白页面：只为了让页面是 http://127.0.0.1（安全上下文）
-  const server: Server = createServer((_req, res) => {
+  const files = new Map<string, string>()
+  const server: Server = createServer((req, res) => {
+    const file = files.get((req.url ?? "").split("?")[0])
+    if (file && (req.method === "GET" || req.method === "HEAD")) {
+      try { serveVideoFile(req, res, file) } catch { res.writeHead(404).end() }
+      return
+    }
     res.setHeader("Content-Type", "text/html; charset=utf-8")
     res.end('<!doctype html><meta charset="utf-8"><title>rts-arena video</title><body style="margin:0;background:#000"></body>')
   })
@@ -130,6 +140,11 @@ export async function launchBrowser(executable: string): Promise<Browser> {
       await new Promise((r) => setTimeout(r, 100))
     }
     return {
+      serveFile(file: string): string {
+        const route = `/video/${randomUUID()}.mp4`
+        files.set(route, file)
+        return new URL(route, url).href
+      },
       async evaluate<T>(expression: string): Promise<T> {
         const r = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true })
         if (r.error) throw new Error(`浏览器出错：${r.error.message}`)
