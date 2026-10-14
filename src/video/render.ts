@@ -321,13 +321,13 @@ function typeDetail(t: Replay["types"][string], spec?: TypeSpecs[string], nameOf
   if (cost) parts.push(`${cost} 金`)
   if (t.maxHp) parts.push(`${t.maxHp} 血`)
   const attack = t.attack ?? spec?.attack
+  // 命中率（D-257，线列步兵这类）：不到 100% 才写，放在克制前面（图例被截断时先留住它，这是这种兵最特别的地方）
+  const acc = (attack as { accuracy?: number } | undefined)?.accuracy
+  if (acc !== undefined && acc < 100) parts.push(`命中 ${acc}%`)
   // 克制（D-166）：倍数大于 1 的写「克骑兵」，放在射程前面（图例排两栏、说明被截断时先留住它）
   const counters = Object.entries(attack?.vs ?? {}).filter(([, m]) => (m ?? 1) > 1)
   if (counters.length) parts.push(`克${counters.map(([k]) => nameOf(k)).join("、")}`)
   if (attack) parts.push(attack.range > 1 ? `射程 ${attack.range}` : "近战")
-  // 命中率（D-257，线列步兵这类）：不到 100% 才写
-  const acc = (attack as { accuracy?: number } | undefined)?.accuracy
-  if (acc !== undefined && acc < 100) parts.push(`命中 ${acc}%`)
   // 能力按规则包里实际的写（歼灭的工人只采矿、不能建造）；老回放没记就看规则包，都没有就按"工人"笼统写采矿
   const gather = t.gather ?? (spec ? !!spec.gather : t.worker)
   const builds = t.builds ?? spec?.builds ?? []
