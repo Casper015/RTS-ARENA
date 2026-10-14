@@ -16,6 +16,7 @@ import { excitement, gameFacts } from "../cli/highlights.ts"
 import { fighterTest, groupBattles, isRout } from "../cli/battles.ts"
 import { BIG_BATTLE, deathsOf, FIGHT_SPEED, fightTicks, fightWindows } from "./fights.ts"
 import { zoomBattleTicks } from "./combat.ts"
+import { videoDimensions, videoEncoderConfig } from "./encoding.ts"
 // 测试和别的模块原来从这里拿（D-255 挪到 fights.ts）
 export { fightWindows }
 import { importRuleset, listRulesets } from "../cli/catalog.ts"
@@ -1001,6 +1002,9 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
   const errs = checkScript(o.script, series)
   if (errs.length) throw new Error(`脚本有问题：\n- ${errs.join("\n- ")}`)
   const fps = o.fps ?? 30
+  const dimensions = videoDimensions(o.vertical)
+  const width = o.width ?? dimensions.width, height = o.height ?? dimensions.height
+  const encoding = videoEncoderConfig(width, height, fps)
   // 平台自带的规则包：读一下单位数值（老回放里没记攻击数据）
   let specs: TypeSpecs | undefined
   try {
@@ -1029,8 +1033,6 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
     await browser.evaluate(readFileSync(muxerFile, "utf8") + ";true")
     await browser.evaluate(`(${installVideoPage.toString()})(${createBattleArt.toString()});true`)
     await browser.evaluate(`__brand(${JSON.stringify(readFileSync(join(PKG_ROOT, "assets", "brand", "logo.svg"), "utf8"))})`)
-    const width = o.width ?? (o.vertical ? 1080 : 1920)
-    const height = o.height ?? (o.vertical ? 1920 : 1080)
     await browser.evaluate(`__size(${width}, ${height})`)
     // 选手的形象图（按联赛名字）：选手页的半身像、精彩对局里的头像都从它来
     for (const p of o.script.players) {
@@ -1074,8 +1076,8 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
       }
       return { file: null, seconds: total / fps, frames: total, bytes: 0, images, probe: null, timeline, sheet }
     }
-    // 码率按像素数算：1080p 约 8 Mbps
-    await browser.evaluate(`__init(${JSON.stringify({ fps, bitrate: Math.round((width * height * fps) / 7.8) })})`)
+    // 等级按尺寸和帧率选择，码率按像素数算：1080p30 约 8 Mbps，4K30 约 32 Mbps。
+    await browser.evaluate(`__init(${JSON.stringify(encoding)})`)
     let done = 0
     for (const sc of scenes) {
       await browser.evaluate(`__scene(${JSON.stringify(sc.data)})`)

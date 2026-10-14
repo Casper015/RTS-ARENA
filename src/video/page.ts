@@ -1763,8 +1763,13 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     g = outG
     return true
   }
-  w.__init = (opts: { fps: number; bitrate: number }) => {
-    fps = opts.fps
+  w.__init = async (opts: VideoEncoderConfig) => {
+    const config = { ...opts, width: canvas.width, height: canvas.height }
+    const support = await VideoEncoder.isConfigSupported(config)
+    if (!support.supported) throw new Error(`这个浏览器不支持 ${canvas.width}×${canvas.height}、${config.framerate} fps 的 H.264 编码：可去掉 --4k、降低 --fps，或换用更新的 Chrome / Edge`)
+    if (encoder && encoder.state !== "closed") encoder.close()
+    w.__encodeError = undefined
+    fps = config.framerate!
     const Muxer = w.Mp4Muxer
     muxer = new Muxer.Muxer({ target: new Muxer.ArrayBufferTarget(), video: { codec: "avc", width: canvas.width, height: canvas.height, frameRate: fps }, fastStart: "in-memory" })
     encoder = new VideoEncoder({
@@ -1773,8 +1778,7 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
         w.__encodeError = String(e)
       },
     })
-    // High 4.2：1080p 到 60 帧都够
-    encoder.configure({ codec: "avc1.64002a", width: canvas.width, height: canvas.height, bitrate: opts.bitrate, framerate: fps })
+    encoder.configure(config)
     frameNo = 0
     return true
   }
@@ -1813,6 +1817,7 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
   /** 画并编码一批帧：items[k] 是 [场景里第几帧, 回放的局面或 null] */
   w.__frames = async (items: [number, Any | null][]) => {
     for (const [i, f] of items) {
+      if (w.__encodeError) throw new Error(w.__encodeError)
       draw(f, i)
       let vf: VideoFrame
       try {
@@ -1878,6 +1883,7 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
   w.__sheetPng = async () => pngBase64(sheet!)
   w.__finish = async () => {
     await encoder!.flush()
+    encoder!.close()
     muxer!.finalize()
     output = new Uint8Array(muxer!.target.buffer)
     return output.length
