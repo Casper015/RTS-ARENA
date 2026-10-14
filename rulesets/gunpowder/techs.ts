@@ -53,7 +53,7 @@ export function gunpowderTypes(): Record<string, TypeSpec> {
     ...(produces ? { produces } : {}),
     look: { shape: "hex", label, name },
   })
-  t.gunworks = building("火药工坊", "火", 200, 300, 700, ["musketeer", "cannon"])
+  t.gunworks = building("火药工坊", "火", 150, 200, 700, ["musketeer", "cannon"])
   t.forge = building("铁匠铺", "锻", 150, 240, 600)
   t.armory = building("护甲坊", "甲", 150, 240, 600)
   t.range = building("靶场", "靶", 125, 200, 500)
