@@ -22,13 +22,19 @@ export function orderText(e: EntityState): string {
       return `build #${o.target}`
     case "enter":
       return `enter #${o.target}`
+    case "hold":
+      return "hold"
+    case "patrol":
+      return `patrol (${o.fromX},${o.fromY})↔(${o.x},${o.y})`
+    case "repair":
+      return `repair #${o.target}`
   }
 }
 
 function snapOf(e: EntityState, w: World): EntSnap {
   const s: EntSnap = { id: e.id, type: e.type, owner: e.owner, x: e.x, y: e.y, hp: e.def.kind === "resource" ? e.amount : e.hp, ord: orderText(e) }
   if (e.construction) s.bp = Math.floor((100 * e.construction.done) / e.construction.total)
-  if (e.def.produces.length || e.queue.length) s.queue = e.queue.map(q => ({ ...q }))
+  if (e.def.produces.length || e.def.researches.length || e.queue.length) s.queue = e.queue.map(q => ({ ...q }))
   const st = statDiff(e.def, w.baseDef(e.type, e.mode))
   if (st) s.st = st
   // 眩晕（D-207）跟增益记在一起，播放器显示成「眩晕」
@@ -37,6 +43,7 @@ function snapOf(e: EntityState, w: World): EntSnap {
   // 状态、驻扎（D-269）
   if (e.def.modes.length && e.mode !== e.def.modes[0].id) s.md = e.mode
   if (e.inside) s.in = e.inside
+  if (e.expires) s.ex = e.expires
   return s
 }
 
@@ -117,6 +124,7 @@ export class Recorder {
     if (bf.length) f.bf = bf
     if (md.length) f.md = md
     if (inside.length) f.in = inside
+    if (w.researchedNow.length) f.rs = w.researchedNow.splice(0)
     if (w.heals.length) f.heal = w.heals.splice(0)
     if (w.fx.length) f.fx = w.fx.splice(0)
     if (w.casts.length) f.casts = w.casts.splice(0).map((c) => ({ u: c.unit, s: c.skill, ...(c.x !== undefined ? { x: c.x, y: c.y } : {}), ...(c.target !== undefined ? { t: c.target } : {}) }))

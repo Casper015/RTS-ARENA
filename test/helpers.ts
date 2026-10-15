@@ -26,6 +26,11 @@ export function fnBot(onTick: (view: View, cmd: Commands) => void): BotRunner {
         mode: (u, mode) => out.push({ kind: "mode", unit: idOf(u), mode }),
         enter: (u, b) => out.push({ kind: "enter", unit: idOf(u), target: idOf(b) }),
         unload: (b) => out.push({ kind: "unload", building: idOf(b) }),
+        research: (b, research) => out.push({ kind: "research", building: idOf(b), research }),
+        addon: (b, type) => out.push({ kind: "addon", building: idOf(b), type }),
+        repair: (u, t) => out.push({ kind: "repair", unit: idOf(u), target: idOf(t) }),
+        hold: (u) => out.push({ kind: "hold", unit: idOf(u) }),
+        patrol: (u, x, y) => out.push({ kind: "patrol", unit: idOf(u), x, y }),
       }
       onTick(JSON.parse(viewJson) as View, cmd)
       return { commands: out, logs: [], fuel: 0, ms: 0 }

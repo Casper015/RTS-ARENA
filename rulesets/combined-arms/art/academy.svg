@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-0.56 -0.66 1.12 1.2">
+<defs>
+  <linearGradient id="armor" x2=".35" y2="1"><stop stop-color="#b0c5d2"/><stop offset=".42" stop-color="#60798d"/><stop offset="1" stop-color="#30465a"/></linearGradient>
+  <linearGradient id="dark" x2=".25" y2="1"><stop stop-color="#394f62"/><stop offset="1" stop-color="#111e2e"/></linearGradient>
+  <linearGradient id="team" x2=".2" y2="1"><stop stop-color="currentColor"/><stop offset="1" stop-color="currentColor" stop-opacity=".48"/></linearGradient>
+  <linearGradient id="glass" x2=".5" y2="1"><stop stop-color="#edffff"/><stop offset=".35" stop-color="#79e6f5"/><stop offset="1" stop-color="#237695"/></linearGradient>
+  <radialGradient id="power"><stop stop-color="#eaffff"/><stop offset=".36" stop-color="#6ee6ff"/><stop offset="1" stop-color="#3291c5" stop-opacity=".12"/></radialGradient>
+  <radialGradient id="heat"><stop stop-color="#fff4d6"/><stop offset=".4" stop-color="#ffb347"/><stop offset="1" stop-color="#d0541c" stop-opacity=".1"/></radialGradient>
+</defs>
+<g transform="scale(.01)">
+<path d="M-47-25-33-39 32-39 47-24 47 32 33 45-34 45-47 30Z" fill="url(#dark)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-47-25-33-39 32-39 47-24 33-10-33-10Z" fill="#6c8292" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <rect x="-40" y="-6" width="80" height="40" rx="3" fill="url(#armor)" stroke="#0c1826" stroke-width="1.7"/>
+  <rect x="-34" y="0" width="14" height="12" rx="1.5" fill="url(#glass)" stroke="#0c1826" stroke-width="1.7"/>
+  <rect x="-16" y="0" width="14" height="12" rx="1.5" fill="url(#glass)" stroke="#0c1826" stroke-width="1.7"/>
+  <rect x="2" y="0" width="14" height="12" rx="1.5" fill="url(#glass)" stroke="#0c1826" stroke-width="1.7"/>
+  <rect x="20" y="0" width="14" height="12" rx="1.5" fill="url(#glass)" stroke="#0c1826" stroke-width="1.7"/>
+  <rect x="-10" y="18" width="20" height="16" rx="2" fill="url(#dark)" stroke="#0c1826" stroke-width="1.7"/>
+  <path d="M-40 -3H40" fill="none" stroke="currentColor" stroke-width="6"/>
+  <rect x="-26" y="-58" width="52" height="24" rx="3" fill="url(#dark)" stroke="#0c1826" stroke-width="1.7"/>
+  <path d="M-20-44l8-7 7 4 9-9 8 6 8-5" fill="none" stroke="#8bfcff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="-30" cy="-12" r="1.5" fill="#c0d1d6"/>
+  <circle cx="30" cy="-12" r="1.5" fill="#c0d1d6"/>
+</g>
+</svg>

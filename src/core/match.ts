@@ -159,6 +159,11 @@ function play(opts: MatchOptions, w: World): Replay {
     }
     for (let p = 0; p < n; p++) if (!runners[p] || !w.players[p].alive) w.players[p].pending.length = 0
     w.tick++
+    // 这一 tick 的事件、攻击从执行命令开始记（D-270：技能打死的、放下的地基规则包也看得到）
+    w.events = []
+    w.shots = []
+    w.misses = []
+    w.freshTick = true
     // 玩家之间的先后（D-251，用户：谁先算完给谁）：这次调用燃料用得少的先执行，一样多的随机排。按燃料不按真实耗时，
     // 同一个种子结果不变。同一格抢放地基、共用资源的队友同时花钱时，先执行的成功（原来固定按座位号，P0 总是先）
     order.length = 0
@@ -189,7 +194,7 @@ function play(opts: MatchOptions, w: World): Replay {
   }
   const types: Replay["types"] = {}
   for (const [name, def] of Object.entries(w.types))
-    types[name] = { kind: def.kind, w: def.w, h: def.h, maxHp: def.maxHp, moveTicks: def.moveTicks, sight: def.sight, cost: def.cost, worker: def.gather !== null || def.builds.length > 0, gather: def.gather !== null, builds: def.builds.length ? def.builds : undefined, attack: def.attack ?? undefined, buildTicks: def.buildTicks || undefined, produces: def.produces.length ? def.produces : undefined, parallel: def.parallel !== 1 ? def.parallel : undefined, skills: def.skills.length ? def.skills : undefined, auras: def.auras.length ? def.auras : undefined, passives: def.passives.length ? def.passives : undefined, layer: def.layer !== "ground" ? def.layer : undefined, detect: def.detect || undefined, modes: def.modes.length ? def.modes.map((m, i) => ({ ...m, ...(rules.types[name].modes?.[i]?.look ? { look: rules.types[name].modes![i].look } : {}) })) : undefined, garrison: def.garrison ?? undefined, look: rules.types[name].look }
+    types[name] = { kind: def.kind, w: def.w, h: def.h, maxHp: def.maxHp, moveTicks: def.moveTicks, sight: def.sight, cost: def.cost, worker: def.gather !== null || def.builds.length > 0, gather: def.gather !== null, builds: def.builds.length ? def.builds : undefined, attack: def.attack ?? undefined, buildTicks: def.buildTicks || undefined, produces: def.produces.length ? def.produces : undefined, parallel: def.parallel !== 1 ? def.parallel : undefined, skills: def.skills.length ? def.skills : undefined, auras: def.auras.length ? def.auras : undefined, passives: def.passives.length ? def.passives : undefined, layer: def.layer !== "ground" ? def.layer : undefined, detect: def.detect || undefined, modes: def.modes.length ? def.modes.map((m, i) => ({ ...m, ...(rules.types[name].modes?.[i]?.look ? { look: rules.types[name].modes![i].look } : {}) })) : undefined, garrison: def.garrison ?? undefined, armor: def.armor || undefined, tags: def.tags.length ? def.tags : undefined, addon: def.addon ?? undefined, addons: def.addons.length ? def.addons : undefined, energy: def.energy ?? undefined, lifetime: def.lifetime || undefined, look: rules.types[name].look }
   const colors: Record<string, string> = {}
   const walkable: Record<string, boolean> = {}
   for (const [ch, t] of Object.entries(rules.terrain)) {
@@ -208,6 +213,7 @@ function play(opts: MatchOptions, w: World): Replay {
     map: { width: w.width, height: w.height, terrain: w.terrain, colors, walkable },
     types,
     fog: rules.fog,
+    ...(Object.keys(w.researches).length ? { researches: w.researches } : {}),
     ...(rules.sharedResources ? { sharedResources: true as const, gathered: w.players.map((p) => ({ ...p.gathered })) } : {}),
     initial: rec.initial,
     frames: rec.frames,

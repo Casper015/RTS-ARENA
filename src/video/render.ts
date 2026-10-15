@@ -10,7 +10,7 @@ import { checkScript, codeFacts, botTag, contestantNames, highlightPlayerWarning
 import { installVideoPage, type ReplayFrame, type SceneData } from "./page.ts"
 import { createBattleArt, type BattleAttack } from "./battle-art.ts"
 import { FACTION_COLORS, FACTION_COLOR_NAMES } from "./battle-colors.ts"
-import { faceToward, farmWorkers, homeFacing, legacySplashEffects, shotTypeOf, trainingQueue, workerPose } from "./visual-state.ts"
+import { faceToward, farmWorkers, homeFacing, legacySplashEffects, moveTicksOf, shotTypeOf, trainingQueue, workerPose } from "./visual-state.ts"
 import { battleCameraTrack } from "./battle-camera.ts"
 import { excitement, gameFacts } from "../cli/highlights.ts"
 import { fighterTest, groupBattles, isRout } from "../cli/battles.ts"
@@ -624,7 +624,10 @@ export function replayScene(
         if (!displaced) {
           // 走一步才转身；被击退的照旧面朝原来的方向往后滑（D-234）
           facing.set(e.id, faceToward(facing.get(e.id) ?? homeFace(e), dx))
-          walking.set(e.id, { x: e.x, y: e.y, tick: k, duration: Math.max(1, e.st?.moveTicks ?? replay.types[e.type]?.moveTicks ?? 1) })
+          // 上一步还没走完又走了一步（兴奋剂这类加快移动的增益，D-270）：按两步之间的间隔播
+          const before = walking.get(e.id)
+          const duration = moveTicksOf(replay, e)
+          walking.set(e.id, { x: e.x, y: e.y, tick: k, duration: before && k - before.tick < duration ? Math.max(1, k - before.tick) : duration })
           continue
         }
         const from = drawnAt(mv[j], e, displayedAt[k])

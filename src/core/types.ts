@@ -1,5 +1,5 @@
 // 内核的数据结构：规则包接口、实体状态、回放格式、bot 运行器接口
-import type { AuraDef, GameEvent, GarrisonDef, ModeDef, Order, PassiveDef, SkillDef, TypeDef } from "../api/bot-api.ts"
+import type { AuraDef, GameEvent, GarrisonDef, ModeDef, Order, PassiveDef, ResearchDef, SkillDef, TypeDef } from "../api/bot-api.ts"
 
 // ---------- 规则包 ----------
 
@@ -54,6 +54,8 @@ export interface StatPatch {
   moveTicks?: number
   /** 视野半径 */
   sight?: number
+  /** 护甲（D-270） */
+  armor?: number
   /** accuracy：命中率（百分数，D-257），只有原来就写了命中率的类型能改 */
   attack?: { damage?: number; range?: number; cooldown?: number; accuracy?: number }
   gather?: { amount?: number; ticks?: number; capacity?: number }
@@ -77,6 +79,28 @@ export interface TypeSpec {
   modes?: ModeSpec[]
   /** 能驻扎单位（D-269，只有建筑能写）：types 不写是所有能移动的地面单位，rangeBonus 不写是 0 */
   garrison?: { capacity: number; types?: string[]; rangeBonus?: number }
+  /** 护甲（D-270）：挨每一下都减这么多，最少还是 1 */
+  armor?: number
+  /** 标签（D-270），比如 "bio"、"mech"：治疗、修理按它挑 */
+  tags?: string[]
+  /** 科技前置（D-270）：要先有这些类型的建好的建筑才能造、建；写研究 id 的要先研究好 */
+  requires?: string[]
+  /** 要在挂着这种挂件的建筑里才造得出来（D-270） */
+  needsAddon?: string
+  /** 能在旁边建的挂件类型（D-270，只有建筑能写） */
+  addons?: string[]
+  /** 这种建筑是挂件（D-270）：挂上以后那座建筑同时造 parallel 个（不写是 1） */
+  addon?: { parallel?: number }
+  /** 能研究的（D-270，Ruleset.researches 里的 id，只有建筑能写） */
+  researches?: string[]
+  /** 能量（D-270）：start 不写是 max 的一半，regenTicks 不写是 8 */
+  energy?: { max: number; start?: number; regenTicks?: number }
+  /** 自动治疗（D-270）：energy 不写是 0 */
+  heal?: { amount: number; range: number; cooldown: number; energy?: number; tags: string[] }
+  /** 修理（D-270，只有单位能写）：buildings 不写是 true，costPct 不写是 25 */
+  repair?: { tags: string[]; buildings?: boolean; costPct?: number }
+  /** 限时存在（D-270，只有单位能写，召唤物）：出来以后几 tick 自动消失、不占单位上限；不写是一直在（spawnNear 的 lifetime 能单独给） */
+  lifetime?: number
   /** 默认 0（不能被攻击） */
   maxHp?: number
   cost?: Record<string, number>
@@ -107,7 +131,10 @@ export interface TypeSpec {
 export type ModeSpec = Pick<ModeDef, "id" | "name"> & Partial<Omit<ModeDef, "id" | "name">> & { look?: Partial<Pick<Look, "label" | "art">> }
 
 /** 规则包写的技能：id、name、cooldown、desc 必写，其余有默认值（见 SkillDef） */
-export type SkillSpec = Pick<SkillDef, "id" | "name" | "cooldown" | "desc"> & Partial<Pick<SkillDef, "initialCooldown" | "target" | "range" | "cost" | "situational">>
+export type SkillSpec = Pick<SkillDef, "id" | "name" | "cooldown" | "desc"> & Partial<Pick<SkillDef, "initialCooldown" | "target" | "range" | "cost" | "situational" | "energy" | "requires">>
+
+/** 规则包写的研究（D-270）：requires、effects 不写是空的；effects 是加多少（见 ResearchDef） */
+export type ResearchSpec = Pick<ResearchDef, "name" | "cost" | "ticks" | "desc"> & Partial<Pick<ResearchDef, "requires" | "effects">>
 
 /** 规则包写的光环：name 必写；radius 默认 -1（等于视野）、affects 默认 own、types 默认全部、self 默认 false、两项加成默认 0 */
 export type AuraSpec = Pick<AuraDef, "name"> & Partial<Omit<AuraDef, "name">>
@@ -132,6 +159,10 @@ export interface BuffSpec {
   damagePct?: number
   /** 减伤（百分比，-1000～90） */
   defensePct?: number
+  /** 移动加快（百分比，D-270，-50～300） */
+  speedPct?: number
+  /** 攻击加快（百分比，D-270，-50～300） */
+  ratePct?: number
   /** 持续几 tick；不写是一直有效，直到 removeBuff 或实体死掉 */
   ticks?: number
 }
@@ -195,6 +226,8 @@ export type RuleEvent =
   | { kind: "built"; id: number; type: string; owner: number }
   /** 玩家放了技能（onCast 返回 null 之后，D-186） */
   | ({ kind: "cast" } & CastInfo)
+  /** 玩家的一项研究好了（D-270） */
+  | { kind: "researched"; player: number; id: string }
 
 /** 规则包放的画面特效（D-205）：区域、飘的字、颜色 */
 export interface RuleFx {
@@ -235,9 +268,9 @@ export interface SetupContext {
   /**
    * 在 (x, y) 附近找空位放实体（setup 里也能用，比自己记占用的格子省事）。(x, y) 放得下就放在那里，否则往外找：(x, y) 落在建筑或资源点里时从它的外圈开始找；单位和 1×1 的实体（1×1 的建筑、资源点也是）按走路的步数往外找（不穿墙，最多 8 步；四周被挡死就找不到），
    * 多格的建筑按距离一圈一圈找（最多 8 圈）；同样近的选离地图中心近的，再一样随机挑。找不到返回 null；
-   * setup 里返回 null 时 rts-arena check 会提醒
+   * setup 里返回 null 时 rts-arena check 会提醒。lifetime（D-270，召唤技能用）：这个单位几 tick 后自动消失、不占单位上限，不写按类型的 lifetime
    */
-  spawnNear(type: string, owner: number, x: number, y: number, opts?: { amount?: number }): number | null
+  spawnNear(type: string, owner: number, x: number, y: number, opts?: { amount?: number; lifetime?: number }): number | null
   /** 移除实体（setup 里也能用，比如摆好之后又不要了） */
   remove(id: number): void
   /** 地形，每行一个字符串（setTerrain 之后才有）；每格是什么看 Ruleset.terrain */
@@ -274,8 +307,8 @@ export interface RuleContext {
   addScore(player: number, n: number): void
   setScore(player: number, n: number): void
   addResource(player: number, resource: string, n: number): void
-  /** 在 (x, y) 附近找空位放实体，找法和 SetupContext.spawnNear 一样，找不到返回 null */
-  spawnNear(type: string, owner: number, x: number, y: number, opts?: { amount?: number }): number | null
+  /** 在 (x, y) 附近找空位放实体，找法和 SetupContext.spawnNear 一样，找不到返回 null；lifetime 是召唤物几 tick 后消失（D-270） */
+  spawnNear(type: string, owner: number, x: number, y: number, opts?: { amount?: number; lifetime?: number }): number | null
   remove(id: number): void
   /** 让玩家出局：不再调用他的 bot，实体留着（要清掉自己 remove） */
   eliminate(player: number): void
@@ -324,6 +357,13 @@ export interface RuleContext {
   removeBuff(id: number, name: string): void
   /** 改实体某个技能的冷却：还要等 ticks 个 tick 才能再放（0 是马上能放） */
   setSkillCooldown(id: number, skill: string, ticks: number): void
+  /**
+   * 打 id 一下（D-270，技能伤害这类，比如立体战线的主炮）：扣 amount 生命（不算护甲、不算增益），by 是谁打的（实体 id，算它的主人打死的、发 damaged 事件）；
+   * 打到 0 就死掉。只能打能被攻击的实体
+   */
+  damage(id: number, amount: number, by?: number): void
+  /** 给玩家记一项研究好了（D-270，规则包自己的奖励这类）：和研究完成一样改数值、发事件 */
+  grantResearch(player: number, id: string): void
   setMarkers(markers: Marker[]): void
   /** 回放顶部显示的一行状态文字 */
   setStatus(text: string): void
@@ -384,6 +424,8 @@ export interface Ruleset {
   resources: string[]
   terrain: Record<string, TerrainSpec>
   types: Record<string, TypeSpec>
+  /** 能研究的东西（D-270）：id → 名字、造价、用时、前置、改哪些数值。哪座建筑能研究写在建筑类型的 researches 里 */
+  researches?: Record<string, ResearchSpec>
   setup(ctx: SetupContext): void
   /** 每 tick 内核结算完之后调用 */
   onTick?(ctx: RuleContext): void
@@ -436,14 +478,26 @@ export interface RuleEntity extends Rect {
   amount: number
   order: Order
   carrying: { resource: string; amount: number } | null
-  queue: { type: string; ticksLeft: number }[]
+  queue: { type: string; ticksLeft: number; research?: true }[]
   /** 没建好的建筑：已完成和总工作量；建好的、规则包直接放的都是 null */
   construction: { done: number; total: number } | null
   alive: boolean
   /** 身上的增益、减益（光环、addBuff 给的，D-186）；ticksLeft 是 null 表示一直有效 */
-  buffs: { name: string; damagePct: number; defensePct: number; ticksLeft: number | null }[]
+  buffs: { name: string; damagePct: number; defensePct: number; speedPct?: number; ratePct?: number; ticksLeft: number | null }[]
   /** 每个技能还要几 tick 才能再放（没有技能就是空对象） */
   skillCooldowns: Record<string, number>
+  /** 现在的状态 id（D-269，没有 modes 的类型是 ""） */
+  mode: string
+  /** 驻扎在哪座建筑里（D-269），0 是没有 */
+  inside: number
+  /** 能量（D-270，没有能量的类型是 0） */
+  energy: number
+  /** 挂着的挂件 id（D-270），0 是没有 */
+  addon: number
+  /** 挂件挂在哪座建筑上（D-270），0 是没有 */
+  host: number
+  /** 限时存在的（D-270）第几 tick 消失，0 是一直在 */
+  expires: number
 }
 
 /** 规则包看到的玩家 */
@@ -457,6 +511,8 @@ export interface RulePlayer {
   gathered: Record<string, number>
   /** 整局累计花掉的（D-249）：自己下命令造建筑、生产、放技能扣的，取消时退回的会减掉 */
   spent: Record<string, number>
+  /** 已经研究好的（D-270） */
+  researched: string[]
 }
 
 export interface EntityState extends RuleEntity {
@@ -486,20 +542,26 @@ export interface EntityState extends RuleEntity {
   lastCombat: number
   /** 眩晕到第几 tick（不含；D-207），没眩晕是 0 */
   stunUntil: number
-  /** 现在的状态 id（D-269，没有 modes 的类型是 ""） */
-  mode: string
   /** 正在换到的状态（null 是没在换）和还要几 tick */
   switchTo: string | null
   switchLeft: number
-  /** 驻扎在哪座建筑里（D-269），0 是没有 */
-  inside: number
   /** 能驻扎的建筑里面的单位 id */
   cargo: number[]
+  /** 回能量、治疗的计时（D-270） */
+  energyCd: number
+  healCd: number
+  /** 正在自己建的挂件地基 id（D-270），0 是没有 */
+  addonSite: number
+  /** 增益合计的移动加快、攻击加快（百分比，D-270） */
+  speedPct: number
+  ratePct: number
 }
 
 export interface PlayerState extends RulePlayer {
   /** 等着交给 bot 的事件 */
   pending: GameEvent[]
+  /** 修理欠的钱（D-270，按修了多少血算的小数，攒够 1 才扣） */
+  repairDebt: Record<string, number>
 }
 
 // ---------- bot 运行器 ----------
@@ -542,12 +604,14 @@ export interface EntSnap {
   st?: StatDiff
   /** 身上的增益、减益的名字（D-186）；没有就没有 */
   bf?: string[]
-  /** Production order and remaining ticks; undefined in older replays, [] means idle. */
-  queue?: { type: string; ticksLeft: number }[]
+  /** Production order and remaining ticks; undefined in older replays, [] means idle. research 是研究（D-270，type 是研究的 id） */
+  queue?: { type: string; ticksLeft: number; research?: true }[]
   /** 现在的状态 id（D-269，不是第一个状态才写） */
   md?: string
   /** 驻扎在哪座建筑里（D-269，有才写） */
   in?: number
+  /** 限时存在的（D-270）第几 tick 消失（有才写） */
+  ex?: number
 }
 
 /** 实体和它类型原值不一样的数值（bot 视图的 stats、回放的 st） */
@@ -555,6 +619,8 @@ export interface StatDiff {
   maxHp?: number
   moveTicks?: number
   sight?: number
+  /** 护甲（D-270） */
+  armor?: number
   attack?: { damage: number; range: number; cooldown: number; accuracy?: number }
   gather?: { amount: number; ticks: number; capacity: number }
 }
@@ -604,6 +670,8 @@ export interface Frame {
   md?: [number, string | null][]
   /** [id, 驻扎的建筑 id（0 是出来了）, ...]（D-269） */
   in?: number[]
+  /** [玩家, 研究 id, ...]：这一 tick 研究好的（D-270） */
+  rs?: (number | string)[]
   /** 这一 tick 被动回血的 [id, 回了多少, ...]（D-190） */
   heal?: number[]
   /** 这一 tick 规则包放的画面特效（D-205，ctx.effect） */
@@ -644,9 +712,11 @@ export interface Replay {
   /** walkable：每种地形能不能走（D-167 起记下，战报算矿旁边站得下几个用） */
   map: { width: number; height: number; terrain: string[]; colors: Record<string, string>; walkable?: Record<string, boolean> }
   /** sight 是视野半径、cost 是造价、worker 表示能采集或建造（老回放没有）；按视野看回放、战报用 */
-  types: Record<string, { kind: TypeDef["kind"]; w: number; h: number; maxHp: number; moveTicks: number; sight?: number; cost?: TypeDef["cost"]; worker?: boolean; /** D-145 起记下（vs 是克制倍数，D-166） */ attack?: { damage: number; range: number; cooldown: number; vs?: Partial<Record<string, number>>; splash?: number; /** 命中率（D-257，百分数，有才写） */ accuracy?: number }; /** D-148 起记下：能不能采集、能建什么 */ gather?: boolean; builds?: string[]; /** D-167 起记下：生产用时、能生产什么（战报算兵营利用率） */ buildTicks?: number; produces?: string[]; /** D-196 起记下（不是 1 才写）：同时造几个 */ parallel?: number; /** D-186 起记下（有才写）：技能、光环、被动 */ skills?: SkillDef[]; auras?: AuraDef[]; passives?: PassiveDef[]; /** D-269 起记下（有才写）：层、探测、状态、驻扎 */ layer?: "air" | "under"; detect?: number; modes?: (ModeDef & { look?: Partial<Pick<Look, "label" | "art">> })[]; garrison?: GarrisonDef; look: Look }>
+  types: Record<string, { kind: TypeDef["kind"]; w: number; h: number; maxHp: number; moveTicks: number; sight?: number; cost?: TypeDef["cost"]; worker?: boolean; /** D-145 起记下（vs 是克制倍数，D-166） */ attack?: { damage: number; range: number; cooldown: number; vs?: Partial<Record<string, number>>; splash?: number; /** 命中率（D-257，百分数，有才写） */ accuracy?: number }; /** D-148 起记下：能不能采集、能建什么 */ gather?: boolean; builds?: string[]; /** D-167 起记下：生产用时、能生产什么（战报算兵营利用率） */ buildTicks?: number; produces?: string[]; /** D-196 起记下（不是 1 才写）：同时造几个 */ parallel?: number; /** D-186 起记下（有才写）：技能、光环、被动 */ skills?: SkillDef[]; auras?: AuraDef[]; passives?: PassiveDef[]; /** D-269 起记下（有才写）：层、探测、状态、驻扎 */ layer?: "air" | "under"; detect?: number; modes?: (ModeDef & { look?: Partial<Pick<Look, "label" | "art">> })[]; garrison?: GarrisonDef; /** D-270 起记下（有才写）：护甲、标签、挂件、能量 */ armor?: number; tags?: string[]; addon?: { parallel: number }; addons?: string[]; energy?: { max: number; start: number; regenTicks: number }; lifetime?: number; look: Look }>
   /** 有没有战争迷雾（老回放没有） */
   fog?: boolean
+  /** 能研究的东西（D-270 起记下，有才写） */
+  researches?: Record<string, ResearchDef>
   /** 同队共用一份资源（D-245 起记下，有才写）：每个队友记的资源都是整队的 */
   sharedResources?: true
   /** 共用资源时（D-248 起记下）：每个玩家整局采到的（自己的工人交的 + 规则包给的），下标是玩家编号 */

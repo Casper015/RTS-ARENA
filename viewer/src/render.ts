@@ -5,7 +5,7 @@ import type { EntSnap, Marker, Replay } from "../../src/core/types.ts"
 import { createBattleArt, type BattleAttack, type BattlePose, type BattleType } from "../../src/video/battle-art.ts"
 import { interpolateBattleCamera, type BattleCamera } from "../../src/video/battle-camera.ts"
 import { FACTION_COLORS } from "../../src/video/battle-colors.ts"
-import { battleTypeOf, faceToward, farmWorkers, homeFacing, legacySplashEffects, trainingQueue, workerPose } from "../../src/video/visual-state.ts"
+import { battleTypeOf, faceToward, farmWorkers, homeFacing, legacySplashEffects, moveTicksOf, trainingQueue, workerPose } from "../../src/video/visual-state.ts"
 import type { Delta, State } from "./model.ts"
 import { Vision } from "./vision.ts"
 
@@ -349,7 +349,9 @@ export class Renderer {
       v.x = e.x
       v.y = e.y
       v.start = t
-      v.dur = Math.max(1, this.replay.types[e.type]?.moveTicks ?? 1)
+      // 上一步还没走完又走了一步（加快移动的增益，D-270）：按两步之间的间隔播
+      const dur = moveTicksOf(this.replay, e)
+      v.dur = t - v.start < dur ? Math.max(1, t - v.start) : dur
       // 走一步才转身，正上正下走不转；一下挪 2 格以上的（击退这类）不转身（D-234）
       if (Math.max(Math.abs(e.x - m.fromX), Math.abs(e.y - m.fromY)) < 2) v.angle = faceToward(v.angle, e.x - m.fromX)
     }
@@ -519,7 +521,8 @@ export class Renderer {
       const e = this.state.ents.get(id)
       if (e) {
         const unit = this.replay.types[e.type]?.kind === "unit"
-        v.root.zIndex = (unit ? this.replay.map.height + 1 : 0) + py + v.h + (unit && layerOf(this.replay, e) === "air" ? 2 * (this.replay.map.height + 1) : 0)
+        // 空中的单位（D-269）、飞起来的建筑（D-270）画在最上面
+        v.root.zIndex = (unit ? this.replay.map.height + 1 : 0) + py + v.h + (layerOf(this.replay, e) === "air" ? 2 * (this.replay.map.height + 1) : 0)
         if (v.root.visible) {
           const walking = unit && p < 1 && (v.x !== v.fx || v.y !== v.fy) ? Math.sin(now / v.dur * Math.PI + id * 1.7) : 0
           const attack = now - v.attackAt < v.attackDuration ? Math.max(0, (now - v.attackAt) / v.attackDuration) : -1

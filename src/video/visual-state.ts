@@ -33,9 +33,20 @@ export function farmWorkers(replay: Replay, entities: Map<number, EntSnap>): Map
   return result
 }
 
+/** 走一格几 tick：改过的数值 → 这个状态的（D-269，建筑飞起来才能走，D-270）→ 类型上的 */
+export function moveTicksOf(replay: Replay, e: EntSnap): number {
+  const m = e.md ? replay.types[e.type]?.modes?.find((x) => x.id === e.md) : undefined
+  return Math.max(1, e.st?.moveTicks ?? (m?.moveTicks || replay.types[e.type]?.moveTicks || 1))
+}
+
+/** 生产队列里一项的名字：研究（D-270）用研究的名字 */
+export function queueName(replay: Replay, q: { type: string; research?: true }): string {
+  return q.research ? (replay.researches?.[q.type]?.name ?? q.type) : (replay.types[q.type]?.look?.name ?? q.type)
+}
+
 export function trainingQueue(replay: Replay, e: EntSnap) {
   return e.queue?.map((q,i)=>{
-    const total=Math.max(1,replay.types[q.type]?.buildTicks??q.ticksLeft)
+    const total=Math.max(1,(q.research?replay.researches?.[q.type]?.ticks:replay.types[q.type]?.buildTicks)??q.ticksLeft)
     const active=(e.bp??100)>=100&&i<(replay.types[e.type]?.parallel??1)
     return {...q,total,active,blocked:active&&q.ticksLeft===0,progress:Math.max(0,Math.min(1,1-q.ticksLeft/total))}
   })

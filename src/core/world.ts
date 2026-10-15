@@ -1,5 +1,5 @@
 // 世界状态：地形、实体、占位、视野；同时实现规则包用的 SetupContext 和 RuleContext
-import type { Game, GameEvent, PlayerInfo, TypeDef } from "../api/bot-api.ts"
+import type { Game, GameEvent, PlayerInfo, ResearchDef, TypeDef } from "../api/bot-api.ts"
 import { resetOrder } from "./commands.ts"
 import { FlowCache } from "./nav.ts"
 import { PathFinder } from "./path.ts"
@@ -19,6 +19,7 @@ import type {
   RuleContext,
   RuleEvent,
   RuleFx,
+  ResearchSpec,
   Ruleset,
   SetupContext,
   StatDiff,
@@ -47,7 +48,7 @@ export function resolveType(name: string, s: TypeSpec): TypeDef {
     parallel: s.parallel ?? 1,
     builds: s.kind === "unit" ? (s.builds ?? []) : [],
     resource: s.resource ?? null,
-    skills: (s.skills ?? []).map((k) => ({ id: k.id, name: k.name, cooldown: k.cooldown, initialCooldown: k.initialCooldown ?? 0, target: k.target ?? "none", range: k.range ?? 0, cost: { ...(k.cost ?? {}) }, situational: k.situational ?? false, desc: k.desc })),
+    skills: (s.skills ?? []).map((k) => ({ id: k.id, name: k.name, cooldown: k.cooldown, initialCooldown: k.initialCooldown ?? 0, target: k.target ?? "none", range: k.range ?? 0, cost: { ...(k.cost ?? {}) }, situational: k.situational ?? false, energy: k.energy ?? 0, requires: k.requires ?? null, desc: k.desc })),
     auras: (s.auras ?? []).map((a) => ({
       name: a.name,
       radius: a.radius ?? -1,
@@ -60,8 +61,9 @@ export function resolveType(name: string, s: TypeSpec): TypeDef {
     passives: (s.passives ?? []).map((x) => ({ ...x })),
     layer: s.kind === "unit" ? (s.layer ?? "ground") : "ground",
     detect: s.detect ?? 0,
+    // 建筑也能有几种状态（D-270：起飞、降落）
     modes:
-      s.kind === "unit"
+      s.kind !== "resource"
         ? (s.modes ?? []).map((m, i) => ({
             id: m.id,
             name: m.name,
@@ -73,14 +75,32 @@ export function resolveType(name: string, s: TypeSpec): TypeDef {
           }))
         : [],
     garrison: s.kind === "building" && s.garrison ? { capacity: s.garrison.capacity, types: s.garrison.types ?? [], rangeBonus: s.garrison.rangeBonus ?? 0 } : null,
+    armor: s.armor ?? 0,
+    tags: s.tags ?? [],
+    requires: s.requires ?? [],
+    needsAddon: s.needsAddon ?? null,
+    addons: s.kind === "building" ? (s.addons ?? []) : [],
+    addon: s.kind === "building" && s.addon ? { parallel: s.addon.parallel ?? 1 } : null,
+    researches: s.kind === "building" ? (s.researches ?? []) : [],
+    energy: s.energy && s.kind !== "resource" ? { max: s.energy.max, start: s.energy.start ?? Math.floor(s.energy.max / 2), regenTicks: s.energy.regenTicks ?? 8 } : null,
+    heal: s.heal && s.kind !== "resource" ? { amount: s.heal.amount, range: s.heal.range, cooldown: s.heal.cooldown, energy: s.heal.energy ?? 0, tags: s.heal.tags } : null,
+    repair: s.repair && s.kind === "unit" ? { tags: s.repair.tags, buildings: s.repair.buildings ?? true, costPct: s.repair.costPct ?? 25 } : null,
+    lifetime: s.kind === "unit" ? (s.lifetime ?? 0) : 0,
   }
+}
+
+/** 规则包写的研究补上默认值（D-270） */
+export function resolveResearch(id: string, r: ResearchSpec): ResearchDef {
+  return { id, name: r.name, cost: { ...r.cost }, ticks: r.ticks, requires: r.requires ?? [], effects: r.effects ?? {}, desc: r.desc }
 }
 
 /** 换到某个状态（D-269）的数值：moveTicks、sight、attack、layer 换成那个状态的 */
 export function modeDef(base: TypeDef, mode: string): TypeDef {
   const m = base.modes.find((x) => x.id === mode)
   if (!m || m === base.modes[0]) return base
-  return { ...base, moveTicks: m.moveTicks, sight: m.sight, attack: m.attack, layer: m.layer }
+  const out = { ...base, moveTicks: m.moveTicks, sight: m.sight, attack: m.attack, layer: m.layer }
+  PATCHED.add(out)
+  return out
 }
 
 /** 攻击能不能打这一层（D-269）：不写 hits 是只打地面；地下的算地面 */
@@ -91,6 +111,15 @@ export function hitsLayer(atk: NonNullable<TypeDef["attack"]>, layer: TypeDef["l
 /** 增益合计的上下限：伤害最多减到 0，减伤最多 90%（不会无敌） */
 export const DMG_PCT_MIN = -100
 export const DEF_PCT_MAX = 90
+
+/** 增益合计的移动加快、攻击加快的上下限（D-270） */
+export const SPEED_PCT_MIN = -50
+export const SPEED_PCT_MAX = 300
+
+/** 加快 pct% 之后的间隔（D-270）：走一格、攻击冷却除以 1 + pct%，四舍五入，至少 1 */
+export function hastened(ticks: number, pct: number): number {
+  return pct === 0 ? ticks : Math.max(1, Math.round((ticks * 100) / (100 + pct)))
+}
 
 /** 增益之后一次攻击的伤害（D-186）：原伤害 ×（1 + 伤害加成）×（1 − 减伤），四舍五入；原伤害大于 0 时至少 1 */
 export function buffedDamage(base: number, dmgPct: number, defPct: number): number {
@@ -114,10 +143,53 @@ function applyPatch(d: TypeDef, p: StatPatch): TypeDef {
     maxHp: p.maxHp ?? d.maxHp,
     moveTicks: p.moveTicks ?? d.moveTicks,
     sight: p.sight ?? d.sight,
+    armor: p.armor ?? d.armor,
     attack: d.attack && p.attack ? { ...d.attack, ...p.attack } : d.attack,
     gather: d.gather && p.gather ? { ...d.gather, ...p.gather } : d.gather,
   }
   PATCHED.add(out)
+  return out
+}
+
+/** 研究加的数值（D-270，加减）：加完生命、走一格、射程、冷却至少 1，伤害、视野、护甲至少 0；原来没有的能力不会加出来 */
+function addDelta(d: TypeDef, p: StatPatch): TypeDef {
+  const at = d.attack
+  const pa = p.attack
+  const g = d.gather
+  const pg = p.gather
+  const out: TypeDef = {
+    ...d,
+    maxHp: d.maxHp > 0 && p.maxHp ? Math.max(1, d.maxHp + p.maxHp) : d.maxHp,
+    moveTicks: d.moveTicks > 0 && p.moveTicks ? Math.max(1, d.moveTicks + p.moveTicks) : d.moveTicks,
+    sight: Math.max(0, d.sight + (p.sight ?? 0)),
+    armor: Math.max(0, d.armor + (p.armor ?? 0)),
+    attack:
+      at && pa
+        ? {
+            ...at,
+            damage: Math.max(0, at.damage + (pa.damage ?? 0)),
+            range: Math.max(1, at.range + (pa.range ?? 0)),
+            cooldown: Math.max(1, at.cooldown + (pa.cooldown ?? 0)),
+            ...(at.accuracy !== undefined ? { accuracy: Math.min(100, Math.max(1, at.accuracy + (pa.accuracy ?? 0))) } : {}),
+          }
+        : at,
+    gather: g && pg ? { ...g, amount: Math.max(1, g.amount + (pg.amount ?? 0)), ticks: Math.max(1, g.ticks + (pg.ticks ?? 0)), capacity: Math.max(1, g.capacity + (pg.capacity ?? 0)) } : g,
+  }
+  PATCHED.add(out)
+  return out
+}
+
+/** 两份研究加的数值相加 */
+function sumDelta(a: StatPatch, b: StatPatch): StatPatch {
+  const out: StatPatch = { ...a }
+  for (const k of ["maxHp", "moveTicks", "sight", "armor"] as const) if (b[k] !== undefined) out[k] = (a[k] ?? 0) + b[k]!
+  for (const k of ["attack", "gather"] as const) {
+    const x = b[k] as Record<string, number> | undefined
+    if (!x) continue
+    const y: Record<string, number> = { ...(a[k] as Record<string, number> | undefined) }
+    for (const [kk, v] of Object.entries(x)) y[kk] = (y[kk] ?? 0) + v
+    ;(out as Record<string, unknown>)[k] = y
+  }
   return out
 }
 
@@ -132,7 +204,7 @@ function mergePatch(a: StatPatch, b: StatPatch): StatPatch {
 export function checkPatch(base: TypeDef, p: unknown, what: string): StatPatch {
   if (p === null || typeof p !== "object" || Array.isArray(p)) throw new Error(`${what}：要改的数值要写成对象，比如 { attack: { damage: 13 } }`)
   const o = p as Record<string, unknown>
-  const KEYS = ["maxHp", "moveTicks", "sight", "attack", "gather"]
+  const KEYS = ["maxHp", "moveTicks", "sight", "armor", "attack", "gather"]
   for (const k of Object.keys(o)) if (!KEYS.includes(k)) throw new Error(`${what}：不能改 ${k}（能改的是 ${KEYS.join("、")}）`)
   const int = (v: unknown, name: string, min: number, max: number): number => {
     if (!Number.isInteger(v) || (v as number) < min || (v as number) > max) throw new Error(`${what}：${name} 要是 ${min}～${max} 的整数（现在是 ${JSON.stringify(v)}）`)
@@ -148,6 +220,7 @@ export function checkPatch(base: TypeDef, p: unknown, what: string): StatPatch {
     out.moveTicks = int(o.moveTicks, "moveTicks", 1, 1000)
   }
   if (o.sight !== undefined) out.sight = int(o.sight, "sight", 0, 50)
+  if (o.armor !== undefined) out.armor = int(o.armor, "armor", 0, 1000)
   const sub = (v: unknown, name: string, fields: Record<string, [number, number]>): Record<string, number> => {
     if (v === null || typeof v !== "object" || Array.isArray(v)) throw new Error(`${what}：${name} 要写成对象`)
     const r: Record<string, number> = {}
@@ -176,6 +249,7 @@ export function statDiff(d: TypeDef, base: TypeDef): StatDiff | undefined {
   if (d.maxHp !== base.maxHp) o.maxHp = d.maxHp
   if (d.moveTicks !== base.moveTicks) o.moveTicks = d.moveTicks
   if (d.sight !== base.sight) o.sight = d.sight
+  if (d.armor !== base.armor) o.armor = d.armor
   const a = d.attack
   const b = base.attack
   if (a && b && (a.damage !== b.damage || a.range !== b.range || a.cooldown !== b.cooldown || a.accuracy !== b.accuracy))
@@ -241,6 +315,21 @@ export class World implements SetupContext, RuleContext {
   readonly hasUnder: boolean
   readonly hasModes: boolean
   readonly hasGarrison: boolean
+  /** 有没有能量、治疗、修理、挂件（D-270，没有的话相关的结算都跳过） */
+  readonly hasEnergy: boolean
+  readonly hasHeal: boolean
+  readonly hasRepair: boolean
+  readonly hasAddons: boolean
+  /** 能研究的东西（D-270） */
+  readonly researches: Record<string, ResearchDef> = {}
+  /** 这一 tick 研究好的 [玩家, 研究 id, ...]（回放用；记下后清空） */
+  researchedNow: (number | string)[] = []
+  /** 对局循环这一 tick 已经清空过 events、shots（执行命令之前）：结算时接着往里加，执行命令时发生的事规则包也看得到（D-270） */
+  freshTick = false
+  /** 限时存在的实体（D-270，召唤物）的 id */
+  readonly timed = new Set<number>()
+  /** 修理攒下的不到 1 点的生命（D-270，按被修的实体 id） */
+  private repairFrac = new Map<number, number>()
   pf!: PathFinder
   flow!: FlowCache
   /** 建筑、资源点每增减一次加 1，流场缓存据此作废 */
@@ -250,6 +339,8 @@ export class World implements SetupContext, RuleContext {
   readonly teams: number[]
   /** setTypeStats 的改动，键是 "玩家|类型"（D-153） */
   private typePatches = new Map<string, StatPatch>()
+  /** 研究加的数值，键是 "玩家|类型"（D-270，加减，叠在每个状态上、在 setTypeStats 之前） */
+  private researchDelta = new Map<string, StatPatch>()
   /** setStats 的改动，键是实体 id */
   private entPatches = new Map<number, StatPatch>()
   /** 按 "玩家|类型" 算好的数值（setTypeStats 改了就作废） */
@@ -257,7 +348,7 @@ export class World implements SetupContext, RuleContext {
 
   // ---------- 技能、光环、被动（D-186） ----------
   /** 规则包 addBuff 加的增益：实体 id → 名字 → 数值和到期的 tick（null 是一直有效） */
-  readonly ruleBuffs = new Map<number, Map<string, { damagePct: number; defensePct: number; until: number | null }>>()
+  readonly ruleBuffs = new Map<number, Map<string, { damagePct: number; defensePct: number; speedPct: number; ratePct: number; until: number | null }>>()
   /** 有没有带光环的类型（没有就不用每 tick 算光环） */
   readonly hasAuras: boolean
   /** 有没有带技能或被动的类型 */
@@ -294,6 +385,11 @@ export class World implements SetupContext, RuleContext {
     this.hasUnder = layers.includes("under")
     this.hasModes = defs.some((d) => d.modes.length > 0)
     this.hasGarrison = defs.some((d) => d.garrison !== null)
+    this.hasEnergy = defs.some((d) => d.energy !== null)
+    this.hasHeal = defs.some((d) => d.heal !== null)
+    this.hasRepair = defs.some((d) => d.repair !== null)
+    this.hasAddons = defs.some((d) => d.addons.length > 0)
+    for (const [id, r] of Object.entries(rules.researches ?? {})) this.researches[id] = resolveResearch(id, r)
     this.players = names.map((name, id) => ({
       id,
       name,
@@ -303,7 +399,9 @@ export class World implements SetupContext, RuleContext {
       // 每人各记各的（D-248、D-249）：同队共用一份资源时靠它们分清谁挣的、谁花的
       gathered: Object.fromEntries(rules.resources.map((r) => [r, 0])),
       spent: Object.fromEntries(rules.resources.map((r) => [r, 0])),
+      researched: [],
       pending: [],
+      repairDebt: {},
     }))
     // 同队共用一份资源（D-245）：队友的 resources 指向同一个对象，扣钱、交货、规则包加钱都算在一起，同一 tick 两个队友也花不超
     if (rules.sharedResources) for (const p of this.players) p.resources = this.players[this.teams.indexOf(this.teams[p.id])].resources
@@ -359,8 +457,8 @@ export class World implements SetupContext, RuleContext {
   }
 
   canPlace(def: TypeDef, x: number, y: number): boolean {
-    // 空中单位（D-269）：只要整个占地在地图里
-    if (def.kind === "unit" && def.layer === "air") return this.inBounds(x, y) && this.inBounds(x + def.w - 1, y + def.h - 1)
+    // 空中单位（D-269）、飞起来的建筑（D-270）：只要整个占地在地图里
+    if (def.layer === "air") return this.inBounds(x, y) && this.inBounds(x + def.w - 1, y + def.h - 1)
     for (let yy = y; yy < y + def.h; yy++)
       for (let xx = x; xx < x + def.w; xx++) {
         if (!this.inBounds(xx, yy)) return false
@@ -370,9 +468,9 @@ export class World implements SetupContext, RuleContext {
     return true
   }
 
-  /** 占不占地面的格子（D-269）：空中、地下的单位和驻扎在建筑里的单位不占 */
+  /** 占不占地面的格子（D-269）：空中、地下的单位，飞起来的建筑（D-270），驻扎在建筑里的单位不占 */
   onGrid(e: EntityState): boolean {
-    return e.def.kind !== "unit" || (e.def.layer === "ground" && e.inside === 0)
+    return e.def.layer === "ground" && e.inside === 0
   }
 
   private occupy(e: EntityState, val: number): void {
@@ -406,7 +504,7 @@ export class World implements SetupContext, RuleContext {
 
   // ---------- 实体 ----------
 
-  private create(type: string, owner: number, x: number, y: number, amount?: number): EntityState {
+  private create(type: string, owner: number, x: number, y: number, amount?: number, lifetime?: number): EntityState {
     const def = this.types[type]
     if (!def) throw new Error(`未定义的实体类型 "${type}"`)
     if (owner < -1 || owner >= this.playerCount || !Number.isInteger(owner)) throw new Error(`玩家编号 ${owner} 不存在`)
@@ -449,6 +547,20 @@ export class World implements SetupContext, RuleContext {
       switchLeft: 0,
       inside: 0,
       cargo: [],
+      energy: def.energy?.start ?? 0,
+      energyCd: 0,
+      healCd: 0,
+      addon: 0,
+      host: 0,
+      addonSite: 0,
+      speedPct: 0,
+      ratePct: 0,
+      expires: 0,
+    }
+    const life = lifetime ?? def.lifetime
+    if (life > 0) {
+      e.expires = this.tick + life
+      this.timed.add(e.id)
     }
     this.ents.set(e.id, e)
     this.occupy(e, e.id)
@@ -473,8 +585,8 @@ export class World implements SetupContext, RuleContext {
   }
 
   /** 生产出来的单位、规则包刷出来的实体都走这里，会发 created 事件 */
-  spawnLive(type: string, owner: number, x: number, y: number, amount?: number): EntityState {
-    const e = this.create(type, owner, x, y, amount)
+  spawnLive(type: string, owner: number, x: number, y: number, amount?: number, lifetime?: number): EntityState {
+    const e = this.create(type, owner, x, y, amount, lifetime)
     this.events.push({ kind: "created", id: e.id, type, owner })
     if (owner >= 0) this.pushEvent(owner, { kind: "created", tick: this.tick, id: e.id, type })
     return e
@@ -510,6 +622,26 @@ export class World implements SetupContext, RuleContext {
         this.destroy(u, killer, removed, byNeutral)
       }
     }
+    // 挂件（D-270）：建筑没了，挂着的挂件留在原地（没有主了），正在建的挂件地基跟着没了；挂件没了，建筑上的记录清掉
+    if (e.host) {
+      const h = this.ents.get(e.host)
+      if (h && h.addon === e.id) h.addon = 0
+      if (h && h.addonSite === e.id) h.addonSite = 0
+    }
+    if (e.addon) {
+      const a = this.ents.get(e.addon)
+      if (a) a.host = 0
+    }
+    if (e.addonSite) {
+      const site = this.ents.get(e.addonSite)
+      e.addonSite = 0
+      if (site) {
+        site.host = 0
+        this.destroy(site, -1)
+      }
+    }
+    this.repairFrac.delete(e.id)
+    this.timed.delete(e.id)
     this.entPatches.delete(e.id)
     this.ruleBuffs.delete(e.id)
     if (removed) this.removed.add(e.id)
@@ -549,6 +681,113 @@ export class World implements SetupContext, RuleContext {
     return true
   }
 
+  /**
+   * 让出 r 这块地（D-270，建挂件、建筑降落）：上面自己和盟友能走的 1×1 地面单位挪到旁边。
+   * 有别人的、大型的、正在换状态的单位挡着，或者挪不开，返回原因（这时可能已经挪了几个）
+   */
+  clearFootprint(owner: number, r: Rect): string | null {
+    const movers: EntityState[] = []
+    for (let yy = r.y; yy < r.y + r.h; yy++)
+      for (let xx = r.x; xx < r.x + r.w; xx++) {
+        if (!this.inBounds(xx, yy)) continue
+        const u = this.ents.get(this.unitOcc[yy * this.width + xx])
+        if (!u || movers.includes(u)) continue
+        if ((u.owner !== owner && !this.isAlly(owner, u.owner)) || u.def.moveTicks <= 0 || u.w > 1 || u.h > 1 || u.switchTo !== null)
+          return `(${xx}, ${yy}) 有 #${u.id}（${u.type}）挡着`
+        movers.push(u)
+      }
+    for (const u of movers) {
+      const spot = this.findUnitSpot(r, 6)
+      if (!spot) return `#${u.id}（${u.type}）挪不开：旁边没有空位`
+      this.moveUnit(u, spot.y * this.width + spot.x)
+      u.path.length = 0
+      u.pathKey = ""
+      u.stuck = 0
+      u.want = -1
+    }
+    return null
+  }
+
+  /** 挂件让建筑同时造几个（D-270）：挂着建好的挂件就是挂件的 parallel，和建筑自己的取大的 */
+  slotsOf(b: EntityState): number {
+    const a = b.addon ? this.ents.get(b.addon) : undefined
+    return Math.max(b.def.parallel, a && !a.construction && a.def.addon ? a.def.addon.parallel : 1)
+  }
+
+  /** 降落的建筑（D-270）：右边、底边对齐的位置正好有没主的、它能挂的自己的挂件，就挂上 */
+  attachAddon(b: EntityState): void {
+    if (b.addon || b.def.addons.length === 0) return
+    for (const a of this.ents.values()) {
+      if (a.owner !== b.owner || a.host || a.construction || !a.def.addon || !b.def.addons.includes(a.type)) continue
+      if (a.x !== b.x + b.w || a.y !== b.y + b.h - a.h) continue
+      a.host = b.id
+      b.addon = a.id
+      return
+    }
+  }
+
+  /** 前置（D-270）：缺哪一样返回原因；建筑类型要有建好的（飞起来的也算），研究 id 要研究好 */
+  lacking(player: number, reqs: readonly string[]): string | null {
+    for (const r of reqs) {
+      const res = this.researches[r]
+      if (res) {
+        if (!this.players[player].researched.includes(r)) return `要先研究${res.name}（${r}）`
+        continue
+      }
+      let ok = false
+      for (const e of this.ents.values())
+        if (e.owner === player && e.type === r && !e.construction) {
+          ok = true
+          break
+        }
+      if (!ok) return `要先有建好的 ${r}`
+    }
+    return null
+  }
+
+  /** u 能不能修 t（D-270）：不能修返回原因（满血的也算不能修） */
+  repairProblem(u: EntityState, t: EntityState): string | null {
+    const r = u.def.repair
+    if (!r) return `#${u.id}（${u.type}）不能修理`
+    if (t === u) return `#${u.id} 不能修自己`
+    if (!this.isAlly(u.owner, t.owner)) return `#${t.id}（${t.type}）不是你和盟友的，不能修`
+    if (!attackable(t)) return `#${t.id}（${t.type}）不能修（资源点、无敌、驻扎在建筑里）`
+    if (t.construction) return `#${t.id}（${t.type}）还没建好：用 build 接着建`
+    if (t.def.kind === "building" ? !r.buildings : !t.def.tags.some((x) => r.tags.includes(x)))
+      return `#${u.id}（${u.type}）修不了 #${t.id}（${t.type}）：能修${r.buildings ? "建筑和" : ""}带 ${r.tags.join("、")} 标签的单位`
+    if (t.hp >= t.def.maxHp) return `#${t.id}（${t.type}）是满血`
+    return null
+  }
+
+  /**
+   * 修一个 tick（D-270）：每个修理的每 tick 修 生命上限 ÷ 造价用时（攒到 1 才加），花造价 × costPct% × 修的比例（攒到 1 才扣）。
+   * 钱不够返回 false（这一下不修）
+   */
+  repairTick(u: EntityState, t: EntityState): boolean {
+    const max = t.def.maxHp
+    let frac = (this.repairFrac.get(t.id) ?? 0) + max / Math.max(1, t.def.buildTicks)
+    const gain = Math.min(Math.floor(frac), max - t.hp)
+    if (gain <= 0) {
+      this.repairFrac.set(t.id, frac)
+      return true
+    }
+    frac -= gain
+    const p = this.players[u.owner]
+    const pct = u.def.repair!.costPct
+    const owe: [string, number][] = Object.entries(this.types[t.type].cost).map(([r, n]) => [r, (p.repairDebt[r] ?? 0) + ((n ?? 0) * pct * gain) / (100 * max)])
+    for (const [r, n] of owe) if (Math.floor(n) > (p.resources[r] ?? 0)) return false
+    for (const [r, n] of owe) {
+      const pay = Math.floor(n)
+      p.resources[r] -= pay
+      p.spent[r] += pay
+      p.repairDebt[r] = n - pay
+    }
+    t.hp += gain
+    this.repairFrac.set(t.id, t.hp >= max ? 0 : frac)
+    this.heals.push(t.id, gain)
+    return true
+  }
+
   pushEvent(player: number, ev: GameEvent): void {
     const p = this.players[player]
     if (ev.kind === "damaged" && p.pending.length >= PENDING_SOFT_CAP) return
@@ -560,7 +799,7 @@ export class World implements SetupContext, RuleContext {
    * 最多 maxRing 步；多格实体：按曼哈顿圈找。同样远的选离地图中心最近的，再一样随机挑（对称地图上两边一样）。
    */
   findSpotAround(def: TypeDef, around: Rect, maxRing: number): { x: number; y: number } | null {
-    if (def.w === 1 && def.h === 1 && !(def.kind === "unit" && def.layer === "air")) return this.findUnitSpot(around, maxRing)
+    if (def.w === 1 && def.h === 1 && def.layer !== "air") return this.findUnitSpot(around, maxRing)
     const cx2 = this.width - def.w
     const cy2 = this.height - def.h
     const ties: { x: number; y: number }[] = []
@@ -606,7 +845,7 @@ export class World implements SetupContext, RuleContext {
     return null
   }
 
-  private findUnitSpot(around: Rect, maxRing: number): { x: number; y: number } | null {
+  findUnitSpot(around: Rect, maxRing: number): { x: number; y: number } | null {
     const W = this.width
     const depth = new Map<number, number>()
     let frontier: number[] = []
@@ -643,7 +882,8 @@ export class World implements SetupContext, RuleContext {
         for (const [nx, ny] of [[x, y - 1], [x + 1, y], [x, y + 1], [x - 1, y]]) {
           if (!this.inBounds(nx, ny)) continue
           const ni = ny * W + nx
-          if (depth.has(ni) || !this.staticFree(ni)) continue
+          // 不往 around 里面找（挪开挂件、降落占地上的单位时 around 还不是建筑，D-270）
+          if (depth.has(ni) || !this.staticFree(ni) || rectDist({ x: nx, y: ny, w: 1, h: 1 }, around) === 0) continue
           depth.set(ni, d + 1)
           next.push(ni)
         }
@@ -700,6 +940,7 @@ export class World implements SetupContext, RuleContext {
       terrain: this.terrain,
       walkable,
       types: this.types,
+      researches: this.researches,
       resources: this.rules.resources,
       maxTicks: this.rules.maxTicks,
       decisionInterval: this.rules.decisionInterval,
@@ -718,8 +959,9 @@ export class World implements SetupContext, RuleContext {
     let n = 0
     for (const e of this.ents.values()) {
       if (e.owner !== player) continue
-      if (e.def.kind === "unit") n++
-      for (const q of e.queue) if (this.types[q.type].kind === "unit") n++
+      // 限时存在的召唤物（D-270）不占单位上限
+      if (e.def.kind === "unit" && e.expires === 0) n++
+      for (const q of e.queue) if (!q.research && this.types[q.type].kind === "unit" && this.types[q.type].lifetime === 0) n++
     }
     return n
   }
@@ -770,10 +1012,12 @@ export class World implements SetupContext, RuleContext {
     if (n > 0) this.players[player].gathered[resource] += n
   }
 
-  spawnNear(type: string, owner: number, x: number, y: number, opts?: { amount?: number }): number | null {
+  spawnNear(type: string, owner: number, x: number, y: number, opts?: { amount?: number; lifetime?: number }): number | null {
     const def = this.types[type]
     if (!def) throw new Error(`未定义的实体类型 "${type}"`)
-    if (this.canPlace(def, x, y)) return this.spawnLive(type, owner, x, y, opts?.amount).id
+    const life = opts?.lifetime
+    if (life !== undefined && (def.kind !== "unit" || !Number.isInteger(life) || life < 1 || life > 100_000)) throw new Error(`spawnNear：lifetime 只能给单位，要是 1～100000 的整数（现在是 ${JSON.stringify(life)}）`)
+    if (this.canPlace(def, x, y)) return this.spawnLive(type, owner, x, y, opts?.amount, life).id
     // (x, y) 落在建筑、资源点里：从它的外圈开始找（不然单位从建筑中间一步也走不出去）
     const inside = this.inBounds(x, y) ? this.ents.get(this.staticOcc[y * this.width + x]) : undefined
     const around = inside ? { x: inside.x, y: inside.y, w: inside.w, h: inside.h } : { x, y, w: 1, h: 1 }
@@ -781,7 +1025,7 @@ export class World implements SetupContext, RuleContext {
     const blocked = !inside && def.w === 1 && def.h === 1 && (!this.inBounds(x, y) || !this.walk[y * this.width + x])
     const spot = blocked ? this.ringSpot(def, x, y, 8) : this.findSpotAround(def, around, 8)
     if (!spot && this.tick === 0) this.notes.push(`setup 里 spawnNear("${type}", ${owner}, ${x}, ${y}) 没找到空位，返回了 null（这个实体没放下）`)
-    return spot ? this.spawnLive(type, owner, spot.x, spot.y, opts?.amount).id : null
+    return spot ? this.spawnLive(type, owner, spot.x, spot.y, opts?.amount, life).id : null
   }
 
   remove(id: number): void {
@@ -906,9 +1150,14 @@ export class World implements SetupContext, RuleContext {
     const key = `${owner}|${type}|${mode}`
     let d = base
     const tp = this.typePatches.get(`${owner}|${type}`)
-    if (tp) {
-      d = this.defCache.get(key) ?? applyPatch(base, tp)
-      this.defCache.set(key, d)
+    const rd = this.researchDelta.get(`${owner}|${type}`)
+    if (tp || rd) {
+      let c = this.defCache.get(key)
+      if (!c) {
+        c = rd ? addDelta(base, rd) : base
+        if (tp) c = applyPatch(c, tp)
+      }
+      this.defCache.set(key, (d = c))
     }
     const ep = id === undefined ? undefined : this.entPatches.get(id)
     return ep ? applyPatch(d, ep) : d
@@ -918,11 +1167,20 @@ export class World implements SetupContext, RuleContext {
   applyMode(e: EntityState, mode: string): boolean {
     const was = this.onGrid(e)
     const next = this.defFor(e.owner, e.type, e.id, mode)
-    if (!was && next.layer === "ground" && e.inside === 0 && !this.footFree(e, e.x, e.y)) return false
+    const landing = !was && next.layer === "ground" && e.inside === 0
+    // 建筑降落（D-270）：占地上自己和盟友的小兵挪开
+    if (landing && e.def.kind === "building") this.clearFootprint(e.owner, e)
+    if (landing && !this.footFree(e, e.x, e.y)) return false
     this.occupy(e, 0)
     e.mode = mode
     this.refreshDef(e)
     this.occupy(e, e.id)
+    // 起飞时挂件留在原地，降落到正好的位置又挂上（D-270）
+    if (e.def.kind === "building" && e.def.layer === "air" && e.addon) {
+      const a = this.ents.get(e.addon)
+      if (a) a.host = 0
+      e.addon = 0
+    } else if (e.def.kind === "building" && landing) this.attachAddon(e)
     return true
   }
 
@@ -962,6 +1220,43 @@ export class World implements SetupContext, RuleContext {
     this.refreshDef(e)
   }
 
+  grantResearch(player: number, id: string): void {
+    if (!Number.isInteger(player) || player < 0 || player >= this.playerCount) throw new Error(`grantResearch：玩家编号 ${player} 不存在`)
+    const r = this.researches[id]
+    if (!r) throw new Error(`grantResearch：没有 "${id}" 这项研究${Object.keys(this.researches).length ? `（有：${Object.keys(this.researches).join("、")}）` : ""}`)
+    const p = this.players[player]
+    if (p.researched.includes(id)) return
+    p.researched.push(id)
+    for (const [type, delta] of Object.entries(r.effects)) {
+      if (!delta || !this.types[type]) continue
+      const key = `${player}|${type}`
+      this.researchDelta.set(key, sumDelta(this.researchDelta.get(key) ?? {}, delta as StatPatch))
+      for (const k of [...this.defCache.keys()]) if (k.startsWith(`${key}|`)) this.defCache.delete(k)
+      for (const e of this.ents.values()) if (e.owner === player && e.type === type) this.refreshDef(e)
+    }
+    this.researchedNow.push(player, id)
+    this.events.push({ kind: "researched", player, id })
+    this.pushEvent(player, { kind: "researched", tick: this.tick, id })
+  }
+
+  damage(id: number, amount: number, by?: number): void {
+    const t = this.mustGet(id, "damage")
+    if (!attackable(t)) throw new Error(`damage：#${id}（${t.type}）是资源点、无敌的或者驻扎在建筑里，打不了`)
+    if (!Number.isInteger(amount) || amount < 1 || amount > 1_000_000) throw new Error(`damage：amount 要是 1～1000000 的整数（现在是 ${JSON.stringify(amount)}）`)
+    const a = by === undefined || by === null ? undefined : this.ents.get(by)
+    t.hp -= amount
+    t.lastCombat = this.tick
+    t.lastHitBy = a ? a.owner : -1
+    t.lastHitNeutral = a ? a.owner < 0 : false
+    t.lastHitType = a ? a.type : ""
+    if (a) {
+      a.lastCombat = this.tick
+      this.shots.push(a.id, t.id)
+    }
+    if (t.owner >= 0) this.pushEvent(t.owner, { kind: "damaged", tick: this.tick, id: t.id, by: a?.id ?? 0, byOwner: a?.owner ?? -1, byType: a?.type ?? "", damage: amount })
+    if (t.hp <= 0) this.destroy(t, t.lastHitBy, false, t.lastHitNeutral)
+  }
+
   eliminate(player: number): void {
     this.players[player].alive = false
   }
@@ -979,10 +1274,12 @@ export class World implements SetupContext, RuleContext {
     }
     const damagePct = int(buff.damagePct, "damagePct", -100, 1000)
     const defensePct = int(buff.defensePct, "defensePct", -1000, DEF_PCT_MAX)
+    const speedPct = int(buff.speedPct, "speedPct", SPEED_PCT_MIN, SPEED_PCT_MAX)
+    const ratePct = int(buff.ratePct, "ratePct", SPEED_PCT_MIN, SPEED_PCT_MAX)
     const ticks = buff.ticks === undefined ? null : int(buff.ticks, "ticks", 1, 1_000_000)
     let m = this.ruleBuffs.get(id)
     if (!m) this.ruleBuffs.set(id, (m = new Map()))
-    m.set(name, { damagePct, defensePct, until: ticks === null ? null : this.tick + ticks })
+    m.set(name, { damagePct, defensePct, speedPct, ratePct, until: ticks === null ? null : this.tick + ticks })
     this.refreshBuffs(e, this.auraOf.get(id) ?? [])
   }
 
@@ -1008,16 +1305,31 @@ export class World implements SetupContext, RuleContext {
   refreshBuffs(e: EntityState, aura: { name: string; damagePct: number; defensePct: number }[]): void {
     const list: EntityState["buffs"] = aura.map((a) => ({ ...a, ticksLeft: null }))
     const rb = this.ruleBuffs.get(e.id)
-    if (rb) for (const [name, b] of rb) list.push({ name, damagePct: b.damagePct, defensePct: b.defensePct, ticksLeft: b.until === null ? null : Math.max(0, b.until - this.tick) })
+    if (rb)
+      for (const [name, b] of rb)
+        list.push({
+          name,
+          damagePct: b.damagePct,
+          defensePct: b.defensePct,
+          ...(b.speedPct ? { speedPct: b.speedPct } : {}),
+          ...(b.ratePct ? { ratePct: b.ratePct } : {}),
+          ticksLeft: b.until === null ? null : Math.max(0, b.until - this.tick),
+        })
     e.buffs = list
     let dmg = 0
     let def = 0
+    let spd = 0
+    let rate = 0
     for (const b of list) {
       dmg += b.damagePct
       def += b.defensePct
+      spd += b.speedPct ?? 0
+      rate += b.ratePct ?? 0
     }
     e.dmgPct = Math.max(DMG_PCT_MIN, dmg)
     e.defPct = Math.min(DEF_PCT_MAX, def)
+    e.speedPct = Math.min(SPEED_PCT_MAX, Math.max(SPEED_PCT_MIN, spd))
+    e.ratePct = Math.min(SPEED_PCT_MAX, Math.max(SPEED_PCT_MIN, rate))
     if (list.length) this.buffed.add(e.id)
     else this.buffed.delete(e.id)
   }

@@ -3,7 +3,7 @@ import type { Replay } from "../../src/core/types.ts"
 import { applyFrame, ReplayModel, type State } from "./model.ts"
 import { initArena } from "./arena.ts"
 import { playerColor, Renderer } from "./render.ts"
-import { trainingQueue } from "../../src/video/visual-state.ts"
+import { queueName, trainingQueue } from "../../src/video/visual-state.ts"
 import type { BattleCamera } from "../../src/video/battle-camera.ts"
 import { directorTrack } from "../../src/video/fights.ts"
 
@@ -237,6 +237,8 @@ function updateUI(force = false): void {
         <span class="muted">生命</span><span>${hp}</span><span class="muted">命令</span><span>${e.ord}</span>${
           e.bp === undefined ? "" : html`<span class="muted">建造</span><span>${e.bp}%（还没建好）</span>`
         }${e.bf?.length ? html`<span class="muted">增益</span><span>${e.bf.join("、")}</span>` : ""}${
+          (e.st?.armor ?? info?.armor ?? 0) > 0 ? html`<span class="muted">护甲</span><span>${e.st?.armor ?? info?.armor}（挨每一下减这么多）</span>` : ""
+        }${
           info?.skills?.length
             ? html`<span class="muted">技能</span><span>${renderer
                 .cooldownsAt(e.id, e.type, state.tick)
@@ -252,7 +254,7 @@ function updateUI(force = false): void {
       if(info.produces?.length || e.queue!==undefined) {
         const hidden=pov!==null&&(r.players[e.owner]?.team??e.owner)!==pov
         const queue=hidden?undefined:trainingQueue(r,e)
-        const content=hidden?html`<p class="muted">敌方生产队列不可见</p>`:queue===undefined?html`<p class="muted">旧回放未记录生产队列</p>`:queue.length===0?html`<p class="muted">当前没有训练任务</p>`:html`<ol>${queue.map((q,i)=>html`<li class="${q.active?"training":"waiting"}"><canvas data-queue-type="${q.type}" width="80" height="80" aria-hidden="true"></canvas><div><b>${r.types[q.type]?.look?.name??names[q.type]??q.type}</b><small>${q.blocked?"训练完成 · 等待出口":q.active?`训练中 · 剩余 ${Math.ceil(q.ticksLeft/Math.max(1,r.tickRate))} 秒`:(e.bp??100)<100?"等待建筑完工":`排队中 · 第 ${i+1} 位`}</small><progress max="1" value="${q.progress}" aria-label="训练进度"></progress></div></li>`)}</ol>`
+        const content=hidden?html`<p class="muted">敌方生产队列不可见</p>`:queue===undefined?html`<p class="muted">旧回放未记录生产队列</p>`:queue.length===0?html`<p class="muted">当前没有训练任务</p>`:html`<ol>${queue.map((q,i)=>html`<li class="${q.active?"training":"waiting"}"><canvas data-queue-type="${q.type}" width="80" height="80" aria-hidden="true"></canvas><div><b>${q.research?queueName(r,q):r.types[q.type]?.look?.name??names[q.type]??q.type}</b><small>${q.blocked?"训练完成 · 等待出口":q.active?`${q.research?"研究中":"训练中"} · 剩余 ${Math.ceil(q.ticksLeft/Math.max(1,r.tickRate))} 秒`:(e.bp??100)<100?"等待建筑完工":`排队中 · 第 ${i+1} 位`}</small><progress max="1" value="${q.progress}" aria-label="训练进度"></progress></div></li>`)}</ol>`
         $("selected").insertAdjacentHTML("beforeend",html`<section class="production-queue"><h4>训练队列 <span>${queue?.length??"—"}</span></h4>${content}</section>`.s)
         for(const canvas of $("selected").querySelectorAll<HTMLCanvasElement>("[data-queue-type]")) {
           const name=canvas.dataset.queueType!;if(!r.types[name])continue

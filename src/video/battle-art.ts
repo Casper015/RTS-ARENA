@@ -463,7 +463,7 @@ export function createBattleArt() {
     // A ruleset overlay (a crown, a banner) usually sticks out above the platform figure.
     const extra=t.art?.over||t.art?.sprite?.05:0
     // Air units (D-269) hover above their tile, so their bars sit higher too.
-    return t.kind!=="unit"?0:extra+(t.layer==="air"?.42:0)+(r==="cavalry"?.50:r==="scout"?.36:r==="soldier"||r==="infantry"?.35:r==="worker"?.25:r==="spearman"||r==="archer"?.30:r==="musketeer"?.32:.10)
+    return t.kind!=="unit"?(t.layer==="air"?.5:0):extra+(t.layer==="air"?.42:0)+(r==="cavalry"?.50:r==="scout"?.36:r==="soldier"||r==="infantry"?.35:r==="worker"?.25:r==="spearman"||r==="archer"?.30:r==="musketeer"?.32:.10)
   }
 
   /** Coordinates and line widths use map tiles, so the same art works at any output resolution. */
@@ -551,8 +551,14 @@ export function createBattleArt() {
       }
       svgLayer(g, a?.over, color)
     } else {
+      if (t.layer === "air") {
+        // 飞起来的建筑（D-270）：地上一团影子，整座抬高，底下两团推进的火
+        ellipse(g, .035 * w, .32 * h, .46 * w, .18 * h, "rgba(5,12,12,.26)")
+        g.translate(0, -.5)
+        for (const sx of [-.28, .28]) ellipse(g, sx * w, .5 * h, .08, .14, "rgba(255,168,72,.8)")
+      }
       g.scale(w, h)
-      ellipse(g, .035, .13, .49, .42, "rgba(5,12,12,.32)")
+      if (t.layer !== "air") ellipse(g, .035, .13, .49, .42, "rgba(5,12,12,.32)")
       if (progress < 100) g.globalAlpha *= .48 + progress * .003
       const masonry = (x0: number, y0: number, ww: number, hh: number) => {
         box(g, x0, y0, ww, hh, "#9c9a80")

@@ -1,7 +1,7 @@
-// 每 tick 的结算：技能冷却和光环 → 换状态 → 生产 → 战斗（同时结算）→ 死亡 → 被动（回血）→ 移动（随机先后）→ 驻扎 → 建造 → 采集
-// 眩晕中的单位（ctx.stun，D-207）不打、不走、不建造、不采集；正在换状态的（D-269）不打、不走
+// 每 tick 的结算：技能冷却和光环 → 回能量 → 换状态 → 生产和研究 → 战斗（同时结算）→ 死亡 → 被动（回血）→ 治疗 → 移动（随机先后）→ 驻扎 → 建造（含挂件）→ 修理 → 采集
+// 眩晕中的单位（ctx.stun，D-207）不打、不走、不建造、不采集、不治疗、不修理；正在换状态的（D-269）不打、不走、不治疗
 import { flowStep, UNREACHABLE } from "./nav.ts"
-import { attackable, buffedDamage, hitsLayer, rectDist, type World } from "./world.ts"
+import { attackable, buffedDamage, hastened, hitsLayer, rectDist, type World } from "./world.ts"
 import type { EntityState, Rect } from "./types.ts"
 import type { TypeDef } from "../api/bot-api.ts"
 
@@ -18,28 +18,113 @@ const SPAWN_RING = 4
 
 export function step(w: World): void {
   w.lastStep = w.tick
+  // 对局循环在执行命令之前已经清空了 events、shots（D-270）：执行命令时发生的事（技能打死的、放下的地基）规则包也看得到
+  if (!w.freshTick) {
+    w.events = []
+    w.shots = []
+    w.misses = []
+  }
+  w.freshTick = false
   // 这一 tick 执行命令时放成功的技能（D-186），规则包在 onTick 里从 events 看得到
-  w.events = w.casts.map((c) => ({ kind: "cast" as const, ...c }))
-  w.shots = []
-  w.misses = []
+  for (const c of w.casts) w.events.push({ kind: "cast" as const, ...c })
+  // 限时存在的召唤物到时间消失（D-270，算移除、不算被打死）
+  if (w.timed.size) for (const id of [...w.timed]) {
+    const e = w.ents.get(id)
+    if (e && e.expires <= w.tick) w.destroy(e, -1, true)
+  }
   if (w.hasSkills || w.hasAuras || w.ruleBuffs.size > 0 || w.buffed.size > 0) abilities(w)
+  if (w.hasEnergy) regen(w)
   if (w.hasModes) switching(w)
   production(w)
   offGrid = w.hasOffGrid ? listOffGrid(w) : []
   combat(w)
   if (w.hasPassives) passives(w)
+  if (w.hasHeal) healing(w)
   movement(w)
   if (w.hasGarrison) boarding(w)
   construction(w)
+  if (w.hasRepair) repairing(w)
   gathering(w)
 }
 
-/** 这一 tick 不占格子的单位（D-269：空中、地下的；驻扎在建筑里的不算，它们不能被打），找目标时另外扫一遍 */
+// ---------- 能量、治疗、修理（D-270） ----------
+
+/** 每 regenTicks 个 tick 回 1 点能量，满了不攒 */
+function regen(w: World): void {
+  for (const e of w.ents.values()) {
+    const en = e.def.energy
+    if (!en || e.construction) continue
+    if (e.energy >= en.max) {
+      e.energyCd = 0
+      continue
+    }
+    if (++e.energyCd >= en.regenTicks) {
+      e.energyCd = 0
+      e.energy++
+    }
+  }
+}
+
+/** 治疗的人能治的、受了伤的：自己和盟友的单位、带它能治的标签、不在建筑里 */
+function healable(w: World, e: EntityState, o: EntityState): boolean {
+  const h = e.def.heal!
+  return o !== e && o.def.kind === "unit" && o.inside === 0 && attackable(o) && o.hp < o.def.maxHp && w.isAlly(e.owner, o.owner) && o.def.tags.some((t) => h.tags.includes(t))
+}
+
+/** radius 里最该治的：血最少 → 最近 → id 最小 */
+function woundedWithin(w: World, e: EntityState, radius: number): EntityState | null {
+  let best: EntityState | null = null
+  let bestD = 0
+  for (const o of w.ents.values()) {
+    if (!healable(w, e, o)) continue
+    const d = rectDist(e, o)
+    if (d > radius) continue
+    if (!best || o.hp < best.hp || (o.hp === best.hp && (d < bestD || (d === bestD && o.id < best.id)))) {
+      best = o
+      bestD = d
+    }
+  }
+  return best
+}
+
+/** 自动治疗：冷却好了、能量够，给射程里最该治的回血 */
+function healing(w: World): void {
+  for (const e of w.ents.values()) {
+    const h = e.def.heal
+    if (!h || e.construction || e.inside) continue
+    if (e.healCd > 0) e.healCd--
+    if (e.healCd > 0 || e.stunUntil > w.tick || e.switchTo !== null || e.energy < h.energy) continue
+    const t = woundedWithin(w, e, h.range)
+    if (!t) continue
+    const gain = Math.min(h.amount, t.def.maxHp - t.hp)
+    t.hp += gain
+    e.energy -= h.energy
+    e.healCd = h.cooldown
+    w.heals.push(t.id, gain)
+  }
+}
+
+/** 修理：贴着目标的每 tick 修一点，修满、目标不能修了、钱不够就停 */
+function repairing(w: World): void {
+  for (const e of w.ents.values()) {
+    const o = e.order
+    if (o.kind !== "repair" || e.stunUntil > w.tick || e.inside) continue
+    const t = w.ents.get(o.target)
+    if (!t || w.repairProblem(e, t)) {
+      setIdle(e)
+      continue
+    }
+    if (rectDist(e, t) > 1) continue
+    if (!w.repairTick(e, t) || t.hp >= t.def.maxHp) setIdle(e)
+  }
+}
+
+/** 这一 tick 不占格子的（D-269：空中、地下的单位，D-270：飞起来的建筑；驻扎在建筑里的不算，它们不能被打），找目标时另外扫一遍 */
 let offGrid: EntityState[] = []
 
 function listOffGrid(w: World): EntityState[] {
   const out: EntityState[] = []
-  for (const e of w.ents.values()) if (e.def.kind === "unit" && e.inside === 0 && e.def.layer !== "ground") out.push(e)
+  for (const e of w.ents.values()) if (e.inside === 0 && e.def.layer !== "ground") out.push(e)
   return out
 }
 
@@ -153,12 +238,23 @@ function setIdle(e: EntityState): void {
 
 function production(w: World): void {
   for (const b of w.ents.values()) {
-    if (b.queue.length === 0 || b.construction) continue
-    // 队列里前 parallel 个同时倒计时（D-196；大多数建筑是 1：一次造一个）
-    const slots = b.def.parallel
+    // 飞起来的、正在建挂件的建筑不生产（D-270；命令那边已经不让，这里兜底）
+    if (b.queue.length === 0 || b.construction || b.def.layer === "air" || b.addonSite) continue
+    // 队列里前 parallel 个同时倒计时（D-196；大多数建筑是 1：一次造一个；挂着挂件的按挂件的，D-270）
+    const slots = w.hasAddons ? w.slotsOf(b) : b.def.parallel
     for (let i = 0; i < Math.min(slots, b.queue.length); i++) if (b.queue[i].ticksLeft > 0) b.queue[i].ticksLeft--
     for (let i = 0; i < Math.min(slots, b.queue.length); ) {
       const q = b.queue[i]
+      // 研究（D-270）：好了就记下，不出单位
+      if (q.research) {
+        if (q.ticksLeft > 0) {
+          i++
+          continue
+        }
+        b.queue.splice(i, 1)
+        if (b.owner >= 0) w.grantResearch(b.owner, q.type)
+        continue
+      }
       const spot = q.ticksLeft > 0 ? null : w.findSpotAround(w.types[q.type], b, SPAWN_RING)
       // 没造好，或者周围满了（等有空位）
       if (!spot) {
@@ -254,9 +350,12 @@ function attackTarget(w: World, e: EntityState): EntityState | null {
       return rectDist(from, t) <= range ? t : null
     }
     case "idle":
+    case "hold":
       return bestEnemyWithin(w, e, range, false, from)
     case "attackMove":
       return bestEnemyWithin(w, e, range, o.neutral === true)
+    case "patrol":
+      return bestEnemyWithin(w, e, range)
     default:
       return null
   }
@@ -266,6 +365,13 @@ function attackTarget(w: World, e: EntityState): EntityState | null {
 export function damageOf(atk: NonNullable<TypeDef["attack"]>, target: string): number {
   const m = atk.vs?.[target]
   return m === undefined ? atk.damage : Math.round(atk.damage * m)
+}
+
+/** a 打 t 一下实际扣多少：克制倍数 → 减护甲（D-270，至少 1）→ 增益 */
+export function hitDamage(a: EntityState, t: EntityState): number {
+  let d = damageOf(a.def.attack!, t.type)
+  if (d > 0 && t.def.armor > 0) d = Math.max(1, d - t.def.armor)
+  return buffedDamage(d, a.dmgPct, t.defPct)
 }
 
 function combat(w: World): void {
@@ -278,7 +384,7 @@ function combat(w: World): void {
     const t = attackTarget(w, e)
     if (!t) continue
     hits.push(e, t)
-    e.attackCd = atk.cooldown
+    e.attackCd = hastened(atk.cooldown, e.ratePct)
   }
   // 先全部算完再扣血：同一 tick 互相攻击的双方都能打出伤害
   const splashed: EntityState[] = []
@@ -295,8 +401,8 @@ function combat(w: World): void {
       t = hit
       splashed.push(t)
     }
-    // 增益（光环、技能，D-186）：攻击方的伤害加成、挨打方的减伤
-    const dmg = buffedDamage(damageOf(a.def.attack!, t.type), a.dmgPct, t.defPct)
+    // 护甲（D-270）、增益（光环、技能，D-186）：攻击方的伤害加成、挨打方的减伤
+    const dmg = hitDamage(a, t)
     t.hp -= dmg
     a.lastCombat = w.tick
     t.lastCombat = w.tick
@@ -345,7 +451,7 @@ function splash(w: World, a: EntityState, t: EntityState, r: number, out: Entity
     const dx = Math.max(0, o.x - (t.x + t.w - 1), t.x - (o.x + o.w - 1))
     const dy = Math.max(0, o.y - (t.y + t.h - 1), t.y - (o.y + o.h - 1))
     if (Math.max(dx, dy) > r) continue
-    const dmg = buffedDamage(damageOf(a.def.attack!, o.type), a.dmgPct, o.defPct)
+    const dmg = hitDamage(a, o)
     o.hp -= dmg
     o.lastCombat = w.tick
     o.lastHitBy = a.owner
@@ -380,7 +486,8 @@ function tileGoal(w: World, x: number, y: number, key = `t${x},${y}`): Goal {
 
 function nearGoal(w: World, t: EntityState, range: number): Goal {
   const rect = { x: t.x, y: t.y, w: t.w, h: t.h }
-  if (t.def.kind === "unit") return { key: `c${t.id}r${range}`, giveUp: false, chase: { target: t, range }, rect, range }
+  // 会动的目标（单位、飞起来的建筑）追着走
+  if (t.def.kind === "unit" || t.def.layer === "air") return { key: `c${t.id}r${range}`, giveUp: false, chase: { target: t, range }, rect, range }
   return { key: `r${t.id}r${range}`, giveUp: false, field: () => w.flow.toRect(t.id, t, range), rect, range }
 }
 
@@ -388,7 +495,7 @@ function nearestDropOff(w: World, e: EntityState): EntityState | null {
   let best: EntityState | null = null
   let bestD = 0
   for (const o of w.ents.values()) {
-    if (o.owner !== e.owner || !o.def.dropOff || o.construction) continue
+    if (o.owner !== e.owner || !o.def.dropOff || o.construction || o.def.layer === "air") continue
     const d = rectDist(e, o)
     if (!best || d < bestD || (d === bestD && o.id < best.id)) {
       best = o
@@ -418,16 +525,34 @@ function moveGoal(w: World, e: EntityState): Goal | null {
       const range = e.def.attack!.range
       return rectDist(e, t) <= range ? null : nearGoal(w, t, range)
     }
-    case "attackMove": {
-      const range = e.def.attack!.range
-      if (bestEnemyWithin(w, e, range, o.neutral === true)) return null
-      const seen = bestEnemyWithin(w, e, e.def.sight, o.neutral === true)
-      if (seen) return nearGoal(w, seen, range)
+    case "attackMove":
+    case "patrol": {
+      const neutral = o.kind === "attackMove" && o.neutral === true
+      if (e.def.attack) {
+        const range = e.def.attack.range
+        if (bestEnemyWithin(w, e, range, neutral)) return null
+        const seen = bestEnemyWithin(w, e, e.def.sight, neutral)
+        if (seen) return nearGoal(w, seen, range)
+      } else if (e.def.heal && e.energy >= e.def.heal.energy) {
+        // 治疗的（D-270）：路上看见受伤的自己人就过去治
+        const hurt = woundedWithin(w, e, e.def.sight)
+        if (hurt) return rectDist(e, hurt) <= e.def.heal.range ? null : nearGoal(w, hurt, e.def.heal.range)
+      }
       if (e.x === o.x && e.y === o.y) {
-        setIdle(e)
+        finish(e)
         return null
       }
       return tileGoal(w, o.x, o.y, `a${o.x},${o.y}`)
+    }
+    case "hold":
+      return null
+    case "repair": {
+      const t = w.ents.get(o.target)
+      if (!t || w.repairProblem(e, t)) {
+        setIdle(e)
+        return null
+      }
+      return rectDist(e, t) <= 1 ? null : nearGoal(w, t, 1)
     }
     case "gather": {
       if (o.returning) {
@@ -469,8 +594,19 @@ function doMove(w: World, e: EntityState, to: number): StepResult {
   w.moveUnit(e, to)
   e.stuck = 0
   e.want = -1
-  e.moveCd = e.def.moveTicks
+  e.moveCd = hastened(e.def.moveTicks, e.speedPct)
   return "moved"
+}
+
+/** 走到了：巡逻的掉头往回走（D-270），别的命令结束 */
+function finish(e: EntityState): void {
+  const o = e.order
+  if (o.kind !== "patrol") return setIdle(e)
+  e.order = { kind: "patrol", x: o.fromX, y: o.fromY, fromX: o.x, fromY: o.y }
+  e.path.length = 0
+  e.pathKey = ""
+  e.stuck = 0
+  e.want = -1
 }
 
 /**
@@ -492,13 +628,13 @@ function trySwap(w: World, e: EntityState, ni: number): boolean {
   e.y = (ni - e.x) / w.width
   e.stuck = 0
   e.want = -1
-  e.moveCd = e.def.moveTicks
+  e.moveCd = hastened(e.def.moveTicks, e.speedPct)
   if (!idle) {
     // 对方也算走了一步
     o.stuck = 0
     o.want = -1
     o.path.length = 0
-    o.moveCd = o.def.moveTicks
+    o.moveCd = hastened(o.def.moveTicks, o.speedPct)
   }
   return true
 }
@@ -511,7 +647,7 @@ function stepByField(w: World, e: EntityState, field: Int32Array, key: string, g
   if (d === 0) return "done"
   // move 到目标旁边了、目标格被别的单位占着：算到了
   if (giveUp && d <= 1 && e.stuck >= 3) {
-    setIdle(e)
+    finish(e)
     return "done"
   }
   // 正在走绕行路线
@@ -528,7 +664,7 @@ function stepByField(w: World, e: EntityState, field: Int32Array, key: string, g
   if (step.next >= 0) return doMove(w, e, step.next)
   if (!step.closer) {
     // 没有更近的可站位置（目标在障碍里）：已经尽量靠近了
-    setIdle(e)
+    finish(e)
     return "done"
   }
   if (trySwap(w, e, step.blocked)) return "moved"
@@ -611,20 +747,23 @@ function stepByChase(w: World, e: EntityState, goal: Goal): StepResult {
 
 /** 到了目标附近（空中、大型单位用）：move、attackMove 的终点算走到了，命令结束 */
 function arrived(e: EntityState, goal: Goal): StepResult {
-  if (goal.giveUp) setIdle(e)
+  if (goal.giveUp) finish(e)
   return "done"
 }
 
 /** 空中单位（D-269）：不看地形和别的单位，每步往离目标更近的方向走一格，一样近随机挑 */
 function stepAir(w: World, e: EntityState, goal: Goal): StepResult {
-  const d = rectDist(e, goal.rect)
+  // 飞起来的建筑（D-270）move 是把左上角挪到目标格（要落在准确的位置上）；单位是占地碰到目标就算到
+  const fw = e.def.kind === "building" && goal.giveUp ? 1 : e.w
+  const fh = e.def.kind === "building" && goal.giveUp ? 1 : e.h
+  const d = rectDist({ x: e.x, y: e.y, w: fw, h: fh }, goal.rect)
   if (d <= goal.range) return arrived(e, goal)
   let n = 0
   for (const [dx, dy] of DIRS) {
     const nx = e.x + dx
     const ny = e.y + dy
     if (nx < 0 || ny < 0 || nx + e.w > w.width || ny + e.h > w.height) continue
-    if (rectDist({ x: nx, y: ny, w: e.w, h: e.h }, goal.rect) < d) pick[n++] = ny * w.width + nx
+    if (rectDist({ x: nx, y: ny, w: fw, h: fh }, goal.rect) < d) pick[n++] = ny * w.width + nx
   }
   if (n === 0) return arrived(e, goal)
   return doMove(w, e, n === 1 ? pick[0] : pick[w.simRng.int(n)])
@@ -678,8 +817,8 @@ function stepToward(w: World, e: EntityState): StepResult {
   const r = big ? stepBig(w, e, goal) : goal.field ? stepByField(w, e, goal.field(), goal.key, goal.giveUp) : stepByChase(w, e, goal)
   if (r !== "unreachable") return r
   const o = e.order
-  // attackMove 被看得见却到不了的敌人（比如隔着水）引过去：不管它，继续去终点
-  if (o.kind === "attackMove" && goal.key !== `a${o.x},${o.y}`) {
+  // attackMove、巡逻被看得见却到不了的敌人（比如隔着水）引过去：不管它，继续去终点
+  if ((o.kind === "attackMove" || o.kind === "patrol") && goal.key !== `a${o.x},${o.y}`) {
     const r2 = big ? stepBig(w, e, tileGoal(w, o.x, o.y, `a${o.x},${o.y}`)) : stepByField(w, e, w.flow.toTile(o.x, o.y), `a${o.x},${o.y}`, true)
     if (r2 !== "unreachable") return r2
   }
@@ -692,7 +831,7 @@ function movement(w: World): void {
   for (const e of w.ents.values()) {
     if (e.def.moveTicks <= 0) continue
     if (e.moveCd > 0) e.moveCd--
-    if (e.moveCd > 0 || e.order.kind === "idle" || e.stunUntil > w.tick || e.inside || e.switchTo !== null) continue
+    if (e.moveCd > 0 || e.order.kind === "idle" || e.order.kind === "hold" || e.stunUntil > w.tick || e.inside || e.switchTo !== null) continue
     movers.push(e)
   }
   w.simRng.shuffle(movers)
@@ -702,15 +841,29 @@ function movement(w: World): void {
   for (const e of retry) {
     if (e.moveCd > 0 || stepToward(w, e) !== "blocked") continue
     e.stuck++
-    if (e.stuck >= STUCK_GIVE_UP && (e.order.kind === "move" || e.order.kind === "attackMove")) setIdle(e)
+    if (e.stuck >= STUCK_GIVE_UP && (e.order.kind === "move" || e.order.kind === "attackMove" || e.order.kind === "patrol")) finish(e)
   }
 }
 
 // ---------- 建造 ----------
 
-/** 贴着地基的建造者每人每 tick 干 1 份活；生命按进度从 1/10 涨到满（期间挨的打不补） */
+/** 贴着地基的建造者每人每 tick 干 1 份活；生命按进度从 1/10 涨到满（期间挨的打不补）。挂件的地基由挂它的建筑自己建（D-270） */
 function construction(w: World): void {
   for (const e of w.ents.values()) {
+    if (e.addonSite) {
+      const site = w.ents.get(e.addonSite)
+      if (!site || !site.construction || site.owner !== e.owner) {
+        e.addonSite = 0
+        continue
+      }
+      if (e.stunUntil > w.tick) continue
+      if (advance(w, site)) {
+        e.addonSite = 0
+        e.addon = site.id
+        site.host = e.id
+      }
+      continue
+    }
     const o = e.order
     if (o.kind !== "build" || e.stunUntil > w.tick) continue
     const site = w.ents.get(o.target)
@@ -719,17 +872,23 @@ function construction(w: World): void {
       continue
     }
     if (rectDist(e, site) > 1) continue
-    const c = site.construction
-    const hp0 = Math.max(1, Math.ceil(site.def.maxHp / 10))
-    const gain = (done: number) => Math.floor(((site.def.maxHp - hp0) * done) / c.total)
-    c.done++
-    site.hp += gain(c.done) - gain(c.done - 1)
-    if (c.done < c.total) continue
-    site.construction = null
-    for (const u of w.ents.values()) if (u.order.kind === "build" && u.order.target === site.id) setIdle(u)
-    w.events.push({ kind: "built", id: site.id, type: site.type, owner: site.owner })
-    if (site.owner >= 0) w.pushEvent(site.owner, { kind: "built", tick: w.tick, id: site.id, type: site.type })
+    advance(w, site)
   }
+}
+
+/** 地基干一份活；建好了返回 true（去建它的停下、发 built 事件） */
+function advance(w: World, site: EntityState): boolean {
+  const c = site.construction!
+  const hp0 = Math.max(1, Math.ceil(site.def.maxHp / 10))
+  const gain = (done: number) => Math.floor(((site.def.maxHp - hp0) * done) / c.total)
+  c.done++
+  site.hp += gain(c.done) - gain(c.done - 1)
+  if (c.done < c.total) return false
+  site.construction = null
+  for (const u of w.ents.values()) if (u.order.kind === "build" && u.order.target === site.id) setIdle(u)
+  w.events.push({ kind: "built", id: site.id, type: site.type, owner: site.owner })
+  if (site.owner >= 0) w.pushEvent(site.owner, { kind: "built", tick: w.tick, id: site.id, type: site.type })
+  return true
 }
 
 // ---------- 采集 ----------

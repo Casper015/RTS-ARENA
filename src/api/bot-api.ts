@@ -89,6 +89,44 @@ export interface TypeDef {
   modes: ModeDef[]
   /** 能驻扎单位的建筑（D-269，地堡这类）；不能驻扎是 null。见 GarrisonDef */
   garrison: GarrisonDef | null
+  /** 护甲（D-270）：挨每一下都减这么多（克制倍数算完以后减），最少还是 1；0 是没有护甲。研究能加 */
+  armor: number
+  /** 标签（D-270），比如 "bio"（生物）、"mech"（机械）：治疗、修理按它挑能治、能修的 */
+  tags: string[]
+  /** 科技前置（D-270）：要造这种单位、建这种建筑、建这种挂件，你要先有这些类型的建好的建筑（哪一座都行、飞起来的也算），写的是研究 id 的要先研究好；空数组是不要 */
+  requires: string[]
+  /** 要在挂着这种挂件的建筑里才造得出来（D-270，比如坦克要挂着科技挂件的战车工厂）；null 是不要 */
+  needsAddon: TypeName | null
+  /** 这种建筑能自己在旁边建哪些挂件（D-270，用 cmd.addon）；空数组是不能 */
+  addons: TypeName[]
+  /** 这种建筑是挂件（D-270）：挂在别的建筑旁边，parallel 是挂上以后那座建筑同时造几个（1 是不变）；不是挂件为 null */
+  addon: { parallel: number } | null
+  /** 这种建筑能研究什么（D-270，game.researches 里的 id，用 cmd.research）；空数组是不能 */
+  researches: string[]
+  /** 能量（D-270）：一出来是 start，每 regenTicks 个 tick 回 1，最多 max；技能可以花能量（SkillDef.energy）。没有能量为 null */
+  energy: { max: number; start: number; regenTicks: number } | null
+  /** 自动治疗（D-270，医疗兵这类）：没被眩晕、不在换状态时，每 cooldown 个 tick 给射程 range 里一个受了伤的、带 tags 里某个标签的自己或盟友单位回 amount，每次花 energy 点能量（先治血最少的） */
+  heal: { amount: number; range: number; cooldown: number; energy: number; tags: string[] } | null
+  /** 修理（D-270，工人这类）：能修带 tags 里某个标签的单位，buildings 为 true 时也能修建筑（自己和盟友的）；修满一次花造价的 costPct%（按修了多少血算，钱不够就停） */
+  repair: { tags: string[]; buildings: boolean; costPct: number } | null
+  /** 限时存在（D-270，召唤出来的这类）：出来以后 lifetime 个 tick 自动消失（不算被打死），不占单位上限；0 是一直在。还剩几 tick 看 entity.lifeLeft */
+  lifetime: number
+}
+
+/** 一项研究（D-270，game.researches）：在能研究它的建筑里用 cmd.research 排进生产队列，花 cost、等 ticks 个 tick，研究好了整局有效 */
+export interface ResearchDef {
+  id: string
+  name: string
+  cost: Partial<Record<ResourceName, number>>
+  ticks: number
+  /** 前置：要先有这些类型的建好的建筑；写的是研究 id 的要先研究好（比如二级攻击要先研究一级） */
+  requires: string[]
+  /**
+   * 研究好了你的哪些类型的数值加多少（加减，不是改成多少；有几种状态的每种状态都加），比如 { rifleman: { armor: 1, attack: { damage: 1 } } }；
+   * 已有的和以后造的都算。有的研究只是解锁技能（effects 是空的，看技能的 requires）
+   */
+  effects: Partial<Record<TypeName, { maxHp?: number; moveTicks?: number; sight?: number; armor?: number; attack?: { damage?: number; range?: number; cooldown?: number }; gather?: { amount?: number; ticks?: number; capacity?: number } }>>
+  desc: string
 }
 
 /** 单位的一种状态（D-269）：换到这个状态以后的数值 */
@@ -141,6 +179,10 @@ export interface SkillDef {
   cost: Partial<Record<ResourceName, number>>
   /** 要看时机才放的技能（比如击退，敌人来了才放）；false 是冷却一好就该放的（比如点金） */
   situational: boolean
+  /** 每放一次花多少能量（D-270，单位的 entity.energy）；0 是不花 */
+  energy: number
+  /** 要先研究好这一项才能放（D-270，game.researches 里的 id）；null 是不要 */
+  requires: string | null
   /** 效果说明 */
   desc: string
 }
@@ -178,6 +220,10 @@ export interface Buff {
   damagePct: number
   /** 减伤（百分比） */
   defensePct: number
+  /** 移动加快（百分比，D-270）：50 是走一格的 tick 数除以 1.5；没有就是 0 */
+  speedPct?: number
+  /** 攻击加快（百分比，D-270）：50 是攻击冷却除以 1.5；没有就是 0 */
+  ratePct?: number
   /** 还剩几 tick；光环给的、一直有效的没有这个字段 */
   ticksLeft?: number
 }
@@ -195,6 +241,12 @@ export type Order =
   | { kind: "build"; target: number }
   /** 走到能驻扎的建筑 target 旁边钻进去（D-269） */
   | { kind: "enter"; target: number }
+  /** 原地坚守（D-270）：不走、不追，只打射程里的；自己人也推不动它 */
+  | { kind: "hold" }
+  /** 巡逻（D-270）：在 (fromX, fromY) 和 (x, y) 之间来回走，路上像 attackMove 一样打敌人 */
+  | { kind: "patrol"; x: number; y: number; fromX: number; fromY: number }
+  /** 修理 target（D-270）：走到旁边修，修满或钱不够就停 */
+  | { kind: "repair"; target: number }
 
 /** 看得到的实体。建筑的 x、y 是占地左上角 */
 export interface Entity {
@@ -219,6 +271,8 @@ export interface Entity {
   stats?: {
     moveTicks?: number
     sight?: number
+    /** 护甲（D-270，研究加的） */
+    armor?: number
     attack?: { damage: number; range: number; cooldown: number; accuracy?: number }
     gather?: { amount: number; ticks: number; capacity: number }
   }
@@ -226,8 +280,8 @@ export interface Entity {
   order?: Order
   /** 身上带的资源（只有自己的单位、且带着资源时才有） */
   carrying?: { resource: ResourceName; amount: number }
-  /** 生产队列，第一个正在生产（只有自己的、能生产的实体有） */
-  queue?: { type: TypeName; ticksLeft: number }[]
+  /** 生产队列，第一个正在生产（只有自己的、能生产的实体有）；research 为 true 的是研究（type 是研究的 id，D-270） */
+  queue?: { type: TypeName; ticksLeft: number; research?: true }[]
   /** 还要几个 tick 才能再攻击，0 表示现在就能打（只有自己的、能攻击的实体有） */
   cooldown?: number
   /** 每个技能还要几个 tick 才能再放，0 表示现在就能放（只有自己的、有技能的实体有，D-186） */
@@ -247,6 +301,14 @@ export interface Entity {
   inside?: number
   /** 驻扎在里面的单位 id（D-269，只有自己和盟友的、能驻扎的建筑有） */
   garrison?: number[]
+  /** 现在的能量（D-270，有能量的单位才有，看得到就看得到） */
+  energy?: number
+  /** 挂着的挂件 id（D-270，有挂件的建筑才有，看得到就看得到） */
+  addon?: number
+  /** 挂件挂在哪座建筑上（D-270，挂件才有；那座建筑起飞了、没了，挂件就没有这个字段） */
+  host?: number
+  /** 限时存在的（D-270，召唤出来的这类）还剩几 tick 消失，看得到就看得到；一直在的没有这个字段 */
+  lifeLeft?: number
   /** 眩晕还剩几个 tick（规则包的效果，比如弑君歼灭的击退，D-207）：眩晕时不能走、不能打、不能采集、不能建造，命令不变，过后接着做；技能照样能放。没眩晕就没有这个字段 */
   stunned?: number
   /**
@@ -282,6 +344,11 @@ export type Command =
   | { kind: "mode"; unit: number; mode: string }
   | { kind: "enter"; unit: number; target: number }
   | { kind: "unload"; building: number }
+  | { kind: "research"; building: number; research: string }
+  | { kind: "addon"; building: number; type: TypeName }
+  | { kind: "repair"; unit: number; target: number }
+  | { kind: "hold"; unit: number }
+  | { kind: "patrol"; unit: number; x: number; y: number }
 
 /** 上次调用 onTick 之后发生的、和你有关的事 */
 export type GameEvent =
@@ -298,6 +365,8 @@ export type GameEvent =
   | { kind: "damaged"; tick: number; id: number; by: number; byOwner: number; byType: TypeName; damage: number }
   /** 你上次的 onTick 抛错或燃料耗尽，那一次的命令全部作废 */
   | { kind: "botError"; tick: number; message: string }
+  /** 你的一项研究好了（D-270） */
+  | { kind: "researched"; tick: number; id: string }
 
 /** 每次调用 onTick 时你看到的局面 */
 export interface View {
@@ -312,6 +381,8 @@ export interface View {
   /** 规则包给的目标信息 */
   objectives: Objectives
   events: GameEvent[]
+  /** 你（和盟友不算）已经研究好的（D-270，game.researches 里的 id） */
+  researched: string[]
 }
 
 /** 游戏静态信息，整局不变 */
@@ -329,6 +400,8 @@ export interface Game {
   /** 地形字符能否通行（建筑和资源点所在的格子也不能通行） */
   walkable: Record<string, boolean>
   types: Record<TypeName, TypeDef>
+  /** 能研究的东西（D-270），见 ResearchDef；没有就是空对象 */
+  researches: Record<string, ResearchDef>
   resources: ResourceName[]
   /** 一局最多多少 tick，到点按规则判胜负 */
   maxTicks: number
@@ -382,6 +455,19 @@ export interface Commands {
   enter(unit: Entity | number, building: Entity | number): void
   /** 把驻扎在 building 里的单位全部放出来，放在建筑旁边（D-269）；给里面的单位下 move、attackMove 这类要走路的命令，它会自己先出来 */
   unload(building: Entity | number): void
+  /** 在 building 里研究 research（D-270，game.researches 里的 id）：排进生产队列、立即扣钱；要先有前置建筑，研究好的、正在研究的不能再研究 */
+  research(building: Entity | number, research: string): void
+  /**
+   * 让 building 在自己旁边建挂件 type（D-270，game.types[类型].addons 里的）：挂件放在建筑右边、和建筑底边对齐，立即扣钱，
+   * 建筑自己建（建的时候不能生产）。建好就挂上；建筑起飞时挂件留在原地，降落到它左边正好的位置又挂上
+   */
+  addon(building: Entity | number, type: TypeName): void
+  /** 让 unit（能修理的）去修 target（D-270，自己或盟友的、受了伤的、能修的单位或建好的建筑）：走到旁边修，修满或钱不够就停 */
+  repair(unit: Entity | number, target: Entity | number): void
+  /** 原地坚守（D-270）：不走、不追，只打射程里的敌人，自己人也推不动它 */
+  hold(unit: Entity | number): void
+  /** 巡逻（D-270）：在现在的位置和 (x, y) 之间来回走，路上像 attackMove 一样打敌人 */
+  patrol(unit: Entity | number, x: number, y: number): void
 }
 
 /** bot 文件导出的 onTick 的类型 */

@@ -1,7 +1,7 @@
 // 校验并执行 bot 的命令；不合法的命令变成 rejected 事件交还给 bot
 import type { Command, TypeDef } from "../api/bot-api.ts"
 import { canHit } from "./sim.ts"
-import type { EntityState } from "./types.ts"
+import type { EntityState, Rect } from "./types.ts"
 import type { World } from "./world.ts"
 
 /** 每次调用最多处理多少条命令 */
@@ -51,16 +51,16 @@ function applyOne(w: World, p: number, c: unknown): string | null {
   if (c === null || typeof c !== "object") return "命令格式不对"
   const cmd = c as Record<string, unknown>
   const kind = cmd.kind
-  const actorId = kind === "produce" || kind === "cancel" || kind === "unload" ? cmd.building : cmd.unit
+  const actorId = kind === "produce" || kind === "cancel" || kind === "unload" || kind === "research" || kind === "addon" ? cmd.building : cmd.unit
   if (!isInt(actorId)) return "unit / building 必须是实体或整数 id"
   const e = w.ents.get(actorId)
   // 不存在和不是你的用同一句话，否则 bot 能拿 id 探测看不见的敌人是否还活着
   if (!e || e.owner !== p) return `你没有 #${actorId} 这个实体（可能已经死了）`
   // 正在换状态（D-269）：只能再下 mode（改主意）和 stop 之外的不走路、不打的命令
-  if (e.switchTo !== null && (kind === "move" || kind === "attackMove" || kind === "attack" || kind === "gather" || kind === "build" || kind === "enter"))
+  if (e.switchTo !== null && (kind === "move" || kind === "attackMove" || kind === "attack" || kind === "gather" || kind === "build" || kind === "enter" || kind === "repair" || kind === "patrol"))
     return `#${e.id}（${e.type}）正在换状态（换到 ${e.switchTo}，还要 ${e.switchLeft} tick），换好之前不能走、不能打`
-  // 驻扎在建筑里的（D-269）：要走路的命令先出来；stop 留在里面；attack 只能打建筑射程里的
-  if (e.inside && (kind === "move" || kind === "attackMove" || kind === "gather" || kind === "build" || kind === "enter" || kind === "mode")) {
+  // 驻扎在建筑里的（D-269）：要走路的命令先出来；stop、hold 留在里面；attack 只能打建筑射程里的
+  if (e.inside && (kind === "move" || kind === "attackMove" || kind === "gather" || kind === "build" || kind === "enter" || kind === "mode" || kind === "repair" || kind === "patrol")) {
     const b = w.ents.get(e.inside)
     if (b && !w.unboard(e, b)) return `#${e.id} 从 #${b.id}（${b.type}）里出不来：旁边没有空位`
   }
@@ -75,7 +75,8 @@ function applyOne(w: World, p: number, c: unknown): string | null {
     }
     case "attackMove": {
       if (e.def.moveTicks <= 0) return `#${e.id}（${e.type}）不能移动`
-      if (!e.def.attack) return `#${e.id}（${e.type}）不能攻击，请用 move`
+      // 治疗的（D-270）也能 attackMove：路上治受伤的自己人
+      if (!e.def.attack && !e.def.heal) return `#${e.id}（${e.type}）不能攻击，请用 move`
       const err = checkXY(w, cmd.x, cmd.y)
       if (err) return err
       resetOrder(e, cmd.neutral === true ? { kind: "attackMove", x: cmd.x as number, y: cmd.y as number, neutral: true } : { kind: "attackMove", x: cmd.x as number, y: cmd.y as number })
@@ -115,13 +116,98 @@ function applyOne(w: World, p: number, c: unknown): string | null {
       if (typeof type !== "string" || !w.types[type]) return `没有 "${String(type)}" 这种类型`
       if (e.construction) return `#${e.id}（${e.type}）还没建好`
       if (!e.def.produces.includes(type)) return `#${e.id}（${e.type}）不能生产 ${type}`
+      const busy = busyProblem(e)
+      if (busy) return busy
       if (e.queue.length >= MAX_QUEUE) return `生产队列已满（最多 ${MAX_QUEUE} 个）`
       const def = w.types[type]
+      // 科技前置、挂件（D-270）
+      const lack = w.lacking(p, def.requires)
+      if (lack) return `造不了 ${type}：${lack}`
+      if (def.needsAddon) {
+        const a = e.addon ? w.ents.get(e.addon) : undefined
+        if (!a || a.type !== def.needsAddon || a.construction) return `#${e.id}（${e.type}）要挂着建好的 ${def.needsAddon} 才能造 ${type}（cmd.addon(建筑, "${def.needsAddon}")）`
+      }
       const cap = w.rules.unitCap
       if (cap > 0 && def.kind === "unit" && w.unitCount(p) >= cap) return `单位数已到上限 ${cap}（含生产队列）`
-      const short = pay(w, p, def)
+      const short = pay(w, p, def.cost)
       if (short) return short
       e.queue.push({ type, ticksLeft: def.buildTicks })
+      return null
+    }
+    case "research": {
+      const id = cmd.research
+      const r = typeof id === "string" && Object.hasOwn(w.researches, id) ? w.researches[id] : undefined
+      if (!r) return `没有 "${String(id)}" 这项研究`
+      if (!e.def.researches.includes(r.id))
+        return e.def.researches.length ? `#${e.id}（${e.type}）不能研究 ${r.id}，能研究：${e.def.researches.join("、")}` : `#${e.id}（${e.type}）不能研究`
+      if (e.construction) return `#${e.id}（${e.type}）还没建好`
+      const busy = busyProblem(e)
+      if (busy) return busy
+      if (w.players[p].researched.includes(r.id)) return `${r.name}（${r.id}）已经研究好了`
+      for (const o of w.ents.values()) if (o.owner === p && o.queue.some((q) => q.research && q.type === r.id)) return `${r.name}（${r.id}）已经在 #${o.id}（${o.type}）里研究了`
+      if (e.queue.length >= MAX_QUEUE) return `生产队列已满（最多 ${MAX_QUEUE} 个）`
+      const lack = w.lacking(p, r.requires)
+      if (lack) return `研究不了${r.name}：${lack}`
+      const short = pay(w, p, r.cost)
+      if (short) return short
+      e.queue.push({ type: r.id, ticksLeft: r.ticks, research: true })
+      return null
+    }
+    case "addon": {
+      const type = cmd.type
+      if (typeof type !== "string" || !w.types[type]) return `没有 "${String(type)}" 这种类型`
+      if (!e.def.addons.includes(type))
+        return e.def.addons.length ? `#${e.id}（${e.type}）不能建 ${type}，能建的挂件：${e.def.addons.join("、")}` : `#${e.id}（${e.type}）不能建挂件`
+      if (e.construction) return `#${e.id}（${e.type}）还没建好`
+      const busy = busyProblem(e)
+      if (busy) return busy
+      if (e.addon) return `#${e.id}（${e.type}）已经挂着 #${e.addon}`
+      if (e.queue.length) return `#${e.id}（${e.type}）正在生产，生产队列空了才能建挂件`
+      const def = w.types[type]
+      const lack = w.lacking(p, def.requires)
+      if (lack) return `建不了 ${type}：${lack}`
+      // 挂件放在建筑右边、和建筑底边对齐
+      const x = e.x + e.w
+      const y = e.y + e.h - def.h
+      if (x < 0 || y < 0) return `${type} 放不下：超出地图`
+      const why = placeProblem(w, p, def, x, y, true)
+      if (why) return `${type} 放在 #${e.id} 右边（${x}, ${y}）放不下：${why}`
+      const veto = w.rules.buildCheck?.(w, p, type, x, y)
+      if (veto) return veto
+      const r: Rect = { x, y, w: def.w, h: def.h }
+      const blocked = w.clearFootprint(p, r)
+      if (blocked) return `${type} 放在 #${e.id} 右边（${x}, ${y}）放不下：${blocked}`
+      const short = pay(w, p, def.cost)
+      if (short) return short
+      const site = w.placeSite(type, p, x, y)
+      site.host = e.id
+      e.addonSite = site.id
+      return null
+    }
+    case "repair": {
+      if (!e.def.repair) return `#${e.id}（${e.type}）不能修理`
+      if (!isInt(cmd.target)) return "target 必须是实体或整数 id"
+      const t = w.ents.get(cmd.target)
+      if (!t || !w.visibleTo(p, t)) return `看不到 #${cmd.target}`
+      const why = w.repairProblem(e, t)
+      if (why) return why
+      resetOrder(e, { kind: "repair", target: t.id })
+      return null
+    }
+    case "hold":
+      if (e.def.moveTicks <= 0) return `#${e.id}（${e.type}）不能移动，本来就不走`
+      resetOrder(e, { kind: "hold" })
+      return null
+    case "patrol": {
+      if (e.def.moveTicks <= 0) return `#${e.id}（${e.type}）不能移动`
+      const err = checkXY(w, cmd.x, cmd.y)
+      if (err) return err
+      const x = cmd.x as number
+      const y = cmd.y as number
+      // 已经在这两点之间巡逻：不打断（重复下命令不会改起点）
+      const cur = e.order
+      if (cur.kind === "patrol" && ((cur.x === x && cur.y === y) || (cur.fromX === x && cur.fromY === y))) return null
+      resetOrder(e, { kind: "patrol", x, y, fromX: e.x, fromY: e.y })
       return null
     }
     case "cancel": {
@@ -131,8 +217,17 @@ function applyOne(w: World, p: number, c: unknown): string | null {
         return null
       }
       const q = e.queue.pop()
-      if (!q) return `#${e.id} 的生产队列是空的`
-      for (const [r, n] of Object.entries(w.types[q.type].cost)) refund(w, p, r, n ?? 0)
+      if (!q) {
+        // 队列空了、正在建挂件（D-270）：取消挂件，和拆掉没建好的建筑一样退钱
+        const site = e.addonSite ? w.ents.get(e.addonSite) : undefined
+        if (site?.construction) {
+          for (const [r, n] of Object.entries(site.def.cost)) refund(w, p, r, Math.floor((n ?? 0) * SITE_REFUND))
+          w.destroy(site, -1)
+          return null
+        }
+        return `#${e.id} 的生产队列是空的`
+      }
+      for (const [r, n] of Object.entries(q.research ? w.researches[q.type].cost : w.types[q.type].cost)) refund(w, p, r, n ?? 0)
       return null
     }
     case "build": {
@@ -153,10 +248,13 @@ function applyOne(w: World, p: number, c: unknown): string | null {
       const def = w.types[type]
       const why = placeProblem(w, p, def, x, y)
       if (why) return why
+      // 科技前置（D-270）
+      const lack = w.lacking(p, def.requires)
+      if (lack) return `建不了 ${type}：${lack}`
       // 规则包自己的放置规则
       const veto = w.rules.buildCheck?.(w, p, type, x, y)
       if (veto) return veto
-      const short = pay(w, p, def)
+      const short = pay(w, p, def.cost)
       if (short) return short
       resetOrder(e, { kind: "build", target: w.placeSite(type, p, x, y).id })
       return null
@@ -170,6 +268,20 @@ function applyOne(w: World, p: number, c: unknown): string | null {
       if (!m) return `#${e.id}（${e.type}）没有 "${String(cmd.mode)}" 这个状态，有：${modes.map((x) => x.id).join("、")}`
       if (e.switchTo === null && e.mode === m.id) return null
       if (e.switchTo === m.id) return null
+      // 建筑起飞、降落（D-270）
+      if (e.def.kind === "building") {
+        if (e.construction) return `#${e.id}（${e.type}）还没建好`
+        const to = w.baseDef(e.type, m.id).layer
+        if (to === "air" && e.def.layer !== "air") {
+          if (e.queue.length) return `#${e.id}（${e.type}）正在生产，生产队列空了才能起飞`
+          if (e.addonSite) return `#${e.id}（${e.type}）正在建挂件，建好或取消了才能起飞`
+          if (e.cargo.length) return `#${e.id}（${e.type}）里面还有单位，先 unload`
+        }
+        if (to !== "air" && e.def.layer === "air")
+          for (let yy = e.y; yy < e.y + e.h; yy++)
+            for (let xx = e.x; xx < e.x + e.w; xx++)
+              if (!w.inBounds(xx, yy) || !w.staticFree(yy * w.width + xx)) return `#${e.id} 降落不了：(${xx}, ${yy}) 的地形不能站或者有建筑、资源点，先飞到空地上`
+      }
       resetOrder(e, { kind: "idle" })
       // 正在换的时候又换回原来的状态：马上就是原样
       if (e.switchTo !== null && m.id === e.mode) {
@@ -222,6 +334,9 @@ function castSkill(w: World, p: number, e: EntityState, cmd: Record<string, unkn
   if (e.construction) return `#${e.id}（${e.type}）还没建好`
   const cd = e.skillCooldowns[sk.id] ?? 0
   if (cd > 0) return `${sk.name}（${sk.id}）还在冷却，还要 ${cd} tick`
+  // 要先研究、花能量（D-270）
+  if (sk.requires && !w.players[p].researched.includes(sk.requires)) return `${sk.name}（${sk.id}）要先研究${w.researches[sk.requires]?.name ?? ""}（${sk.requires}）`
+  if (sk.energy > e.energy) return `${sk.name}（${sk.id}）要 ${sk.energy} 点能量，#${e.id} 现在 ${e.energy}`
   const info: { player: number; unit: number; skill: string; x?: number; y?: number; target?: number } = { player: p, unit: e.id, skill: sk.id }
   if (sk.target === "point") {
     const err = checkXY(w, cmd.x, cmd.y)
@@ -248,18 +363,29 @@ function castSkill(w: World, p: number, e: EntityState, cmd: Record<string, unkn
     w.players[p].spent[r] += n ?? 0
   }
   // onCast 里实体可能已经没了（比如技能是自爆）
-  if (e.alive) e.skillCooldowns[sk.id] = sk.cooldown
+  if (e.alive) {
+    e.skillCooldowns[sk.id] = sk.cooldown
+    e.energy = Math.max(0, e.energy - sk.energy)
+  }
   w.casts.push(info)
   return null
 }
 
+/** 飞起来、正在换状态、正在建挂件的建筑不能生产、研究、建挂件（D-270） */
+function busyProblem(e: EntityState): string | null {
+  if (e.def.layer === "air") return `#${e.id}（${e.type}）飞起来了，降落了才能生产`
+  if (e.switchTo !== null) return `#${e.id}（${e.type}）正在换状态`
+  if (e.addonSite) return `#${e.id}（${e.type}）正在建挂件`
+  return null
+}
+
 /** 扣造价；不够返回原因、一分不扣 */
-function pay(w: World, p: number, def: TypeDef): string | null {
+function pay(w: World, p: number, cost: TypeDef["cost"]): string | null {
   const res = w.players[p].resources
-  for (const [r, n] of Object.entries(def.cost)) {
+  for (const [r, n] of Object.entries(cost)) {
     if ((res[r] ?? 0) < (n ?? 0)) return `${r} 不够：需要 ${n}，现有 ${res[r] ?? 0}`
   }
-  for (const [r, n] of Object.entries(def.cost)) {
+  for (const [r, n] of Object.entries(cost)) {
     res[r] -= n ?? 0
     w.players[p].spent[r] += n ?? 0
   }
@@ -276,7 +402,7 @@ function refund(w: World, p: number, r: string, n: number): void {
  * 地基能不能放在 (x, y)。顺序：超出地图 → 地形、资源点（这两样整局都看得见）→ 每一格都在视野里 → 其他实体。
  * 看不见的格子里有没有单位、建筑不会从拒绝原因里漏出去。
  */
-function placeProblem(w: World, p: number, def: TypeDef, x: number, y: number): string | null {
+function placeProblem(w: World, p: number, def: TypeDef, x: number, y: number, skipUnits = false): string | null {
   if (x + def.w > w.width || y + def.h > w.height) return `${def.name}（${def.w}×${def.h}）左上角放在 (${x}, ${y}) 会超出地图`
   const each = (fn: (xx: number, yy: number, i: number) => string | null) => {
     for (let yy = y; yy < y + def.h; yy++)
@@ -294,7 +420,7 @@ function placeProblem(w: World, p: number, def: TypeDef, x: number, y: number): 
     }) ??
     each((xx, yy, i) => (w.rules.fog && !w.vis[p][i] ? `(${xx}, ${yy}) 不在你方视野里，只能在看得见的地方建造` : null)) ??
     each((xx, yy, i) => {
-      const o = w.ents.get(w.staticOcc[i] || w.unitOcc[i])
+      const o = w.ents.get(w.staticOcc[i] || (skipUnits ? 0 : w.unitOcc[i]))
       return o ? `(${xx}, ${yy}) 有 #${o.id}（${o.type}）挡着${o.owner === p && o.def.kind === "unit" ? "（是你自己的单位，比如去建它的工人站在了地基上：让它站到地基旁边）" : ""}` : null
     })
   )

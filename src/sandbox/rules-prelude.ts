@@ -62,6 +62,12 @@ export function rulesPreludeSource(maxLines: number, maxLine: number): string {
       if (e.construction === undefined) e.construction = null;
       if (e.buffs === undefined) e.buffs = [];
       if (e.skillCooldowns === undefined) e.skillCooldowns = {};
+      if (e.mode === undefined) e.mode = d.modes && d.modes.length ? d.modes[0].id : "";
+      if (e.inside === undefined) e.inside = 0;
+      if (e.energy === undefined) e.energy = 0;
+      if (e.addon === undefined) e.addon = 0;
+      if (e.host === undefined) e.host = 0;
+      if (e.expires === undefined) e.expires = 0;
       e.alive = true;
     }
     return list;
@@ -91,6 +97,7 @@ export function rulesPreludeSource(maxLines: number, maxLine: number): string {
   /** 局面里的实体变了：实体和事件都要重取 */
   function entsChanged() { cache.ents = null; cache.byId = null; cache.events = null; }
   function amountOf(o) { return o !== null && typeof o === "object" && typeof o.amount === "number" ? o.amount : undefined; }
+  function lifetimeOf(o) { return o !== null && typeof o === "object" && typeof o.lifetime === "number" ? o.lifetime : undefined; }
 
   var rng = Object.freeze({
     next: function () { return H.rng(); },
@@ -151,7 +158,7 @@ export function rulesPreludeSource(maxLines: number, maxLine: number): string {
     setScore: function (p, n) { H.setScore(p, n); if (cache.players) cache.players[p].score = n; },
     addResource: function (p, r, n) { H.addResource(p, r, n); cache.players = null; },
     spawnNear: function (type, owner, x, y, o) {
-      var id = H.spawnNear(type, owner, x, y, amountOf(o));
+      var id = H.spawnNear(type, owner, x, y, amountOf(o), lifetimeOf(o));
       entsChanged();
       return id < 0 ? null : id;
     },
@@ -172,7 +179,9 @@ export function rulesPreludeSource(maxLines: number, maxLine: number): string {
     setStats: function (id, patch) { H.setStats(id, stringify(patch === undefined ? null : patch)); entsChanged(); },
     addBuff: function (id, buff) { H.addBuff(id, stringify(buff === undefined ? null : buff)); entsChanged(); },
     removeBuff: function (id, name) { H.removeBuff(id, String(name)); entsChanged(); },
-    setSkillCooldown: function (id, skill, ticks) { H.setSkillCooldown(id, String(skill), ticks); entsChanged(); }
+    setSkillCooldown: function (id, skill, ticks) { H.setSkillCooldown(id, String(skill), ticks); entsChanged(); },
+    damage: function (id, amount, by) { H.damage(id, amount, by === undefined || by === null ? undefined : by); entsChanged(); cache.players = null; },
+    grantResearch: function (p, id) { H.grantResearch(p, String(id)); entsChanged(); cache.players = null; }
   });
 
   function errText(e) {
@@ -184,7 +193,7 @@ export function rulesPreludeSource(maxLines: number, maxLine: number): string {
   }
 
   var R = null;
-  var KEYS = ["id", "name", "summary", "players", "teams", "sharedResources", "spotlight", "maxTicks", "tickRate", "decisionInterval", "fuel", "unitCap", "fog", "resources", "terrain", "types"];
+  var KEYS = ["id", "name", "summary", "players", "teams", "sharedResources", "spotlight", "maxTicks", "tickRate", "decisionInterval", "fuel", "unitCap", "fog", "resources", "terrain", "types", "researches"];
   var FNS = ["setup", "onTick", "objectives", "result", "timeUp", "buildCheck", "onCast"];
 
   G.__rules = {

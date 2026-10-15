@@ -760,6 +760,11 @@ export function onTick(view: View, cmd: Commands): void {
     mode: (u, m) => cmd.mode(u, m),
     enter: (u, b) => cmd.enter(u, b),
     unload: (b) => cmd.unload(b),
+    research: (b, r) => cmd.research(b, r),
+    addon: (b, t) => cmd.addon(b, t),
+    repair: (u, t) => cmd.repair(u, t),
+    hold: (u) => cmd.hold(u),
+    patrol: (u, x, y) => cmd.patrol(u, ...to(x, y)),
   }
   ;(globalThis as unknown as { game: Game }).game = turnedGame
   try {

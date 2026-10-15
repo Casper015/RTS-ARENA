@@ -123,7 +123,62 @@ export function unitTable(rules: Ruleset): string {
   if (abilities) rows.push("", abilities)
   const layers = layerText(defs.map(({ d }) => d))
   if (layers) rows.push("", layers)
+  const tech = techText(defs.map(({ d }) => d), rules)
+  if (tech) rows.push("", tech)
   return rows.join("\n")
+}
+
+/** 护甲、标签、科技前置、挂件、研究、能量、治疗、修理、限时存在（D-270）：有用到的才写 */
+function techText(defs: TypeDef[], rules: Ruleset): string {
+  const out: string[] = []
+  const code = (s: string) => "`" + s + "`"
+  const list = (xs: readonly string[]) => xs.map(code).join("、")
+  const armored = defs.filter((d) => d.armor > 0)
+  if (armored.length) out.push(`- **护甲**（${armored.map((d) => `${code(d.name)} ${d.armor}`).join("、")}，别的是 0）：每挨一下减这么多（克制倍数算完以后、增益之前），最少还是 1；溅射到的每个目标各按自己的护甲减。研究能加护甲，现在的护甲看实体的 ${code("stats.armor")}（没有就是类型上的）。`)
+  const tagged = defs.filter((d) => d.tags.length)
+  if (tagged.length) out.push(`- **标签**（治疗、修理按它挑）：${tagged.map((d) => `${code(d.name)} ${d.tags.join("、")}`).join("；")}。`)
+  const reqs = defs.filter((d) => d.requires.length || d.needsAddon)
+  if (reqs.length)
+    out.push(
+      `- **科技前置**（造、建之前要有的；建筑类型要有建好的一座，飞起来的也算；研究 id 要先研究好）：${reqs.map((d) => `${code(d.name)} 要 ${[...d.requires.map(code), ...(d.needsAddon ? [`挂着建好的 ${code(d.needsAddon)} 的生产建筑`] : [])].join("、")}`).join("；")}。`,
+    )
+  const hosts = defs.filter((d) => d.addons.length)
+  if (hosts.length) {
+    const addons = defs.filter((d) => d.addon)
+    out.push(
+      `- **挂件**：${hosts.map((d) => `${code(d.name)} 能建 ${list(d.addons)}`).join("；")}。用 ${code("cmd.addon(建筑, 挂件类型)")}：挂件放在建筑**右边、和建筑底边对齐**（左上角是 (建筑.x + 建筑.w, 建筑.y + 建筑.h − 挂件.h)），立即扣钱，**建筑自己建**（不用工人，建的时候不能生产，生产队列空了才能建；挂件的工作量就是它的 buildTicks）；挡在那里的自己人会被挪开，地形、建筑、资源点、对手的单位挡着就被拒。建好就挂上（建筑的 ${code("entity.addon")}、挂件的 ${code("entity.host")}），一座建筑只能挂一个。${addons.map((d) => `${code(d.name)}：${d.addon!.parallel > 1 ? `挂上以后同时造 ${d.addon!.parallel} 个` : "挂上以后能造要它的兵种"}${d.researches.length ? `，能研究 ${list(d.researches)}` : ""}`).join("；")}。建筑没了挂件留在原地（没主了），起飞时也留在原地，降落到正好的位置（挂件左边）又挂上。`,
+    )
+  }
+  const research = Object.entries(rules.researches ?? {})
+  if (research.length) {
+    const where = (id: string) => defs.filter((d) => d.researches.includes(id)).map((d) => code(d.name)).join("、") || "—"
+    const sign = (v: number) => (v > 0 ? `+${v}` : `${v}`)
+    const fx = (e: Record<string, unknown> | undefined) =>
+      Object.entries(e ?? {})
+        .map(([t, p]) => `${code(t)} ${Object.entries(p as Record<string, unknown>).map(([k, v]) => (typeof v === "object" ? Object.entries(v as Record<string, number>).map(([kk, vv]) => `${k}.${kk} ${sign(vv)}`).join("、") : `${k} ${sign(v as number)}`)).join("、")}`)
+        .join("；") || "—"
+    out.push(
+      `- **研究**（${code("game.researches")}；用 ${code("cmd.research(建筑, 研究 id)")} 排进那座建筑的生产队列、立即扣钱，研究好了整局有效、收到 ${code("researched")} 事件，研究好的在 ${code("view.researched")}；同一项同时只能在一座建筑里研究，${code("cmd.cancel")} 取消退全款）：`,
+      "",
+      "| 研究 id | 名字 | 造价 | 用时 | 在哪研究 | 前置 | 效果（加多少，每种状态都加） | 说明 |",
+      "|---|---|---|---|---|---|---|---|",
+      ...research.map(([id, r]) => `| ${code(id)} | ${r.name} | ${costText(r.cost)} | ${r.ticks} | ${where(id)} | ${r.requires?.length ? list(r.requires) : "—"} | ${fx(r.effects as Record<string, unknown>)} | ${r.desc} |`),
+      "",
+    )
+  }
+  const energy = defs.filter((d) => d.energy)
+  if (energy.length) out.push(`- **能量**（${energy.map((d) => `${code(d.name)} 上限 ${d.energy!.max}、出来时 ${d.energy!.start}、每 ${d.energy!.regenTicks} tick 回 1`).join("；")}）：现在的能量看 ${code("entity.energy")}（看得见就看得见），花能量的技能见下面的技能。`)
+  for (const d of defs.filter((x) => x.heal)) {
+    const h = d.heal!
+    out.push(`- **${code(d.name)} 自动治疗**：每 ${h.cooldown} tick 给 ${h.range} 格内一个受了伤的、带 ${h.tags.join("、")} 标签的自己或盟友单位（不含自己）回 ${h.amount}${h.energy ? `，每次花 ${h.energy} 点能量（不够就不治）` : ""}；先治血最少的。被眩晕、在换状态时不治。它不能攻击，但能用 attackMove、patrol：路上看见受伤的自己人就过去治。`)
+  }
+  for (const d of defs.filter((x) => x.repair)) {
+    const r = d.repair!
+    out.push(`- **${code(d.name)} 能修理**：${code("cmd.repair(单位, 目标)")} 走到旁边修自己和盟友的${r.buildings ? "建筑和" : ""}带 ${r.tags.join("、")} 标签的单位（建好的、受了伤的）；每个修理的每 tick 修 目标生命上限 ÷ 目标的生产用时（几个一起修按人数加快），修满一次花目标造价的 ${r.costPct}%（按修了多少血算），修满或钱不够就停下。`)
+  }
+  const timed = defs.filter((d) => d.lifetime > 0)
+  if (timed.length) out.push(`- **限时存在**（${timed.map((d) => `${code(d.name)} ${d.lifetime} tick`).join("、")}，召唤出来的）：到时间自己消失（收到带 removed 的 died 事件，不算被打死），不占单位上限；还剩几 tick 看 ${code("entity.lifeLeft")}。`)
+  return out.length ? ["科技、挂件、能量、治疗、修理（D-270，见平台说明里的「科技、研究、挂件、起飞」「能量、治疗、修理、护甲、坚守、巡逻、召唤物」）：", ...out].join("\n") : ""
 }
 
 /** 层、能打哪一层、探测、几种状态、驻扎、大型单位（D-269）：有用到的才写 */
@@ -144,7 +199,11 @@ function layerText(defs: TypeDef[]): string {
   if (big.length) out.push(`- **大型单位**（${big.map((d) => "`" + d.name + "`（" + d.w + "×" + d.h + "）").join("、")}）：x、y 是占地左上角，射程、视野从占地最近的格子算；地面的大型单位走路要整块站得下，窄路口过不去。`)
   for (const d of defs.filter((x) => x.modes.length)) {
     const list = d.modes.map((m, i) => `\`${m.id}\`（${m.name}${i === 0 ? "，刚造出来是它" : ""}，换过来 ${m.switchTicks} tick）：${m.layer !== "ground" ? layerName[m.layer] + "，" : ""}${m.moveTicks ? `走一格 ${m.moveTicks} tick` : "不能动"}，视野 ${m.sight}，${atk(m.attack)}`)
-    out.push(`- **\`${d.name}\` 的状态**（\`cmd.mode(单位, 状态 id)\` 切换，切换中不能走、不能打）：${list.join("；")}。`)
+    out.push(
+      d.kind === "building"
+        ? `- **\`${d.name}\` 能起飞**（\`cmd.mode(建筑, 状态 id)\` 切换，D-270）：${list.join("；")}。飞起来时能用 move 挪（左上角走到目标格），不能生产、研究、交货、建挂件，挂件留在原地；生产队列空了才能起飞；降落要整块占地空着（地形能走、没有建筑和资源点，自己人会被挪开）。`
+        : `- **\`${d.name}\` 的状态**（\`cmd.mode(单位, 状态 id)\` 切换，切换中不能走、不能打）：${list.join("；")}。`,
+    )
   }
   for (const d of defs.filter((x) => x.garrison)) {
     const g = d.garrison!
@@ -171,7 +230,9 @@ export function abilityText(defs: ReturnType<typeof resolveType>[]): string {
       const first = k.initialCooldown ? `，开局要等 ${k.initialCooldown} tick 才能第一次放` : "，开局就能放"
       const price = Object.entries(k.cost ?? {}).filter(([, n]) => (n ?? 0) > 0)
       const cost = price.length ? `，**每放一次花 ${price.map(([r, n]) => `${n} ${r}`).join("、")}**（放成功才扣，不够被拒）` : ""
-      lines.push(`- ${code(d.name)} 的技能「${k.name}」（${code(k.id)}）：${k.desc}。用 ${code(how)} 释放${range}，冷却 ${k.cooldown} tick${first}${cost}。`)
+      const energy = k.energy ? `，**每放一次花 ${k.energy} 点能量**（${code("entity.energy")}，不够被拒）` : ""
+      const need = k.requires ? `，**要先研究 ${code(k.requires)}**` : ""
+      lines.push(`- ${code(d.name)} 的技能「${k.name}」（${code(k.id)}）：${k.desc}。用 ${code(how)} 释放${range}，冷却 ${k.cooldown} tick${first}${cost}${energy}${need}。`)
     }
     for (const a of d.auras) {
       const who = a.affects === "own" ? "自己的" : a.affects === "allies" ? "自己和盟友的" : "敌方的"

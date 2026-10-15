@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-0.8 -0.84 1.65 1.34">
+<defs>
+  <linearGradient id="armor" x2=".35" y2="1"><stop stop-color="#b0c5d2"/><stop offset=".42" stop-color="#60798d"/><stop offset="1" stop-color="#30465a"/></linearGradient>
+  <linearGradient id="dark" x2=".25" y2="1"><stop stop-color="#394f62"/><stop offset="1" stop-color="#111e2e"/></linearGradient>
+  <linearGradient id="team" x2=".2" y2="1"><stop stop-color="currentColor"/><stop offset="1" stop-color="currentColor" stop-opacity=".48"/></linearGradient>
+  <linearGradient id="glass" x2=".5" y2="1"><stop stop-color="#edffff"/><stop offset=".35" stop-color="#79e6f5"/><stop offset="1" stop-color="#237695"/></linearGradient>
+  <radialGradient id="power"><stop stop-color="#eaffff"/><stop offset=".36" stop-color="#6ee6ff"/><stop offset="1" stop-color="#3291c5" stop-opacity=".12"/></radialGradient>
+  <radialGradient id="heat"><stop stop-color="#fff4d6"/><stop offset=".4" stop-color="#ffb347"/><stop offset="1" stop-color="#d0541c" stop-opacity=".1"/></radialGradient>
+</defs>
+<g transform="scale(.01)">
+<path d="M-16 0-19 16-27 28-26 38-9 38-5 26 0 14 6 25 11 38 29 38 26 28 17 17 15 0Z" fill="url(#dark)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-18 12-9 14-10 27-22 29-23 22Z" fill="url(#armor)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M8 16 18 13 24 27 11 29Z" fill="url(#armor)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <rect x="-36" y="-44" width="20" height="36" rx="4" fill="#e9eef0" stroke="#0c1826" stroke-width="1.7"/>
+  <path d="M-29-32h6M-26-35v6" fill="none" stroke="#d6453b" stroke-width="3" stroke-linecap="round"/>
+  <path d="M-19-42 7-45 23-27 16-6 12 5-13 7-24-10Z" fill="url(#team)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-16-37 1-39 12-29 7-10-12-8-20-23Z" fill="#dfe8ec" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-6-30h12M0-36v12" fill="none" stroke="#d6453b" stroke-width="4" stroke-linecap="round"/>
+  <path d="M-11-48-10-63 0-72 14-68 21-55 16-42 1-39Z" fill="url(#armor)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-2-61 14-62 17-54 5-49-3-52Z" fill="url(#glass)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-9-45 0-48 12-44 8-38-5-38Z" fill="url(#dark)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <rect x="4" y="-27" width="26" height="9" rx="3" fill="url(#dark)" stroke="#0c1826" stroke-width="1.7"/>
+  <rect x="28" y="-26" width="8" height="7" rx="2" fill="#9cb0b9" stroke="#0c1826" stroke-width="1.7"/>
+  <circle cx="42" cy="-22" r="9" fill="url(#power)"/>
+  <circle cx="42" cy="-22" r="3" fill="#e6fff2"/>
+  <path d="M-23-19-16-9 6-20" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="-26" cy="-46" r="2" fill="#8bfcff"/>
+</g>
+</svg>

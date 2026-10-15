@@ -75,7 +75,13 @@ export function preludeSource(maxCommands: number, maxLines: number, maxLine: nu
     // 状态、驻扎（D-269）
     mode: function (u, m) { push({ kind: "mode", unit: idOf(u), mode: typeof m === "string" ? m : null }); },
     enter: function (u, b) { push({ kind: "enter", unit: idOf(u), target: idOf(b) }); },
-    unload: function (b) { push({ kind: "unload", building: idOf(b) }); }
+    unload: function (b) { push({ kind: "unload", building: idOf(b) }); },
+    // 研究、挂件、修理、坚守、巡逻（D-270）
+    research: function (b, r) { push({ kind: "research", building: idOf(b), research: typeof r === "string" ? r : null }); },
+    addon: function (b, type) { push({ kind: "addon", building: idOf(b), type: typeof type === "string" ? type : null }); },
+    repair: function (u, t) { push({ kind: "repair", unit: idOf(u), target: idOf(t) }); },
+    hold: function (u) { push({ kind: "hold", unit: idOf(u) }); },
+    patrol: function (u, x, y) { push({ kind: "patrol", unit: idOf(u), x: num(x), y: num(y) }); }
   });
 
   function dist(a, b) {
@@ -117,6 +123,7 @@ export function preludeSource(maxCommands: number, maxLines: number, maxLine: nu
       for (xx = x; xx < x + d.w; xx++)
         for (i = 0; i < es.length; i++) {
           e = es[i];
+          if ((e.layer && e.layer !== "ground") || e.inside) continue;
           if (dist(e, { x: xx, y: yy }) === 0) return "(" + xx + ", " + yy + ") 有 #" + e.id + "（" + e.type + "）挡着" + (e.owner === view.me && g.types[e.type].kind === "unit" ? "（是你自己的单位，比如去建它的工人站在了地基上：让它站到地基旁边）" : "");
         }
     return null;
@@ -131,7 +138,7 @@ export function preludeSource(maxCommands: number, maxLines: number, maxLine: nu
     if (!d || d.kind !== "building" || !near) return null;
     var R = typeof maxRange === "number" ? maxRange : 8, m = typeof margin === "number" ? margin : 1, sg = mirror ? -1 : 1;
     var statics = [], es = view.entities, i;
-    for (i = 0; i < es.length; i++) if (g.types[es[i].type].kind !== "unit") statics.push(es[i]);
+    for (i = 0; i < es.length; i++) if (g.types[es[i].type].kind !== "unit" && es[i].layer !== "air") statics.push(es[i]);
     var x0 = Math.round(near.x) - (mirror ? Math.ceil(d.w / 2) - 1 : Math.floor(d.w / 2)), y0 = Math.round(near.y) - (mirror ? Math.ceil(d.h / 2) - 1 : Math.floor(d.h / 2));
     for (var r = 0; r <= R; r++)
       for (var ox = -r; ox <= r; ox++) {
@@ -156,7 +163,7 @@ export function preludeSource(maxCommands: number, maxLines: number, maxLine: nu
     var es = view && view.entities ? view.entities : [];
     for (i = 0; i < es.length; i++) {
       var e = es[i], t = g.types[e.type];
-      if (!t || t.kind === "unit") continue;
+      if (!t || t.kind === "unit" || e.layer === "air") continue;
       for (y = Math.max(0, e.y); y < Math.min(H, e.y + e.h); y++) for (x = Math.max(0, e.x); x < Math.min(W, e.x + e.w); x++) block[y * W + x] = 1;
     }
     var q = [], list = Array.isArray(from) ? from : [from];

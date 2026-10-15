@@ -81,6 +81,13 @@ function entJson(e: RuleEntity): Record<string, unknown> {
   // 增益和技能冷却（D-186）
   if (e.buffs.length) o.buffs = e.buffs
   if (Object.keys(e.skillCooldowns).length) o.skillCooldowns = e.skillCooldowns
+  // 状态、驻扎（D-269），能量、挂件（D-270）
+  if (e.mode && e.mode !== e.def.modes[0]?.id) o.mode = e.mode
+  if (e.inside) o.inside = e.inside
+  if (e.energy) o.energy = e.energy
+  if (e.addon) o.addon = e.addon
+  if (e.host) o.host = e.host
+  if (e.expires) o.expires = e.expires
   return o
 }
 
@@ -437,7 +444,7 @@ class RulesBox {
         return s(JSON.stringify(w().entities({ owner, type, kind }).map(entJson)))
       },
       entitiesIn: (x, y, ww, hh) => s(JSON.stringify(w().entitiesIn(num(x, "x"), num(y, "y"), num(ww, "w"), num(hh, "h")).map(entJson))),
-      players: () => s(JSON.stringify(w().players.map((p) => ({ id: p.id, name: p.name, alive: p.alive, score: p.score, resources: p.resources, gathered: p.gathered, spent: p.spent })))),
+      players: () => s(JSON.stringify(w().players.map((p) => ({ id: p.id, name: p.name, alive: p.alive, score: p.score, resources: p.resources, gathered: p.gathered, spent: p.spent, researched: p.researched })))),
       events: () => s(JSON.stringify(w().events)),
       addScore: (p, v) => {
         w().addScore(player(p), num(v, "分数"))
@@ -451,9 +458,10 @@ class RulesBox {
         w().addResource(player(p), str(r, "资源名", 64), num(v, "数量"))
         return undefined
       },
-      spawnNear: (type, owner, x, y, amt) => {
+      spawnNear: (type, owner, x, y, amt, life) => {
         roomForMore()
-        return n(w().spawnNear(str(type, "类型"), int(owner, "owner"), int(x, "x"), int(y, "y"), amount(amt)) ?? -1)
+        const opts = { ...amount(amt), ...(life && vm.typeof(life) === "number" ? { lifetime: int(life, "lifetime") } : {}) }
+        return n(w().spawnNear(str(type, "类型"), int(owner, "owner"), int(x, "x"), int(y, "y"), opts) ?? -1)
       },
       remove: (id) => {
         w().remove(int(id, "id"))
@@ -509,6 +517,14 @@ class RulesBox {
       },
       setSkillCooldown: (id, skill, ticks) => {
         w().setSkillCooldown(int(id, "id"), str(skill, "技能名", 64), int(ticks, "ticks"))
+        return undefined
+      },
+      damage: (id, amount, by) => {
+        w().damage(int(id, "id"), int(amount, "amount"), by && vm.typeof(by) === "number" ? int(by, "by") : undefined)
+        return undefined
+      },
+      grantResearch: (p, id) => {
+        w().grantResearch(player(p), str(id, "研究 id", 64))
         return undefined
       },
     }

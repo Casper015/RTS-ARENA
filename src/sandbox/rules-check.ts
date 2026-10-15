@@ -137,7 +137,7 @@ export function checkRulesetData(d: unknown, callbacks: string[]): string[] {
       }
       if (s.modes !== undefined) {
         const ms = s.modes
-        if (kind !== "unit") bad(`${at}.modes：只有单位能有几种状态`)
+        if (kind === "resource") bad(`${at}.modes：资源点不能有几种状态`)
         else if (!Array.isArray(ms) || ms.length < 2 || ms.length > 4) bad(`${at}.modes 要是 2～4 个状态的数组（第一个是刚造出来时的状态）`)
         else {
           const ids = new Set<string>()
@@ -151,6 +151,12 @@ export function checkRulesetData(d: unknown, callbacks: string[]): string[] {
             const extra = Object.keys(m).filter((k) => !["id", "name", "switchTicks", "look"].includes(k))
             if (i === 0 && extra.length) bad(`${w}：第一个状态的数值就是类型上写的，只能写 id、name、switchTicks、look（多了 ${extra.join("、")}）`)
             for (const k of extra) if (!["moveTicks", "sight", "attack", "layer"].includes(k)) bad(`${w} 只能写 id、name、switchTicks、moveTicks、sight、attack、layer、look（多了 ${k}）`)
+            // 建筑的状态（D-270）：只能是飞起来（air，要能走）和落在地上（不能走）
+            if (kind === "building" && i > 0) {
+              if (m.layer === "under") bad(`${w}.layer：建筑不能钻到地下`)
+              if (m.layer === "air" && !isInt(m.moveTicks, 1)) bad(`${w}：建筑飞起来的状态要写 moveTicks（走一格几 tick，≥ 1）`)
+              if (m.layer !== "air" && m.moveTicks !== undefined && m.moveTicks !== 0) bad(`${w}：建筑落在地上不能走（moveTicks 只能是 0），要能走就写 layer: "air"`)
+            }
             if (m.moveTicks !== undefined && !isInt(m.moveTicks, 0)) bad(`${w}.moveTicks 要是非负整数`)
             if (m.sight !== undefined && !isInt(m.sight, 0, 32)) bad(`${w}.sight 要是 0～32 的整数`)
             if (m.layer !== undefined && !LAYERS.includes(m.layer as string)) bad(`${w}.layer 要是 ${LAYERS.join("、")} 之一`)
@@ -184,6 +190,7 @@ export function checkRulesetData(d: unknown, callbacks: string[]): string[] {
         else if (k === "builds" && list.some((x) => (types[x as string] as Obj | undefined)?.kind !== "building")) bad(`${at}.builds 里只能是建筑类型`)
       }
       if (s.parallel !== undefined && (!isInt(s.parallel, 1, 5) || !Array.isArray(s.produces) || s.produces.length === 0)) bad(`${at}.parallel 要是 1～5 的整数（同时造几个，生产队列最多 5 个），而且要有 produces`)
+      checkTech(s, at, kind, types, d.researches, bad)
       checkAbilities(s, at, names, kind, resSet, bad)
       if (kind === "resource" && (typeof s.resource !== "string" || !resSet.has(s.resource))) bad(`${at}.resource：资源点要写产出的资源名（在 resources 里）`)
       if (kind !== "resource" && s.resource !== undefined && s.resource !== null) bad(`${at}.resource：只有资源点能写`)
@@ -200,11 +207,112 @@ export function checkRulesetData(d: unknown, callbacks: string[]): string[] {
     }
   }
 
+  checkResearches(d, resSet, bad)
   for (const fn of ["setup", "objectives", "result", "timeUp"]) if (!callbacks.includes(fn)) bad(`缺少函数 ${fn}(ctx)`)
   // 技能的效果在 onCast 里实现（D-186），没有的话 bot 放什么技能都会被拒
   const withSkills = isObj(d.types) ? Object.entries(d.types).filter(([, t]) => isObj(t) && Array.isArray(t.skills) && t.skills.length > 0).map(([k]) => k) : []
   if (withSkills.length && !callbacks.includes("onCast")) bad(`${withSkills.join("、")} 有技能（skills），要导出 onCast(ctx, cast) 实现技能效果`)
   return errs
+}
+
+/** 前置可以写建筑类型（要有建好的）或研究 id（要先研究好） */
+function checkReqs(v: unknown, w: string, types: Obj, researches: unknown, bad: (msg: string) => void): void {
+  const res = isObj(researches) ? researches : {}
+  if (!Array.isArray(v) || v.length > 8 || v.some((x) => typeof x !== "string" || !((types[x] as Obj | undefined)?.kind === "building" || Object.hasOwn(res, x))))
+    bad(`${w} 要是建筑类型名或研究 id 的数组（最多 8 个）`)
+}
+
+/** 护甲、标签、科技前置、挂件、研究、能量、治疗、修理（D-270） */
+function checkTech(s: Obj, at: string, kind: string, types: Obj, researches: unknown, bad: (msg: string) => void): void {
+  const res = isObj(researches) ? researches : {}
+  const tagList = (v: unknown) => Array.isArray(v) && v.length >= 1 && v.length <= 8 && v.every((x) => typeof x === "string" && NAME.test(x))
+  if (s.armor !== undefined && !isInt(s.armor, 0, 1000)) bad(`${at}.armor（护甲）要是 0～1000 的整数`)
+  if (s.tags !== undefined && !tagList(s.tags)) bad(`${at}.tags 要是 1～8 个小写英文标签的数组，比如 ["bio"]`)
+  if (s.requires !== undefined) checkReqs(s.requires, `${at}.requires`, types, researches, bad)
+  if (s.needsAddon !== undefined && !isObj((types[s.needsAddon as string] as Obj | undefined)?.addon)) bad(`${at}.needsAddon 要写挂件类型名（写了 addon 的建筑）`)
+  if (s.addons !== undefined) {
+    if (kind !== "building") bad(`${at}.addons：只有建筑能建挂件`)
+    else if (!Array.isArray(s.addons) || s.addons.some((x) => typeof x !== "string" || !isObj((types[x] as Obj | undefined)?.addon))) bad(`${at}.addons 要是挂件类型名的数组（挂件是写了 addon 的建筑）`)
+  }
+  if (s.addon !== undefined) {
+    if (kind !== "building") bad(`${at}.addon：只有建筑能当挂件`)
+    else if (!isObj(s.addon) || (s.addon.parallel !== undefined && !isInt(s.addon.parallel, 1, 5))) bad(`${at}.addon 要写成 { parallel?: 1～5 }`)
+  }
+  if (s.researches !== undefined) {
+    if (kind !== "building") bad(`${at}.researches：只有建筑能研究`)
+    else if (!Array.isArray(s.researches) || s.researches.some((x) => typeof x !== "string" || !Object.hasOwn(res, x))) bad(`${at}.researches 要是规则包 researches 里的 id 数组`)
+  }
+  const en = s.energy
+  if (en !== undefined) {
+    if (kind === "resource" || !isObj(en) || !isInt(en.max, 1, 1000) || (en.start !== undefined && !isInt(en.start, 0, en.max as number)) || (en.regenTicks !== undefined && !isInt(en.regenTicks, 1, 1000)))
+      bad(`${at}.energy 要写成 { max: 1～1000, start?: 0～max, regenTicks?: 1～1000 }`)
+  }
+  const h = s.heal
+  if (h !== undefined) {
+    if (kind === "resource" || !isObj(h) || !isInt(h.amount, 1, 100_000) || !isInt(h.range, 1, 16) || !isInt(h.cooldown, 1, 10_000) || (h.energy !== undefined && !isInt(h.energy, 0, 1000)) || !tagList(h.tags))
+      bad(`${at}.heal 要写成 { amount ≥ 1, range: 1～16, cooldown ≥ 1, energy?: 0～1000, tags: ["bio"] }`)
+    else if ((h.energy as number) > 0 && !isObj(en)) bad(`${at}.heal.energy：要写 energy（能量上限）才能花能量治疗`)
+  }
+  const r = s.repair
+  if (r !== undefined) {
+    if (kind !== "unit") bad(`${at}.repair：只有单位能修理`)
+    else if (!isObj(r) || !Array.isArray(r.tags) || r.tags.some((x) => typeof x !== "string" || !NAME.test(x)) || (r.buildings !== undefined && typeof r.buildings !== "boolean") || (r.costPct !== undefined && !isInt(r.costPct, 0, 1000)))
+      bad(`${at}.repair 要写成 { tags: ["mech"], buildings?: true/false, costPct?: 0～1000 }`)
+  }
+  if (s.lifetime !== undefined && (kind !== "unit" || !isInt(s.lifetime, 1, 100_000))) bad(`${at}.lifetime：只有单位能写，要是 1～100000 的整数（几 tick 后消失）`)
+  if (Array.isArray(s.skills))
+    s.skills.forEach((k, i) => {
+      if (isObj(k) && typeof k.requires === "string" && !Object.hasOwn(res, k.requires)) bad(`${at}.skills[${i}].requires 要写规则包 researches 里的 id`)
+    })
+}
+
+/** 规则包的研究（D-270） */
+function checkResearches(d: Obj, resSet: Set<string>, bad: (msg: string) => void): void {
+  const rs = d.researches
+  if (rs === undefined) return
+  if (!isObj(rs) || Object.keys(rs).length > 64) return bad("researches 要写成 { 研究 id: { name, cost, ticks, desc, requires?, effects? } }，最多 64 项")
+  const types = isObj(d.types) ? d.types : {}
+  const PATCH: Record<string, string[] | null> = { maxHp: null, moveTicks: null, sight: null, armor: null, attack: ["damage", "range", "cooldown", "accuracy"], gather: ["amount", "ticks", "capacity"] }
+  for (const [id, r] of Object.entries(rs)) {
+    const at = `researches.${id}`
+    if (!NAME.test(id)) bad(`${at}：研究 id 要是小写字母开头的小写名字（cmd.research 用它）`)
+    if (Object.hasOwn(types, id)) bad(`${at}：研究 id 不能和类型名一样（前置 requires 里分不清）`)
+    if (!isObj(r)) {
+      bad(`${at} 要是对象`)
+      continue
+    }
+    for (const k of Object.keys(r)) if (!["name", "cost", "ticks", "requires", "effects", "desc"].includes(k)) bad(`${at} 只能写 name、cost、ticks、requires、effects、desc（多了 ${k}）`)
+    if (typeof r.name !== "string" || [...r.name].length < 1 || [...r.name].length > 8) bad(`${at}.name 要写 1～8 个字`)
+    if (typeof r.desc !== "string" || [...r.desc].length < 1 || [...r.desc].length > 80) bad(`${at}.desc 要写 1～80 字的说明（bot 作者看它）`)
+    if (!isInt(r.ticks, 1, 100_000)) bad(`${at}.ticks 要是 1～100000 的整数`)
+    if (!isObj(r.cost)) bad(`${at}.cost 要写成 { 资源名: 数量 }`)
+    else for (const [k, n] of Object.entries(r.cost)) if (!resSet.has(k) || !isInt(n, 0)) bad(`${at}.cost.${k}：资源要在 resources 里，数量是非负整数`)
+    if (r.requires !== undefined) {
+      checkReqs(r.requires, `${at}.requires`, types, rs, bad)
+      if (Array.isArray(r.requires) && r.requires.includes(id)) bad(`${at}.requires 不能写自己`)
+    }
+    if (r.effects !== undefined) {
+      if (!isObj(r.effects)) {
+        bad(`${at}.effects 要写成 { 类型名: { armor: 1, attack: { damage: 1 } } }（加多少）`)
+        continue
+      }
+      for (const [t, p] of Object.entries(r.effects)) {
+        const w = `${at}.effects.${t}`
+        if (!Object.hasOwn(types, t)) bad(`${w}：没有这个类型`)
+        if (!isObj(p)) {
+          bad(`${w} 要写成 { armor: 1, attack: { damage: 1 } }`)
+          continue
+        }
+        for (const [k, v] of Object.entries(p)) {
+          if (!Object.hasOwn(PATCH, k)) bad(`${w} 只能加 ${Object.keys(PATCH).join("、")}（多了 ${k}）`)
+          else if (PATCH[k] === null) {
+            if (!isInt(v, -100_000, 100_000)) bad(`${w}.${k} 要是整数（加多少，可以是负数）`)
+          } else if (!isObj(v)) bad(`${w}.${k} 要写成对象`)
+          else for (const [kk, vv] of Object.entries(v)) if (!PATCH[k]!.includes(kk) || !isInt(vv, -100_000, 100_000)) bad(`${w}.${k}.${kk}：只能加 ${PATCH[k]!.join("、")}，要是整数`)
+        }
+      }
+    }
+  }
 }
 
 /** 技能、光环、被动（D-186） */
@@ -233,6 +341,10 @@ function checkAbilities(s: Obj, at: string, names: Set<string>, kind: string, re
           if (!isObj(k.cost)) bad(`${w}.cost 要写成 { 资源名: 数量 }`)
           else for (const [r, n] of Object.entries(k.cost)) if (!resSet.has(r) || !isInt(n, 0)) bad(`${w}.cost.${r}：资源要在 resources 里，数量是非负整数`)
         }
+        // 能量、要先研究（D-270）
+        if (k.energy !== undefined && !isInt(k.energy, 0, 1000)) bad(`${w}.energy 要是 0～1000 的整数（每放一次花多少能量）`)
+        if ((k.energy as number) > 0 && !isObj(s.energy)) bad(`${w}.energy：类型要写 energy（能量上限）才能花能量`)
+        if (k.requires !== undefined && k.requires !== null && typeof k.requires !== "string") bad(`${w}.requires 要写研究 id`)
       })
     }
   }

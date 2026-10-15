@@ -33,7 +33,8 @@ test("combined artwork is embedded for the full roster and alternate modes, with
       sprites++
     }
   }
-  assert.equal(sprites,16)
+  // 21 种类型 + 坦克架炮、地雷埋设、兵营/战车工厂/机场起飞（D-270）
+  assert.equal(sprites,26)
   assert.equal(art.attackStyle(battleTypeOf(r,"rifleman")),"autocannon")
   assert.equal(art.attackStyle(battleTypeOf(r,"tank","siege")),"siege-shell")
   assert.equal(art.attackStyle(battleTypeOf(r,"mine","buried")),"detonation")
@@ -63,9 +64,9 @@ test("modern effects survive replay seeking, mode changes on the strike tick, fl
 })
 
 test("weapon and motion metadata is validated for both base artwork and mode artwork", () => {
-  const callbacks=["setup","objectives","result","timeUp"]
+  const callbacks=["setup","objectives","result","timeUp","onCast"]
   assert.deepEqual(checkRulesetData(combined,callbacks),[])
-  const invalid=structuredClone({...combined,setup:undefined,onTick:undefined,objectives:undefined,result:undefined,timeUp:undefined})
+  const invalid=structuredClone({...combined,setup:undefined,onTick:undefined,objectives:undefined,result:undefined,timeUp:undefined,onCast:undefined})
   Object.assign(invalid.types.rifleman.look.art!,{weapon:"unknown",motion:"unknown"})
   Object.assign(invalid.types.tank.modes![1].look!.art!,{weapon:"unknown",sprite:42})
   const errors=checkRulesetData(invalid,callbacks).join("\n")

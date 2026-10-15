@@ -86,7 +86,8 @@ test("unit dossier and training icons match the battlefield SVG, mode, layer and
     })()`)
     assert.deepEqual(result.errors,[])
     assert.deepEqual(result.failures,[])
-    assert.equal(result.portraits,16)
+    // 立体战线 21 种类型 + 5 个换了素材的状态（D-270 加了起飞）
+    assert.equal(result.portraits,26)
     assert.ok(result.queueIcons>=6)
   } finally {
     await browser?.close()

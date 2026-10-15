@@ -20,7 +20,15 @@ export function buildView(w: World, p: number): View {
     }
     if (e.construction) v.construction = { ...e.construction }
     // 增益、减益（D-186）：看得到实体就看得到
-    if (e.buffs.length) v.buffs = e.buffs.map((b) => (b.ticksLeft === null ? { name: b.name, damagePct: b.damagePct, defensePct: b.defensePct } : { name: b.name, damagePct: b.damagePct, defensePct: b.defensePct, ticksLeft: b.ticksLeft }))
+    if (e.buffs.length)
+      v.buffs = e.buffs.map((b) => ({
+        name: b.name,
+        damagePct: b.damagePct,
+        defensePct: b.defensePct,
+        ...(b.speedPct ? { speedPct: b.speedPct } : {}),
+        ...(b.ratePct ? { ratePct: b.ratePct } : {}),
+        ...(b.ticksLeft === null ? {} : { ticksLeft: b.ticksLeft }),
+      }))
     // 眩晕（D-207）：看得到实体就看得到还剩几 tick
     const stun = w.stunLeft(e)
     if (stun > 0) v.stunned = stun
@@ -29,11 +37,16 @@ export function buildView(w: World, p: number): View {
     if (e.switchTo !== null) v.switching = { to: e.switchTo, ticksLeft: e.switchLeft }
     if (e.def.layer !== "ground") v.layer = e.def.layer
     if (e.def.garrison && w.isAlly(e.owner, p)) v.garrison = [...e.cargo]
+    // 能量、挂件（D-270）：看得到实体就看得到
+    if (e.def.energy) v.energy = e.energy
+    if (e.addon) v.addon = e.addon
+    if (e.host) v.host = e.host
+    if (e.expires) v.lifeLeft = Math.max(0, e.expires - w.tick)
     if (e.owner === p) {
       v.order = copyOrder(e.order)
       if (e.inside) v.inside = e.inside
       if (e.carrying) v.carrying = { ...e.carrying }
-      if (e.def.produces.length > 0) v.queue = e.queue.map((q) => ({ ...q }))
+      if (e.def.produces.length > 0 || e.def.researches.length > 0) v.queue = e.queue.map((q) => ({ ...q }))
       if (e.def.attack) v.cooldown = e.attackCd
       if (e.def.skills.length > 0) v.skillCooldowns = { ...e.skillCooldowns }
     }
@@ -51,5 +64,6 @@ export function buildView(w: World, p: number): View {
     entities,
     objectives: w.rules.objectives(w, p),
     events,
+    researched: [...player.researched],
   }
 }
