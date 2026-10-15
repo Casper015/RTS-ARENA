@@ -13,7 +13,7 @@ const LAYERS = ["under", "over", "sprite"] as const
 const inlined = (v: string) => /^\s*</.test(v)
 
 /**
- * 把 types 里每个 look.art（和每种状态的 modes[i].look.art，D-266）的 under、over、sprite 从路径换成文件内容（原地改）。
+ * 把 types 里每个 look.art（和每种状态的 modes[i].look.art，D-269）的 under、over、sprite 从路径换成文件内容（原地改）。
  * 路径只能指向规则包目录里的 .svg、不超过 ART_MAX_BYTES、要有 <svg> 和 viewBox；不符合就抛错，说清是哪个类型的哪一项
  */
 export function inlineRulesetArt(types: Record<string, TypeSpec>, dir: string): void {

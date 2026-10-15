@@ -175,7 +175,8 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
   let muxer: Any | null = null
   let frameNo = 0
   let fps = 30
-  let output: Uint8Array | null = null
+  let outputChunks: { data: Uint8Array; position: number }[] = []
+  let outputBytes = 0
   const images = new Map<string, { img: ImageBitmap; avatar: OffscreenCanvas; bust: { c: OffscreenCanvas; w: number; h: number } | null }>()
 
   const ease = (x: number) => (x <= 0 ? 0 : x >= 1 ? 1 : 1 - Math.pow(1 - x, 3))
@@ -997,7 +998,7 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     const workers = new Map<number, BattlePose>((f.workers ?? []).map((w: { index: number; pose: BattlePose }) => [w.index, w.pose]))
     // Paint from back to front; neighboring soldiers overlap naturally, with buildings behind units.
     const order = Array.from({ length: e.length / 8 }, (_, k) => k * 8).sort((a, b) => {
-      // 建筑最先、地面单位其次、空中单位（D-266）最后画
+      // 建筑最先、地面单位其次、空中单位（D-269）最后画
       const ak = s.types[e[a + 5]].kind === "unit" ? (s.types[e[a + 5]].layer === "air" ? 2 : 1) : 0
       const bk = s.types[e[b + 5]].kind === "unit" ? (s.types[e[b + 5]].layer === "air" ? 2 : 1) : 0
       return ak - bk || e[a + 1] + e[a + 3] - e[b + 1] - e[b + 3] || e[a] - e[b]
@@ -1764,18 +1765,33 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     g = outG
     return true
   }
-  w.__init = (opts: { fps: number; bitrate: number }) => {
-    fps = opts.fps
+  w.__init = async (opts: VideoEncoderConfig, frames?: number) => {
+    const config = { ...opts, width: canvas.width, height: canvas.height }
+    const support = await VideoEncoder.isConfigSupported(config)
+    if (!support.supported) throw new Error(`这个浏览器不支持 ${canvas.width}×${canvas.height}、${config.framerate} fps 的 H.264 编码：可去掉 --4k、降低 --fps，或换用更新的 Chrome / Edge`)
+    if (encoder && encoder.state !== "closed") encoder.close()
+    w.__encodeError = undefined
+    fps = config.framerate!
+    outputChunks = []
+    outputBytes = 0
     const Muxer = w.Mp4Muxer
-    muxer = new Muxer.Muxer({ target: new Muxer.ArrayBufferTarget(), video: { codec: "avc", width: canvas.width, height: canvas.height, frameRate: fps }, fastStart: "in-memory" })
+    const target = new Muxer.StreamTarget({
+      chunked: true,
+      chunkSize: 3_000_000,
+      onData: (data: Uint8Array, position: number) => {
+        outputChunks.push({ data, position })
+        outputBytes = Math.max(outputBytes, position + data.length)
+      },
+    })
+    // 已知总帧数就为文件头预留空间；媒体数据按段输出，不保留整部视频。
+    muxer = new Muxer.Muxer({ target, video: { codec: "avc", width: canvas.width, height: canvas.height, frameRate: fps }, fastStart: frames === undefined ? false : { expectedVideoChunks: frames } })
     encoder = new VideoEncoder({
       output: (chunk, meta) => muxer!.addVideoChunk(chunk, meta),
       error: (e) => {
         w.__encodeError = String(e)
       },
     })
-    // High 4.2：1080p 到 60 帧都够
-    encoder.configure({ codec: "avc1.64002a", width: canvas.width, height: canvas.height, bitrate: opts.bitrate, framerate: fps })
+    encoder.configure(config)
     frameNo = 0
     return true
   }
@@ -1814,6 +1830,7 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
   /** 画并编码一批帧：items[k] 是 [场景里第几帧, 回放的局面或 null] */
   w.__frames = async (items: [number, Any | null][]) => {
     for (const [i, f] of items) {
+      if (w.__encodeError) throw new Error(w.__encodeError)
       draw(f, i)
       let vf: VideoFrame
       try {
@@ -1879,55 +1896,63 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
   w.__sheetPng = async () => pngBase64(sheet!)
   w.__finish = async () => {
     await encoder!.flush()
+    encoder!.close()
     muxer!.finalize()
-    output = new Uint8Array(muxer!.target.buffer)
-    return output.length
+    return outputBytes
   }
-  /** 取第 k 段（每段 3 MB）的 base64 */
-  w.__chunk = (k: number) => {
-    const part = output!.subarray(k * 3_000_000, (k + 1) * 3_000_000)
+  /** 取走一段待写数据，Node 按偏移落盘；文件头回填也走同一接口。 */
+  w.__chunk = () => {
+    const chunk = outputChunks.shift()
+    if (!chunk) return null
+    const part = chunk.data
     let s = ""
     for (let j = 0; j < part.length; j += 0x8000) s += String.fromCharCode(...part.subarray(j, j + 0x8000))
-    return btoa(s)
+    return { position: chunk.position, data: btoa(s) }
   }
   /** 把编好的 MP4 用 <video> 解码，取第 sec 秒的画面（检查成品用） */
-  w.__probe = async (secs: number[]) => {
-    const url = URL.createObjectURL(new Blob([output! as BlobPart], { type: "video/mp4" }))
+  w.__probe = async (secs: number[], url: string) => {
     const v = document.createElement("video")
     v.muted = true
-    v.src = url
     document.body.appendChild(v)
-    await new Promise<void>((ok, bad) => {
-      v.onloadeddata = () => ok()
-      v.onerror = () => bad(new Error("浏览器解不开生成的 MP4"))
-    })
-    const shots: string[] = []
-    const c2 = document.createElement("canvas")
-    c2.width = canvas.width
-    c2.height = canvas.height
-    const g2 = c2.getContext("2d")!
-    for (const sec of secs) {
-      // 光等 seeked 不够：解码器可能还没把这一帧交出来，截到的是上一张（D-173：第一张全白、第二张是片头）。
-      // 两个都等到再截；requestVideoFrameCallback 万一不来，1 秒后也截
-      await new Promise<void>((ok) => {
-        let n = 0
-        const done = () => {
-          if (++n === 2) ok()
-        }
-        let framed = false
-        const frame = () => {
-          if (framed) return
-          framed = true
-          done()
-        }
-        v.requestVideoFrameCallback(frame)
-        setTimeout(frame, 1000)
-        v.onseeked = () => done()
-        v.currentTime = Math.min(sec, Math.max(0, v.duration - 0.05))
+    try {
+      await new Promise<void>((ok, bad) => {
+        v.onloadeddata = () => ok()
+        v.onerror = () => bad(new Error("浏览器解不开生成的 MP4"))
+        v.src = url
       })
-      g2.drawImage(v, 0, 0)
-      shots.push(c2.toDataURL("image/png").split(",")[1])
+      const shots: string[] = []
+      const c2 = document.createElement("canvas")
+      c2.width = canvas.width
+      c2.height = canvas.height
+      const g2 = c2.getContext("2d")!
+      for (const sec of secs) {
+        // 光等 seeked 不够：解码器可能还没把这一帧交出来，截到的是上一张（D-173：第一张全白、第二张是片头）。
+        // 两个都等到再截；requestVideoFrameCallback 万一不来，1 秒后也截
+        await new Promise<void>((ok) => {
+          let n = 0
+          const done = () => {
+            if (++n === 2) ok()
+          }
+          let framed = false
+          const frame = () => {
+            if (framed) return
+            framed = true
+            done()
+          }
+          v.requestVideoFrameCallback(frame)
+          setTimeout(frame, 1000)
+          v.onseeked = () => done()
+          v.currentTime = Math.min(sec, Math.max(0, v.duration - 0.05))
+        })
+        g2.drawImage(v, 0, 0)
+        shots.push(c2.toDataURL("image/png").split(",")[1])
+      }
+      return { duration: v.duration, width: v.videoWidth, height: v.videoHeight, shots }
+    } finally {
+      v.pause()
+      v.removeAttribute("src")
+      v.load()
+      v.remove()
     }
-    return { duration: v.duration, width: v.videoWidth, height: v.videoHeight, shots }
   }
 }

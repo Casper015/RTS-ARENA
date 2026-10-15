@@ -4,7 +4,7 @@ import type { EntityState, EntSnap, Frame, PlayerSnap, Snapshot, StatDiff } from
 import { statDiff, type World } from "./world.ts"
 
 export function orderText(e: EntityState): string {
-  // 正在换状态（D-266）：命令是 idle，写成「换状态 → siege」
+  // 正在换状态（D-269）：命令是 idle，写成「换状态 → siege」
   if (e.switchTo !== null) return `mode→${e.switchTo}`
   const o: Order = e.order
   switch (o.kind) {
@@ -34,7 +34,7 @@ function snapOf(e: EntityState, w: World): EntSnap {
   // 眩晕（D-207）跟增益记在一起，播放器显示成「眩晕」
   const stun = w.stunLeft(e) > 0
   if (e.buffs.length || stun) s.bf = [...e.buffs.map((b) => b.name), ...(stun ? ["眩晕"] : [])]
-  // 状态、驻扎（D-266）
+  // 状态、驻扎（D-269）
   if (e.def.modes.length && e.mode !== e.def.modes[0].id) s.md = e.mode
   if (e.inside) s.in = e.inside
   return s

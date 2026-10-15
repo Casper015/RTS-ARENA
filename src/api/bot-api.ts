@@ -36,12 +36,12 @@ export interface TypeDef {
   /** 视野半径（曼哈顿距离，从占地最近的格子算） */
   sight: number
   /**
-   * 在哪一层（D-266）：ground 是地面（默认，建筑、资源点都是）；air 是空中：飞过水、墙、建筑和别的单位，不挡别人的路，
+   * 在哪一层（D-269）：ground 是地面（默认，建筑、资源点都是）；air 是空中：飞过水、墙、建筑和别的单位，不挡别人的路，
    * 只有 attack.hits 里有 "air" 的才打得到它；under 是地下（埋着的地雷这类）：不挡路，对手要在自己的探测范围（detect）里才看得见、打得到。
    * 有几种状态（modes）的单位，换状态可能换层，看 modes 里的 layer
    */
   layer: "ground" | "air" | "under"
-  /** 探测半径（D-266）：这个范围里对手地下（under）的东西你方看得见、打得到；0 是不能探测 */
+  /** 探测半径（D-269）：这个范围里对手地下（under）的东西你方看得见、打得到；0 是不能探测 */
   detect: number
   /**
    * 攻击能力；null 表示不能攻击。打中目标后要等 cooldown 个 tick 才能再打。
@@ -59,9 +59,9 @@ export interface TypeDef {
     vs?: Partial<Record<TypeName, number>>
     splash?: number
     accuracy?: number
-    /** 能打哪一层（D-266）：不写是只打地面（["ground"]，地下的东西被探测到时也算地面）；["air"] 只打空中；["ground", "air"] 都打。溅射也只溅到能打的那几层 */
+    /** 能打哪一层（D-269）：不写是只打地面（["ground"]，地下的东西被探测到时也算地面）；["air"] 只打空中；["ground", "air"] 都打。溅射也只溅到能打的那几层 */
     hits?: ("ground" | "air")[]
-    /** 打一下就没了（D-266，地雷这类）：出手的同时自己消失，不算被谁打死 */
+    /** 打一下就没了（D-269，地雷这类）：出手的同时自己消失，不算被谁打死 */
     suicide?: true
   } | null
   /** 采集能力；null 表示不能采集。贴着资源点每 ticks 个 tick 采 amount，身上最多带 capacity */
@@ -83,15 +83,15 @@ export interface TypeDef {
   /** 被动：一直生效、不用下命令（D-186）；没有就是空数组 */
   passives: PassiveDef[]
   /**
-   * 几种状态（D-266，比如坦克的「行进」和「架炮」、地雷的「移动」和「埋设」）：第一个是刚造出来时的状态，上面的 moveTicks、sight、attack、layer
+   * 几种状态（D-269，比如坦克的「行进」和「架炮」、地雷的「移动」和「埋设」）：第一个是刚造出来时的状态，上面的 moveTicks、sight、attack、layer
    * 就是它的数值；用 cmd.mode(单位, 状态 id) 切换，切换要 switchTicks 个 tick，切换中不能走、不能打。没有就是空数组
    */
   modes: ModeDef[]
-  /** 能驻扎单位的建筑（D-266，地堡这类）；不能驻扎是 null。见 GarrisonDef */
+  /** 能驻扎单位的建筑（D-269，地堡这类）；不能驻扎是 null。见 GarrisonDef */
   garrison: GarrisonDef | null
 }
 
-/** 单位的一种状态（D-266）：换到这个状态以后的数值 */
+/** 单位的一种状态（D-269）：换到这个状态以后的数值 */
 export interface ModeDef {
   /** cmd.mode 用它，比如 "siege" */
   id: string
@@ -108,7 +108,7 @@ export interface ModeDef {
 }
 
 /**
- * 驻扎（D-266）：单位用 cmd.enter(单位, 建筑) 走到建筑旁边钻进去，cmd.unload(建筑) 全部放出来。
+ * 驻扎（D-269）：单位用 cmd.enter(单位, 建筑) 走到建筑旁边钻进去，cmd.unload(建筑) 全部放出来。
  * 里面的单位对手看不见、打不到，可以从建筑里开火：射程从建筑的占地算，再加 rangeBonus；建筑被拆时里面的单位被放到旁边（放不下的跟着死）
  */
 export interface GarrisonDef {
@@ -193,7 +193,7 @@ export type Order =
   | { kind: "gather"; target: number; returning: boolean }
   /** 去建 target 这个没建好的建筑（走到贴着它，然后每 tick 干 1 份活） */
   | { kind: "build"; target: number }
-  /** 走到能驻扎的建筑 target 旁边钻进去（D-266） */
+  /** 走到能驻扎的建筑 target 旁边钻进去（D-269） */
   | { kind: "enter"; target: number }
 
 /** 看得到的实体。建筑的 x、y 是占地左上角 */
@@ -237,15 +237,15 @@ export interface Entity {
    * 打出的伤害 = 原伤害 ×（1 + 攻击方各项 damagePct 之和 / 100）×（1 − 挨打方各项 defensePct 之和 / 100），四舍五入，原伤害大于 0 时至少 1
    */
   buffs?: Buff[]
-  /** 现在的状态 id（只有 game.types[类型].modes 不是空的才有，D-266）；换状态时的数值看 modes 里的那一项，层看 layer */
+  /** 现在的状态 id（只有 game.types[类型].modes 不是空的才有，D-269）；换状态时的数值看 modes 里的那一项，层看 layer */
   mode?: string
   /** 正在切换状态：换到 to，还要 ticksLeft 个 tick（谁都看得到）；切换中不能走、不能打 */
   switching?: { to: string; ticksLeft: number }
-  /** 现在在哪一层（不是 ground 才有，D-266）：air 空中，under 地下 */
+  /** 现在在哪一层（不是 ground 才有，D-269）：air 空中，under 地下 */
   layer?: "air" | "under"
-  /** 驻扎在哪座建筑里（D-266，只有自己的单位有）：在里面的单位 x、y 是那座建筑的左上角，对手看不见 */
+  /** 驻扎在哪座建筑里（D-269，只有自己的单位有）：在里面的单位 x、y 是那座建筑的左上角，对手看不见 */
   inside?: number
-  /** 驻扎在里面的单位 id（D-266，只有自己和盟友的、能驻扎的建筑有） */
+  /** 驻扎在里面的单位 id（D-269，只有自己和盟友的、能驻扎的建筑有） */
   garrison?: number[]
   /** 眩晕还剩几个 tick（规则包的效果，比如弑君歼灭的击退，D-207）：眩晕时不能走、不能打、不能采集、不能建造，命令不变，过后接着做；技能照样能放。没眩晕就没有这个字段 */
   stunned?: number
@@ -374,13 +374,13 @@ export interface Commands {
    */
   cast(unit: Entity | number, skill: string, target?: Entity | number | Pos): void
   /**
-   * 切换状态（D-266，game.types[类型].modes 里的 id）：要 modes 里那一项的 switchTicks 个 tick，切换中不能走、不能打，命令变成 idle。
+   * 切换状态（D-269，game.types[类型].modes 里的 id）：要 modes 里那一项的 switchTicks 个 tick，切换中不能走、不能打，命令变成 idle。
    * 正在切换时再下就改成换到新的状态、重新计时。地下换回地面时，那一格被别的单位站着就等它让开
    */
   mode(unit: Entity | number, mode: string): void
-  /** 让 unit 走到自己的、能驻扎的建筑旁边钻进去（D-266，见 GarrisonDef）；满了就停下 */
+  /** 让 unit 走到自己的、能驻扎的建筑旁边钻进去（D-269，见 GarrisonDef）；满了就停下 */
   enter(unit: Entity | number, building: Entity | number): void
-  /** 把驻扎在 building 里的单位全部放出来，放在建筑旁边（D-266）；给里面的单位下 move、attackMove 这类要走路的命令，它会自己先出来 */
+  /** 把驻扎在 building 里的单位全部放出来，放在建筑旁边（D-269）；给里面的单位下 move、attackMove 这类要走路的命令，它会自己先出来 */
   unload(building: Entity | number): void
 }
 

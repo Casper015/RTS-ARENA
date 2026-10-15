@@ -8,7 +8,7 @@ export class Vision {
   private readonly replay: Replay
   /** 这一队看得见的格子 */
   readonly vis: Uint8Array
-  /** 这一队探测得到的格子（D-266：地下的东西要探测到才看得见） */
+  /** 这一队探测得到的格子（D-269：地下的东西要探测到才看得见） */
   readonly det: Uint8Array
 
   constructor(replay: Replay) {
@@ -26,7 +26,7 @@ export class Vision {
     return this.replay.players[player]?.team ?? player
   }
 
-  /** 实体的占地（驻扎在建筑里的按建筑算，D-266） */
+  /** 实体的占地（驻扎在建筑里的按建筑算，D-269） */
   private rect(state: State, e: EntSnap): { x: number; y: number; w: number; h: number } {
     const b = e.in ? state.ents.get(e.in) : undefined
     const t = this.replay.types[(b ?? e).type]

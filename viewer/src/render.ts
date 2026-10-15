@@ -729,7 +729,7 @@ export class Renderer {
       })
       queue.forEach((q,i)=>g.rect(1+i*4,v.h*TILE+4+active.length*4,2.5,2.5).fill(q.active?0xdfb76d:0x617780))
     }
-    // 驻扎（D-266）：自己这边（或看全局时）在建筑顶上画几个小点，几个兵在里面
+    // 驻扎（D-269）：自己这边（或看全局时）在建筑顶上画几个小点，几个兵在里面
     const g2 = this.replay.types[e.type]?.garrison
     if (g2 && (this.team === null || (this.replay.players[e.owner]?.team ?? e.owner) === this.team)) {
       const n = [...this.state.ents.values()].filter((u) => u.in === e.id).length

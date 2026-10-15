@@ -1,4 +1,4 @@
-// 立体战线的单位和建筑（D-266）：用来演示、检验平台的空中和地下单位、多格的大型单位、两种状态切换、驻扎。
+// 立体战线的单位和建筑（D-269）：用来演示、检验平台的空中和地下单位、多格的大型单位、两种状态切换、驻扎。
 // - 步枪兵：便宜，地面、空中都打得到，能进地堡；
 // - 坦克：两种状态。行进时能走、射程 5；架炮后不能走，射程 9、一下 40、溅射一格，切换 40 tick；
 // - 地雷：两种状态。移动时跑得快、不能打；埋设后钻到地下（对手要防空塔探测到才看得见），敌方地面单位走到旁边就炸（溅射一格），炸完自己也没了；
@@ -33,9 +33,9 @@ export function combinedTypes(): Record<string, TypeSpec> {
     barracks: { ...f.barracks, produces: ["rifleman"], look: { ...f.barracks.look, name: "兵营" } },
     factory: building("战车工厂", "车", 3, 2, 200, 300, 1000, { produces: ["tank", "mine", "mech"] }),
     airport: building("机场", "机", 3, 2, 250, 360, 900, { produces: ["warship"] }),
-    // 地堡：最多 4 个步枪兵，从里面开火射程 +1（D-266 驻扎）
+    // 地堡：最多 4 个步枪兵，从里面开火射程 +1（D-269 驻扎）
     bunker: building("地堡", "堡", 2, 2, 100, 200, 700, { sight: 7, garrison: { capacity: 4, types: ["rifleman"], rangeBonus: 1 } }),
-    // 防空塔：只打空中，探测 7 格内的地下单位（D-266 层、探测）
+    // 防空塔：只打空中，探测 7 格内的地下单位（D-269 层、探测）
     turret: building("防空塔", "塔", 1, 1, 100, 160, 450, { sight: 8, detect: 7, attack: { damage: 18, range: 7, cooldown: 10, hits: ["air"] } }),
     // 步枪兵：地面、空中都打
     rifleman: {
@@ -48,7 +48,7 @@ export function combinedTypes(): Record<string, TypeSpec> {
       attack: { damage: 8, range: 4, cooldown: 10, hits: ["ground", "air"] },
       look: { shape: "triangle", label: "枪", name: "步枪兵", art: { sprite: art("rifleman") } },
     },
-    // 坦克：行进 / 架炮（D-266 两种状态）
+    // 坦克：行进 / 架炮（D-269 两种状态）
     tank: {
       kind: "unit",
       maxHp: 170,
@@ -63,7 +63,7 @@ export function combinedTypes(): Record<string, TypeSpec> {
       ],
       look: { shape: "square", label: "坦", name: "坦克", art: { sprite: art("tank") } },
     },
-    // 地雷：移动 / 埋设（埋设后在地下，D-266 层；敌方地面单位贴过来就炸，炸完自己没了）
+    // 地雷：移动 / 埋设（埋设后在地下，D-269 层；敌方地面单位贴过来就炸，炸完自己没了）
     mine: {
       kind: "unit",
       maxHp: 25,
@@ -77,7 +77,7 @@ export function combinedTypes(): Record<string, TypeSpec> {
       ],
       look: { shape: "circle", label: "雷", name: "地雷", art: { sprite: art("mine") } },
     },
-    // 重型机甲：2×2 的大型地面单位（D-266），地面、空中都打，打空中战舰 ×2
+    // 重型机甲：2×2 的大型地面单位（D-269），地面、空中都打，打空中战舰 ×2
     mech: {
       kind: "unit",
       w: 2,
@@ -90,7 +90,7 @@ export function combinedTypes(): Record<string, TypeSpec> {
       attack: { damage: 22, range: 6, cooldown: 20, hits: ["ground", "air"], vs: { warship: 2 } },
       look: { shape: "hex", label: "甲", name: "重型机甲", art: { sprite: art("mech") } },
     },
-    // 空中战舰：2×2 的空中单位（D-266），飞过一切
+    // 空中战舰：2×2 的空中单位（D-269），飞过一切
     warship: {
       kind: "unit",
       w: 2,

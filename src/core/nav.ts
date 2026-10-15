@@ -85,7 +85,7 @@ export class FlowCache {
   }
 
   /**
-   * 大型地面单位（D-266，占 fw×fh 格）：按左上角算的流场，左上角放在这一格时整块占地都要能站（地形能走、没有建筑和资源点）。
+   * 大型地面单位（D-269，占 fw×fh 格）：按左上角算的流场，左上角放在这一格时整块占地都要能站（地形能走、没有建筑和资源点）。
    * 种子是离矩形 r 不超过 range 的左上角；一个都没有（目标在一片障碍里）就把 range 放宽，最多再加 8 格
    */
   toRectSized(key: string, r: Rect, range: number, fw: number, fh: number): Int32Array {

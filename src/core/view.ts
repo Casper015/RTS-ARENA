@@ -24,7 +24,7 @@ export function buildView(w: World, p: number): View {
     // 眩晕（D-207）：看得到实体就看得到还剩几 tick
     const stun = w.stunLeft(e)
     if (stun > 0) v.stunned = stun
-    // 状态、层、驻扎（D-266）
+    // 状态、层、驻扎（D-269）
     if (e.def.modes.length) v.mode = e.mode
     if (e.switchTo !== null) v.switching = { to: e.switchTo, ticksLeft: e.switchLeft }
     if (e.def.layer !== "ground") v.layer = e.def.layer

@@ -56,10 +56,10 @@ function applyOne(w: World, p: number, c: unknown): string | null {
   const e = w.ents.get(actorId)
   // 不存在和不是你的用同一句话，否则 bot 能拿 id 探测看不见的敌人是否还活着
   if (!e || e.owner !== p) return `你没有 #${actorId} 这个实体（可能已经死了）`
-  // 正在换状态（D-266）：只能再下 mode（改主意）和 stop 之外的不走路、不打的命令
+  // 正在换状态（D-269）：只能再下 mode（改主意）和 stop 之外的不走路、不打的命令
   if (e.switchTo !== null && (kind === "move" || kind === "attackMove" || kind === "attack" || kind === "gather" || kind === "build" || kind === "enter"))
     return `#${e.id}（${e.type}）正在换状态（换到 ${e.switchTo}，还要 ${e.switchLeft} tick），换好之前不能走、不能打`
-  // 驻扎在建筑里的（D-266）：要走路的命令先出来；stop 留在里面；attack 只能打建筑射程里的
+  // 驻扎在建筑里的（D-269）：要走路的命令先出来；stop 留在里面；attack 只能打建筑射程里的
   if (e.inside && (kind === "move" || kind === "attackMove" || kind === "gather" || kind === "build" || kind === "enter" || kind === "mode")) {
     const b = w.ents.get(e.inside)
     if (b && !w.unboard(e, b)) return `#${e.id} 从 #${b.id}（${b.type}）里出不来：旁边没有空位`

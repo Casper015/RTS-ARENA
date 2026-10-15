@@ -1,4 +1,4 @@
-// 空中、地下、大型单位、几种状态、驻扎（D-266）：内核的移动、找目标、探测、切换、进出建筑，以及格式检查
+// 空中、地下、大型单位、几种状态、驻扎（D-269）：内核的移动、找目标、探测、切换、进出建筑，以及格式检查
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { Commands, Entity, GameEvent, View } from "../src/api/bot-api.ts"
@@ -80,7 +80,7 @@ function wall(gaps: number[] = []): string[] {
   return Array.from({ length: 8 }, (_, y) => ".".repeat(8) + (gaps.includes(y) ? "." : "#") + ".".repeat(7))
 }
 
-test("空中单位（D-266）：飞过墙，直线走到；地面单位过不去", () => {
+test("空中单位（D-269）：飞过墙，直线走到；地面单位过不去", () => {
   const seen: { tick: number; flyer?: Entity; grunt?: Entity }[] = []
   play(mini([["flyer", 0, 2, 3], ["grunt", 0, 2, 5], ["grunt", 1, 14, 0]], wall()), (v, cmd) => {
     const flyer = one(v, "flyer")
@@ -97,7 +97,7 @@ test("空中单位（D-266）：飞过墙，直线走到；地面单位过不去
   assert.ok(seen.every((s) => !s.grunt || s.grunt.x < 8), "地面单位过不了墙")
 })
 
-test("空中单位（D-266）：只打地面的打不到它，能打空中的打得到；只打地面的对它下 attack 被拒", () => {
+test("空中单位（D-269）：只打地面的打不到它，能打空中的打得到；只打地面的对它下 attack 被拒", () => {
   const hitsOnFlyer: GameEvent[] = []
   let rejected: string[] = []
   play(
@@ -115,7 +115,7 @@ test("空中单位（D-266）：只打地面的打不到它，能打空中的打
   assert.ok(rejected.some((r) => r.includes("打不到空中")), rejected.join("；"))
 })
 
-test("大型单位（D-266）：2×2 走得下的开口才走，整块不压墙；占的 4 格别的单位站不上", () => {
+test("大型单位（D-269）：2×2 走得下的开口才走，整块不压墙；占的 4 格别的单位站不上", () => {
   const rows = wall([1, 5, 6])
   let passedAt: number[] = []
   let arrived = false
@@ -131,7 +131,7 @@ test("大型单位（D-266）：2×2 走得下的开口才走，整块不压墙�
   assert.deepEqual(passedAt, [5], "从两格宽的开口过墙（一格宽的那个过不去）")
 })
 
-test("几种状态（D-266）：架炮要换 5 tick，换的时候不能打、不能走；换好射程变远、不能移动；换回来又能走", () => {
+test("几种状态（D-269）：架炮要换 5 tick，换的时候不能打、不能走；换好射程变远、不能移动；换回来又能走", () => {
   const log: { tick: number; mode?: string; switching?: { to: string; ticksLeft: number }; hasStats: boolean }[] = []
   const reasons: string[] = []
   const dmg: number[] = []
@@ -164,7 +164,7 @@ test("几种状态（D-266）：架炮要换 5 tick，换的时候不能打、�
   assert.ok(log.some((l) => l.tick > 27) && reasons.filter((r) => r.includes("不能移动")).length === 1, "换回来以后能走")
 })
 
-test("地下单位（D-266）：埋下的地雷对手看不见，走到旁边就炸（溅射、自己也没了）；有探测的看得见、能下 attack", () => {
+test("地下单位（D-269）：埋下的地雷对手看不见，走到旁边就炸（溅射、自己也没了）；有探测的看得见、能下 attack", () => {
   let p1SawMine = false
   let grunt: Entity | undefined
   let mineDied = false
@@ -202,7 +202,7 @@ test("地下单位（D-266）：埋下的地雷对手看不见，走到旁边就
   assert.deepEqual(reasons, [])
 })
 
-test("驻扎（D-266）：钻进地堡后对手看不见、打不到，从地堡开火射程 +1；unload 放到旁边；地堡被拆时里面的被放出来", () => {
+test("驻扎（D-269）：钻进地堡后对手看不见、打不到，从地堡开火射程 +1；unload 放到旁边；地堡被拆时里面的被放出来", () => {
   let p1SawGrunt = false
   let p0: { grunt?: Entity; bunker?: Entity }[] = []
   const hitsOnP1: string[] = []
@@ -242,7 +242,7 @@ test("驻扎（D-266）：钻进地堡后对手看不见、打不到，从地堡
   assert.ok(after && !after.inside && after.hp === 100, "地堡没了，兵在原地附近、满血")
 })
 
-test("格式检查（D-266）：单位最大 3×3，层、探测、状态、驻扎、能打哪一层的写法", () => {
+test("格式检查（D-269）：单位最大 3×3，层、探测、状态、驻扎、能打哪一层的写法", () => {
   const base = mini([])
   const check = (types: Record<string, unknown>) => checkRulesetData({ ...base, types: { ...TYPES, ...types } } as never, ["setup", "objectives", "result", "timeUp"])
   assert.deepEqual(check({}), [])

@@ -18,7 +18,7 @@ export const RULES_HARD = {
 const SHAPES = ["circle", "square", "triangle", "diamond", "hex"]
 const LAYERS = ["ground", "air", "under"]
 
-/** 攻击的写法：伤害、射程、冷却、溅射、命中率、克制倍数，能打哪一层、打一下就没了（D-266） */
+/** 攻击的写法：伤害、射程、冷却、溅射、命中率、克制倍数，能打哪一层、打一下就没了（D-269） */
 function checkAttack(a: unknown, at: string, names: Set<string>, bad: (msg: string) => void): void {
   if (!isObj(a) || !isInt(a.damage, 0) || !isInt(a.range, 1, 16) || !isInt(a.cooldown, 1)) bad(`${at}.attack 要写成 { damage ≥ 0, range 1～16, cooldown ≥ 1 }（整数）`)
   else if (a.splash !== undefined && !isInt(a.splash, 1, 3)) bad(`${at}.attack.splash（溅射）要是 1～3 的整数`)
@@ -111,10 +111,10 @@ export function checkRulesetData(d: unknown, callbacks: string[]): string[] {
         bad(`${at}.kind 要是 unit、building、resource 之一`)
         continue
       }
-      // 单位最大 3×3（D-266：大型单位）
+      // 单位最大 3×3（D-269：大型单位）
       const side = kind === "unit" ? 3 : RULES_HARD.buildingSide
       for (const k of ["w", "h"]) if (s[k] !== undefined && !isInt(s[k], 1, side)) bad(`${at}.${k} 要是 1～${side} 的整数${kind === "unit" ? "（单位最大 3×3）" : ""}`)
-      // 层、探测、状态、驻扎（D-266）
+      // 层、探测、状态、驻扎（D-269）
       if (s.layer !== undefined && (kind !== "unit" || !LAYERS.includes(s.layer as string))) bad(`${at}.layer：只有单位能写，要是 ${LAYERS.join("、")} 之一`)
       if (s.detect !== undefined && !isInt(s.detect, 0, 16)) bad(`${at}.detect（探测半径）要是 0～16 的整数`)
       if (s.garrison !== undefined) {

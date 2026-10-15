@@ -76,14 +76,14 @@ export function resolveType(name: string, s: TypeSpec): TypeDef {
   }
 }
 
-/** 换到某个状态（D-266）的数值：moveTicks、sight、attack、layer 换成那个状态的 */
+/** 换到某个状态（D-269）的数值：moveTicks、sight、attack、layer 换成那个状态的 */
 export function modeDef(base: TypeDef, mode: string): TypeDef {
   const m = base.modes.find((x) => x.id === mode)
   if (!m || m === base.modes[0]) return base
   return { ...base, moveTicks: m.moveTicks, sight: m.sight, attack: m.attack, layer: m.layer }
 }
 
-/** 攻击能不能打这一层（D-266）：不写 hits 是只打地面；地下的算地面 */
+/** 攻击能不能打这一层（D-269）：不写 hits 是只打地面；地下的算地面 */
 export function hitsLayer(atk: NonNullable<TypeDef["attack"]>, layer: TypeDef["layer"]): boolean {
   return (atk.hits ?? ["ground"]).includes(layer === "air" ? "air" : "ground")
 }
@@ -234,7 +234,7 @@ export class World implements SetupContext, RuleContext {
   status = ""
   /** 每个玩家的视野格（tick 开始时算） */
   vis: Uint8Array[] = []
-  /** 每个玩家（按队伍共用）的探测格（D-266，有地下单位的规则包才算） */
+  /** 每个玩家（按队伍共用）的探测格（D-269，有地下单位的规则包才算） */
   det: Uint8Array[] = []
   /** 规则包里有没有空中、地下的单位，有没有几种状态、能驻扎的（没有的话相关的结算都跳过） */
   readonly hasOffGrid: boolean
@@ -359,7 +359,7 @@ export class World implements SetupContext, RuleContext {
   }
 
   canPlace(def: TypeDef, x: number, y: number): boolean {
-    // 空中单位（D-266）：只要整个占地在地图里
+    // 空中单位（D-269）：只要整个占地在地图里
     if (def.kind === "unit" && def.layer === "air") return this.inBounds(x, y) && this.inBounds(x + def.w - 1, y + def.h - 1)
     for (let yy = y; yy < y + def.h; yy++)
       for (let xx = x; xx < x + def.w; xx++) {
@@ -370,7 +370,7 @@ export class World implements SetupContext, RuleContext {
     return true
   }
 
-  /** 占不占地面的格子（D-266）：空中、地下的单位和驻扎在建筑里的单位不占 */
+  /** 占不占地面的格子（D-269）：空中、地下的单位和驻扎在建筑里的单位不占 */
   onGrid(e: EntityState): boolean {
     return e.def.kind !== "unit" || (e.def.layer === "ground" && e.inside === 0)
   }
@@ -494,7 +494,7 @@ export class World implements SetupContext, RuleContext {
     e.alive = false
     this.occupy(e, 0)
     this.ents.delete(e.id)
-    // 驻扎（D-266）：在里面的被放到旁边（建筑的占地已经空出来了），放不下的跟着死；自己在里面的从建筑里拿掉
+    // 驻扎（D-269）：在里面的被放到旁边（建筑的占地已经空出来了），放不下的跟着死；自己在里面的从建筑里拿掉
     if (e.inside) {
       const b = this.ents.get(e.inside)
       if (b) b.cargo = b.cargo.filter((id) => id !== e.id)
@@ -521,7 +521,7 @@ export class World implements SetupContext, RuleContext {
     }
   }
 
-  /** 单位钻进建筑（D-266）：不占格子、位置记成建筑左上角，命令变 idle */
+  /** 单位钻进建筑（D-269）：不占格子、位置记成建筑左上角，命令变 idle */
   board(u: EntityState, b: EntityState): void {
     this.occupy(u, 0)
     u.inside = b.id
@@ -656,7 +656,7 @@ export class World implements SetupContext, RuleContext {
   // ---------- 视野 ----------
 
   computeVisibility(): void {
-    // 驻扎在建筑里的单位从建筑的占地算视野、探测（D-266）
+    // 驻扎在建筑里的单位从建筑的占地算视野、探测（D-269）
     const rectOf = (e: EntityState) => (e.inside ? (this.ents.get(e.inside) ?? e) : e)
     if (this.hasUnder) {
       for (const d of new Set(this.det)) d.fill(0)
@@ -667,7 +667,7 @@ export class World implements SetupContext, RuleContext {
     for (const e of this.ents.values()) if (e.owner >= 0) markSight(this.vis[e.owner], this.width, this.height, rectOf(e), e.def.sight)
   }
 
-  /** player 那一队探测得到 e 吗（D-266：地下的东西要在探测范围里） */
+  /** player 那一队探测得到 e 吗（D-269：地下的东西要在探测范围里） */
   detectedBy(player: number, e: EntityState): boolean {
     return player >= 0 && rectSeen(this.det[player], this.width, e)
   }
@@ -680,7 +680,7 @@ export class World implements SetupContext, RuleContext {
   visibleTo(player: number, e: EntityState): boolean {
     // 中立实体（规则包指挥的野怪）什么都看得见
     if (player < 0 || this.isAlly(e.owner, player) || e.def.kind === "resource") return true
-    // 驻扎在建筑里的看不见；地下的要探测到（D-266）
+    // 驻扎在建筑里的看不见；地下的要探测到（D-269）
     if (e.inside) return false
     if (e.def.layer === "under" && !this.detectedBy(player, e)) return false
     return !this.rules.fog || rectSeen(this.vis[player], this.width, e)
@@ -889,7 +889,7 @@ export class World implements SetupContext, RuleContext {
 
   // ---------- 局中改数值（D-153） ----------
 
-  /** 这类实体在某个状态下没被改过的数值（D-266；第一个状态就是 world.types 里那一份） */
+  /** 这类实体在某个状态下没被改过的数值（D-269；第一个状态就是 world.types 里那一份） */
   private modeCache = new Map<string, TypeDef>()
   baseDef(type: string, mode: string): TypeDef {
     const base = this.types[type]
@@ -914,7 +914,7 @@ export class World implements SetupContext, RuleContext {
     return ep ? applyPatch(d, ep) : d
   }
 
-  /** 换好状态（D-266）：换数值；层变了要改占格（回到地面的那一格被占着时返回 false，等下一 tick 再试） */
+  /** 换好状态（D-269）：换数值；层变了要改占格（回到地面的那一格被占着时返回 false，等下一 tick 再试） */
   applyMode(e: EntityState, mode: string): boolean {
     const was = this.onGrid(e)
     const next = this.defFor(e.owner, e.type, e.id, mode)

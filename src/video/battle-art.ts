@@ -9,7 +9,7 @@ export interface BattleType {
   splash?: number
   /** Artwork shipped with the ruleset (look.art, D-233); the SVG text is already inlined in the replay. */
   art?: BattleArtLayers
-  /** Layer (D-266): air units hover with a ground shadow, buried (under) ones are drawn translucent. */
+  /** Layer (D-269): air units hover with a ground shadow, buried (under) ones are drawn translucent. */
   layer?: string
 }
 
@@ -425,7 +425,7 @@ export function createBattleArt() {
     const r=role(t)
     // A ruleset overlay (a crown, a banner) usually sticks out above the platform figure.
     const extra=t.art?.over||t.art?.sprite?.05:0
-    // Air units (D-266) hover above their tile, so their bars sit higher too.
+    // Air units (D-269) hover above their tile, so their bars sit higher too.
     return t.kind!=="unit"?0:extra+(t.layer==="air"?.42:0)+(r==="cavalry"?.50:r==="scout"?.36:r==="soldier"||r==="infantry"?.35:r==="worker"?.25:r==="spearman"||r==="archer"?.30:r==="musketeer"?.32:.10)
   }
 
@@ -438,17 +438,17 @@ export function createBattleArt() {
     g.lineJoin = "round"
     const a = t.art
     if (t.kind === "unit") {
-      // Large units (D-266, 2×2 mechs and ships) are the same figure scaled up to their footprint.
+      // Large units (D-269, 2×2 mechs and ships) are the same figure scaled up to their footprint.
       const k = Math.min(w, h)
       if (k > 1) g.scale(k, k)
       // All mobile units share an upright side view, fixed ground plane and left/right facing.
       const mounted = ["cavalry","scout","wagon","cannon","animal","worker"].includes(r)
       if (t.layer === "air") {
-        // Air (D-266): a soft shadow on the ground, the craft drawn well above it.
+        // Air (D-269): a soft shadow on the ground, the craft drawn well above it.
         ellipse(g, .035, .4, .42, .1, "rgba(5,12,12,.28)")
         g.translate(0, -.42)
       } else ellipse(g, .035, .38, mounted && r !== "worker" ? .56 : .33, .14, "rgba(5,12,12,.35)")
-      // Buried (D-266): half see-through, like it is under the dirt.
+      // Buried (D-269): half see-through, like it is under the dirt.
       if (t.layer === "under") g.globalAlpha *= .5
       if (!a?.sprite && !mounted) infantry(g,r,color,pose,a)
       else {

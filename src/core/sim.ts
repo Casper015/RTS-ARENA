@@ -1,5 +1,5 @@
 // 每 tick 的结算：技能冷却和光环 → 换状态 → 生产 → 战斗（同时结算）→ 死亡 → 被动（回血）→ 移动（随机先后）→ 驻扎 → 建造 → 采集
-// 眩晕中的单位（ctx.stun，D-207）不打、不走、不建造、不采集；正在换状态的（D-266）不打、不走
+// 眩晕中的单位（ctx.stun，D-207）不打、不走、不建造、不采集；正在换状态的（D-269）不打、不走
 import { flowStep, UNREACHABLE } from "./nav.ts"
 import { attackable, buffedDamage, hitsLayer, rectDist, type World } from "./world.ts"
 import type { EntityState, Rect } from "./types.ts"
@@ -34,7 +34,7 @@ export function step(w: World): void {
   gathering(w)
 }
 
-/** 这一 tick 不占格子的单位（D-266：空中、地下的；驻扎在建筑里的不算，它们不能被打），找目标时另外扫一遍 */
+/** 这一 tick 不占格子的单位（D-269：空中、地下的；驻扎在建筑里的不算，它们不能被打），找目标时另外扫一遍 */
 let offGrid: EntityState[] = []
 
 function listOffGrid(w: World): EntityState[] {
@@ -43,7 +43,7 @@ function listOffGrid(w: World): EntityState[] {
   return out
 }
 
-// ---------- 换状态（D-266） ----------
+// ---------- 换状态（D-269） ----------
 
 /** 切换倒计时；到了就换数值（回到地面的那一格被占着就等下一 tick） */
 function switching(w: World): void {
@@ -55,7 +55,7 @@ function switching(w: World): void {
   }
 }
 
-// ---------- 驻扎（D-266） ----------
+// ---------- 驻扎（D-269） ----------
 
 /** 下了 enter 命令、走到建筑旁边的单位钻进去；建筑没了、满了就停下 */
 function boarding(w: World): void {
@@ -173,7 +173,7 @@ function production(w: World): void {
 
 // ---------- 战斗 ----------
 
-/** 攻击打得到这一层吗（D-266）：空中的要 hits 里有 air；地下的要先探测到（算地面） */
+/** 攻击打得到这一层吗（D-269）：空中的要 hits 里有 air；地下的要先探测到（算地面） */
 export function layerOk(w: World, e: EntityState, o: EntityState): boolean {
   const atk = e.def.attack
   if (!atk) return false
@@ -231,13 +231,13 @@ function bestEnemyWithin(w: World, e: EntityState, radius: number, neutral = fal
       consider(w.ents.get(id)!)
     }
   }
-  // 空中、地下的单位不占格子（D-266）
+  // 空中、地下的单位不占格子（D-269）
   for (const o of offGrid) if (o.alive) consider(o)
   return best ?? side
 }
 
 function attackTarget(w: World, e: EntityState): EntityState | null {
-  // 驻扎在建筑里的（D-266）：从建筑的占地开火，射程加 rangeBonus
+  // 驻扎在建筑里的（D-269）：从建筑的占地开火，射程加 rangeBonus
   const b = e.inside ? w.ents.get(e.inside) : undefined
   if (e.inside && !b) return null
   const from: Rect = b ?? e
@@ -282,7 +282,7 @@ function combat(w: World): void {
   }
   // 先全部算完再扣血：同一 tick 互相攻击的双方都能打出伤害
   const splashed: EntityState[] = []
-  /** 打一下就没了的（D-266，地雷这类） */
+  /** 打一下就没了的（D-269，地雷这类） */
   const spent: EntityState[] = []
   for (let i = 0; i < hits.length; i += 2) {
     const a = hits[i]
@@ -369,7 +369,7 @@ interface Goal {
   field?: () => Int32Array
   /** 追会动的目标 */
   chase?: { target: EntityState; range: number }
-  /** 要走到离 rect 不超过 range 的地方（空中、大型单位直接用它，D-266） */
+  /** 要走到离 rect 不超过 range 的地方（空中、大型单位直接用它，D-269） */
   rect: Rect
   range: number
 }
@@ -615,7 +615,7 @@ function arrived(e: EntityState, goal: Goal): StepResult {
   return "done"
 }
 
-/** 空中单位（D-266）：不看地形和别的单位，每步往离目标更近的方向走一格，一样近随机挑 */
+/** 空中单位（D-269）：不看地形和别的单位，每步往离目标更近的方向走一格，一样近随机挑 */
 function stepAir(w: World, e: EntityState, goal: Goal): StepResult {
   const d = rectDist(e, goal.rect)
   if (d <= goal.range) return arrived(e, goal)
@@ -630,7 +630,7 @@ function stepAir(w: World, e: EntityState, goal: Goal): StepResult {
   return doMove(w, e, n === 1 ? pick[0] : pick[w.simRng.int(n)])
 }
 
-/** 大型地面单位（D-266）：按占地算的流场走一步（整块都要站得下）；被别的单位挡住就等，不换位、不绕行 */
+/** 大型地面单位（D-269）：按占地算的流场走一步（整块都要站得下）；被别的单位挡住就等，不换位、不绕行 */
 function stepBig(w: World, e: EntityState, goal: Goal): StepResult {
   const r = goal.rect
   const key = goal.chase ? `c${r.x},${r.y},${r.w},${r.h}r${goal.range}` : goal.key

@@ -58,20 +58,20 @@ export interface StatPatch {
 /** 规则包里定义实体类型：除 kind 和 look 外都有默认值 */
 export interface TypeSpec {
   kind: TypeDef["kind"]
-  /** 默认 1（单位最大 3，D-266：大型单位） */
+  /** 默认 1（单位最大 3，D-269：大型单位） */
   w?: number
   /** 默认 1 */
   h?: number
-  /** 在哪一层（D-266，只有单位能写）：ground（默认）、air（空中，飞过一切、不挡路）、under（地下，不挡路，对手要探测到才看得见） */
+  /** 在哪一层（D-269，只有单位能写）：ground（默认）、air（空中，飞过一切、不挡路）、under（地下，不挡路，对手要探测到才看得见） */
   layer?: TypeDef["layer"]
-  /** 探测半径（D-266）：这个范围里对手地下的东西看得见、打得到 */
+  /** 探测半径（D-269）：这个范围里对手地下的东西看得见、打得到 */
   detect?: number
   /**
-   * 几种状态（D-266，只有单位能写）：第一个是刚造出来时的状态，只写 id、name（数值就是类型上写的那些）；
+   * 几种状态（D-269，只有单位能写）：第一个是刚造出来时的状态，只写 id、name（数值就是类型上写的那些）；
    * 后面的写和第一个不一样的数值（没写的用类型上的），switchTicks 是换到这个状态要几 tick（第一个的 switchTicks 是从别的状态换回来要几 tick）
    */
   modes?: ModeSpec[]
-  /** 能驻扎单位（D-266，只有建筑能写）：types 不写是所有能移动的地面单位，rangeBonus 不写是 0 */
+  /** 能驻扎单位（D-269，只有建筑能写）：types 不写是所有能移动的地面单位，rangeBonus 不写是 0 */
   garrison?: { capacity: number; types?: string[]; rangeBonus?: number }
   /** 默认 0（不能被攻击） */
   maxHp?: number
@@ -99,7 +99,7 @@ export interface TypeSpec {
   look: Look
 }
 
-/** 规则包写的一种状态（D-266）：id、name 必写，switchTicks 不写是 0，别的不写用类型上的数值；look 是这个状态下的样子（不写用类型的） */
+/** 规则包写的一种状态（D-269）：id、name 必写，switchTicks 不写是 0，别的不写用类型上的数值；look 是这个状态下的样子（不写用类型的） */
 export type ModeSpec = Pick<ModeDef, "id" | "name"> & Partial<Omit<ModeDef, "id" | "name">> & { look?: Partial<Pick<Look, "label" | "art">> }
 
 /** 规则包写的技能：id、name、cooldown、desc 必写，其余有默认值（见 SkillDef） */
@@ -482,12 +482,12 @@ export interface EntityState extends RuleEntity {
   lastCombat: number
   /** 眩晕到第几 tick（不含；D-207），没眩晕是 0 */
   stunUntil: number
-  /** 现在的状态 id（D-266，没有 modes 的类型是 ""） */
+  /** 现在的状态 id（D-269，没有 modes 的类型是 ""） */
   mode: string
   /** 正在换到的状态（null 是没在换）和还要几 tick */
   switchTo: string | null
   switchLeft: number
-  /** 驻扎在哪座建筑里（D-266），0 是没有 */
+  /** 驻扎在哪座建筑里（D-269），0 是没有 */
   inside: number
   /** 能驻扎的建筑里面的单位 id */
   cargo: number[]
@@ -540,9 +540,9 @@ export interface EntSnap {
   bf?: string[]
   /** Production order and remaining ticks; undefined in older replays, [] means idle. */
   queue?: { type: string; ticksLeft: number }[]
-  /** 现在的状态 id（D-266，不是第一个状态才写） */
+  /** 现在的状态 id（D-269，不是第一个状态才写） */
   md?: string
-  /** 驻扎在哪座建筑里（D-266，有才写） */
+  /** 驻扎在哪座建筑里（D-269，有才写） */
   in?: number
 }
 
@@ -596,9 +596,9 @@ export interface Frame {
   bp?: number[]
   /** [id, 身上增益的名字（null 是没有了）]：增益有变化的实体（D-186） */
   bf?: [number, string[] | null][]
-  /** [id, 状态 id（null 是回到第一个状态）]：状态换好了的实体（D-266） */
+  /** [id, 状态 id（null 是回到第一个状态）]：状态换好了的实体（D-269） */
   md?: [number, string | null][]
-  /** [id, 驻扎的建筑 id（0 是出来了）, ...]（D-266） */
+  /** [id, 驻扎的建筑 id（0 是出来了）, ...]（D-269） */
   in?: number[]
   /** 这一 tick 被动回血的 [id, 回了多少, ...]（D-190） */
   heal?: number[]
@@ -640,7 +640,7 @@ export interface Replay {
   /** walkable：每种地形能不能走（D-167 起记下，战报算矿旁边站得下几个用） */
   map: { width: number; height: number; terrain: string[]; colors: Record<string, string>; walkable?: Record<string, boolean> }
   /** sight 是视野半径、cost 是造价、worker 表示能采集或建造（老回放没有）；按视野看回放、战报用 */
-  types: Record<string, { kind: TypeDef["kind"]; w: number; h: number; maxHp: number; moveTicks: number; sight?: number; cost?: TypeDef["cost"]; worker?: boolean; /** D-145 起记下（vs 是克制倍数，D-166） */ attack?: { damage: number; range: number; cooldown: number; vs?: Partial<Record<string, number>>; splash?: number; /** 命中率（D-257，百分数，有才写） */ accuracy?: number }; /** D-148 起记下：能不能采集、能建什么 */ gather?: boolean; builds?: string[]; /** D-167 起记下：生产用时、能生产什么（战报算兵营利用率） */ buildTicks?: number; produces?: string[]; /** D-196 起记下（不是 1 才写）：同时造几个 */ parallel?: number; /** D-186 起记下（有才写）：技能、光环、被动 */ skills?: SkillDef[]; auras?: AuraDef[]; passives?: PassiveDef[]; /** D-266 起记下（有才写）：层、探测、状态、驻扎 */ layer?: "air" | "under"; detect?: number; modes?: (ModeDef & { look?: Partial<Pick<Look, "label" | "art">> })[]; garrison?: GarrisonDef; look: Look }>
+  types: Record<string, { kind: TypeDef["kind"]; w: number; h: number; maxHp: number; moveTicks: number; sight?: number; cost?: TypeDef["cost"]; worker?: boolean; /** D-145 起记下（vs 是克制倍数，D-166） */ attack?: { damage: number; range: number; cooldown: number; vs?: Partial<Record<string, number>>; splash?: number; /** 命中率（D-257，百分数，有才写） */ accuracy?: number }; /** D-148 起记下：能不能采集、能建什么 */ gather?: boolean; builds?: string[]; /** D-167 起记下：生产用时、能生产什么（战报算兵营利用率） */ buildTicks?: number; produces?: string[]; /** D-196 起记下（不是 1 才写）：同时造几个 */ parallel?: number; /** D-186 起记下（有才写）：技能、光环、被动 */ skills?: SkillDef[]; auras?: AuraDef[]; passives?: PassiveDef[]; /** D-269 起记下（有才写）：层、探测、状态、驻扎 */ layer?: "air" | "under"; detect?: number; modes?: (ModeDef & { look?: Partial<Pick<Look, "label" | "art">> })[]; garrison?: GarrisonDef; look: Look }>
   /** 有没有战争迷雾（老回放没有） */
   fog?: boolean
   /** 同队共用一份资源（D-245 起记下，有才写）：每个队友记的资源都是整队的 */

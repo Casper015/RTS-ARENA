@@ -126,7 +126,7 @@ export function unitTable(rules: Ruleset): string {
   return rows.join("\n")
 }
 
-/** 层、能打哪一层、探测、几种状态、驻扎、大型单位（D-266）：有用到的才写 */
+/** 层、能打哪一层、探测、几种状态、驻扎、大型单位（D-269）：有用到的才写 */
 function layerText(defs: TypeDef[]): string {
   const out: string[] = []
   const atk = (a: TypeDef["attack"]) =>
@@ -150,7 +150,7 @@ function layerText(defs: TypeDef[]): string {
     const g = d.garrison!
     out.push(`- **\`${d.name}\` 能驻扎**：最多 ${g.capacity} 个（${g.types.length ? g.types.map((t) => "`" + t + "`").join("、") : "能走的 1×1 地面单位"}），\`cmd.enter(单位, 建筑)\` 进、\`cmd.unload(建筑)\` 全部出来；在里面的对手看不见、打不到，从建筑开火射程 +${g.rangeBonus}。`)
   }
-  return out.length ? ["层、状态、驻扎（D-266，见平台说明里的「层、大型单位、状态、驻扎」）：", ...out].join("\n") : ""
+  return out.length ? ["层、状态、驻扎（D-269，见平台说明里的「层、大型单位、状态、驻扎」）：", ...out].join("\n") : ""
 }
 
 const pct = (n: number) => (n > 0 ? `+${n}%` : `${n}%`)

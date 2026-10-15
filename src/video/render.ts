@@ -16,6 +16,8 @@ import { excitement, gameFacts } from "../cli/highlights.ts"
 import { fighterTest, groupBattles, isRout } from "../cli/battles.ts"
 import { BIG_BATTLE, deathsOf, FIGHT_SPEED, fightTicks, fightWindows } from "./fights.ts"
 import { zoomBattleTicks } from "./combat.ts"
+import { videoDimensions, videoEncoderConfig } from "./encoding.ts"
+import { VideoOutput } from "./output.ts"
 // 测试和别的模块原来从这里拿（D-255 挪到 fights.ts）
 export { fightWindows }
 import { importRuleset, listRulesets } from "../cli/catalog.ts"
@@ -322,7 +324,7 @@ function typeDetail(t: Replay["types"][string], spec?: TypeSpecs[string], nameOf
   if (cost) parts.push(`${cost} 金`)
   if (t.maxHp) parts.push(`${t.maxHp} 血`)
   const attack = t.attack ?? spec?.attack
-  // 层、能打哪一层、几种状态、驻扎、探测（D-266）：这些是这种东西最特别的地方，排在前面
+  // 层、能打哪一层、几种状态、驻扎、探测（D-269）：这些是这种东西最特别的地方，排在前面
   const special: string[] = []
   if (t.layer === "air") special.push("空中")
   if (t.modes?.length) special.push(t.modes.map((m) => m.name).join("/"))
@@ -502,7 +504,7 @@ export function replayScene(
     const t = replay.types[name]
     return { name, kind: t.kind, shape: t.look?.shape ?? "circle", label: t.look?.label ?? "", color: t.look?.color ?? null, worker: t.worker === true, base: name === baseType, range: t.attack?.range, splash: t.attack?.splash, art: t.look?.art, layer: t.layer as string | undefined }
   })
-  // 换了状态的实体（D-266）：每种「类型@状态」另排一个下标，带那个状态的样子、射程和层
+  // 换了状态的实体（D-269）：每种「类型@状态」另排一个下标，带那个状态的样子、射程和层
   const modeIndex = new Map<string, number>()
   for (const [i, name] of typeNames.entries())
     for (const m of (replay.types[name].modes ?? []).slice(1)) {
@@ -702,7 +704,7 @@ export function replayScene(
     const knockFx: number[] = []
     for (const e of state.ents.values()) {
       const ty = replay.types[e.type]
-      // 驻扎在建筑里的（D-266）不画
+      // 驻扎在建筑里的（D-269）不画
       if (!ty || e.in) continue
       const max = e.st?.maxHp ?? ty.maxHp
       const hp = ty.kind === "resource" || !max ? 100 : Math.max(0, Math.min(100, Math.round((100 * e.hp) / max)))
@@ -1020,6 +1022,9 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
   const errs = checkScript(o.script, series)
   if (errs.length) throw new Error(`脚本有问题：\n- ${errs.join("\n- ")}`)
   const fps = o.fps ?? 30
+  const dimensions = videoDimensions(o.vertical)
+  const width = o.width ?? dimensions.width, height = o.height ?? dimensions.height
+  const encoding = videoEncoderConfig(width, height, fps)
   // 平台自带的规则包：读一下单位数值（老回放里没记攻击数据）
   let specs: TypeSpecs | undefined
   try {
@@ -1041,6 +1046,7 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
   const exe = findBrowser(o.browser)
   if (!exe) throw new Error("找不到 Chrome 或 Edge：视频要用本机的浏览器渲染。装一个，或者用 --browser <路径> / 环境变量 RTS_ARENA_BROWSER 指定")
   const browser = await launchBrowser(exe)
+  let output: VideoOutput | undefined
   const images: string[] = []
   const stem = o.out.replace(/\.mp4$/i, "")
   try {
@@ -1048,8 +1054,6 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
     await browser.evaluate(readFileSync(muxerFile, "utf8") + ";true")
     await browser.evaluate(`(${installVideoPage.toString()})(${createBattleArt.toString()});true`)
     await browser.evaluate(`__brand(${JSON.stringify(readFileSync(join(PKG_ROOT, "assets", "brand", "logo.svg"), "utf8"))})`)
-    const width = o.width ?? (o.vertical ? 1080 : 1920)
-    const height = o.height ?? (o.vertical ? 1920 : 1080)
     await browser.evaluate(`__size(${width}, ${height})`)
     // 选手的形象图（按联赛名字）：选手页的半身像、精彩对局里的头像都从它来
     for (const p of o.script.players) {
@@ -1093,8 +1097,17 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
       }
       return { file: null, seconds: total / fps, frames: total, bytes: 0, images, probe: null, timeline, sheet }
     }
-    // 码率按像素数算：1080p 约 8 Mbps
-    await browser.evaluate(`__init(${JSON.stringify({ fps, bitrate: Math.round((width * height * fps) / 7.8) })})`)
+    // 等级按尺寸和帧率选择，码率按像素数算：1080p30 约 8 Mbps，4K30 约 32 Mbps。
+    output = new VideoOutput(o.out)
+    const drain = async () => {
+      for (;;) {
+        const chunk = await browser.evaluate<{ position: number; data: string } | null>("__chunk()")
+        if (!chunk) return
+        output!.write(chunk.position, Buffer.from(chunk.data, "base64"))
+      }
+    }
+    await browser.evaluate(`__init(${JSON.stringify(encoding)}, ${total})`)
+    await drain()
     let done = 0
     for (const sc of scenes) {
       await browser.evaluate(`__scene(${JSON.stringify(sc.data)})`)
@@ -1103,17 +1116,16 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
         const batch: [number, ReplayFrame | null][] = []
         for (let j = i; j < Math.min(n, i + 10); j++) batch.push([j, sc.frame ? sc.frame(j) : null])
         await browser.evaluate(`__frames(${JSON.stringify(batch)})`)
+        await drain()
         done += batch.length
         o.onProgress?.(done, total)
       }
     }
     const size = await browser.evaluate<number>("__finish()")
-    const parts: Buffer[] = []
-    for (let k = 0; k * 3_000_000 < size; k++) parts.push(Buffer.from(await browser.evaluate<string>(`__chunk(${k})`), "base64"))
-    const bytes = Buffer.concat(parts)
-    writeFileSync(o.out, bytes)
+    await drain()
+    if (output.finish() !== size) throw new Error("视频输出文件大小与编码结果不一致")
     // 用浏览器把成品解一遍：时长、尺寸对不对，顺便截几张图
-    const probe = await browser.evaluate<{ duration: number; width: number; height: number; shots: string[] }>(`__probe(${JSON.stringify(check)})`)
+    const probe = await browser.evaluate<{ duration: number; width: number; height: number; shots: string[] }>(`__probe(${JSON.stringify(check)}, ${JSON.stringify(browser.serveFile(output.path))})`)
     if (check.length) mkdirSync(dirname(pstem), { recursive: true })
     cleanOld(pstem, "check")
     probe.shots.forEach((b64, k) => {
@@ -1121,8 +1133,9 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
       writeFileSync(file, Buffer.from(b64, "base64"))
       images.push(file)
     })
-    return { file: o.out, seconds: total / fps, frames: total, bytes: bytes.length, images, probe: { duration: probe.duration, width: probe.width, height: probe.height }, timeline }
+    output.commit()
+    return { file: o.out, seconds: total / fps, frames: total, bytes: size, images, probe: { duration: probe.duration, width: probe.width, height: probe.height }, timeline }
   } finally {
-    await browser.close()
+    try { await browser.close() } finally { output?.close() }
   }
 }

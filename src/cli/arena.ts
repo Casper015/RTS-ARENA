@@ -34,6 +34,7 @@ import { LeagueStats, statsText, type LeagueStatsJson } from "./league-stats.ts"
 import { excitement, finalScores, gameFacts, pickHighlights, type GameFacts, type Highlight } from "./highlights.ts"
 import { highlightPlayerWarnings, readSeries, scriptWarnings, videoBrief, type VideoScript } from "../video/brief.ts"
 import { idleHighlightWarnings, lintScript, renderLeagueVideo, timelineText } from "../video/render.ts"
+import { videoDimensions } from "../video/encoding.ts"
 import { createVideoWorkspace, readVideoConfig, VIDEO_CONFIG } from "../video/workspace.ts"
 import { BASELINE as TEMPLATE_BASELINE, GREEDY as TEMPLATE_GREEDY, INDEX as TEMPLATE_INDEX, RUSH as TEMPLATE_RUSH, writeRulesTemplate } from "./rules-template.ts"
 
@@ -58,10 +59,11 @@ const HELP = `用法：rts-arena <命令> [参数]
                                         建一个联赛视频目录（默认 league-video）：给大模型的说明 PROMPT.md、选手代码、几局战报、
                                         联赛数据、待填的 script.json；--portraits 是选手形象图的目录（按名字对应选手，选手页放半身像、精彩对局里主基地换成头像），--about 写用户补充的背景（外号对应哪个模型、以前的成绩……）。大模型写好脚本后在目录里运行 rts-arena video
   video-brief [联赛汇总] [--out 文件]   联赛视频的素材包（JSON，video-init 也会写一份）
-  video [联赛汇总] [--script 脚本.json] [--out 视频.mp4] [--lint] [--preview 秒,秒|auto] [--check 秒,秒|auto] [--vertical]
+  video [联赛汇总] [--script 脚本.json] [--out 视频.mp4] [--lint] [--preview 秒,秒|auto] [--check 秒,秒|auto] [--vertical] [--4k] [--fps N]
                                         按脚本渲染 1920×1080 的联赛视频（规则介绍（带平台署名）、排名和对局数据、每个参赛选手的介绍（名次倒序）接着他的一局高光对局、片尾署名）；
                                         --vertical 出 1080×1920 的竖屏版（段落一样，按竖屏排版），
-                                        用本机的 Chrome / Edge 渲染；每次都列出每段从第几秒到第几秒。--preview 只出这几秒的预览图
+                                        --4k 出 3840×2160，与 --vertical 一起用出 2160×3840；默认文件名加「-4K」，--fps 10～60（默认 30），
+                                        用本机的 Chrome / Edge 渲染，Windows 下优先使用可用的高性能显卡；每次都列出每段从第几秒到第几秒。--preview 只出这几秒的预览图
                                         （auto 是每段各一张，放在 preview/ 里），--check 出完视频后从成品里截图检查（auto 每段一张），
                                         --lint 只核对脚本、列出每段字数和时间表（不开浏览器、不出图）
                                         （在 video-init 建的目录里不用写参数；脚本怎么写见 video-init 生成的 PROMPT.md）
@@ -174,7 +176,7 @@ const OPTIONS: Record<string, Record<string, boolean>> = {
   map: { seed: false },
   "video-brief": { out: false },
   "video-init": { portraits: false, about: false },
-  video: { script: false, out: false, preview: false, check: false, browser: false, fps: false, lint: true, vertical: true },
+  video: { script: false, out: false, preview: false, check: false, browser: false, fps: false, lint: true, vertical: true, "4k": true },
 }
 
 function parseArgs(command: string | undefined, argv: string[]): { pos: string[]; opt: Record<string, string | true> } {
@@ -1599,9 +1601,12 @@ async function main(): Promise<void> {
         console.log(r.warnings.length ? `格式没问题，有 ${r.warnings.length} 条提醒（见上面）` : "格式没问题，也没有提醒")
         return
       }
-      // --vertical：竖屏版（D-183），默认文件名在横屏版后面加「-竖屏」
+      // 横竖屏和 4K 分别命名，保留已经导出的其他规格；显式 --out 按用户给的路径。
       const full = cfg ? cfg.out : file.replace(/\.series\.json$/, ".mp4")
-      const out = typeof opt.out === "string" ? opt.out : opt.vertical ? full.replace(/\.mp4$/i, "-竖屏.mp4") : full
+      const suffix = `${opt.vertical ? "-竖屏" : ""}${opt["4k"] ? "-4K" : ""}`
+      const out = typeof opt.out === "string" ? opt.out : full.replace(/\.mp4$/i, `${suffix}.mp4`)
+      const dimensions = videoDimensions(opt.vertical === true, opt["4k"] === true)
+      console.log(`输出规格：${dimensions.width}×${dimensions.height} · ${fps} fps`)
       const t0 = performance.now()
       let lastPct = -1
       try {
@@ -1613,6 +1618,7 @@ async function main(): Promise<void> {
           imagesDir: cfg ? "preview" : undefined,
           browser: typeof opt.browser === "string" ? opt.browser : undefined,
           fps,
+          ...dimensions,
           preview: opt.preview === "auto" ? "auto" : secs(opt.preview, "--preview"),
           check: secs(opt.check, "--check"),
           vertical: opt.vertical === true,
