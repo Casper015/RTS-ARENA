@@ -25,6 +25,10 @@ export interface Look {
 
 /** 规则包自带的素材（look.art，D-233） */
 export interface LookArt {
+  /** 可选的现代武器画面；只影响回放，不改变伤害、射程、弹道结算。 */
+  weapon?: "autocannon" | "siege-shell" | "missile" | "plasma" | "detonation"
+  /** 整张 SVG 的机械动作和附加灯光；不填保留平台原有动作。 */
+  motion?: "armored" | "tracked" | "walker" | "hover" | "burrow"
   /**
    * 打底用平台的哪种造型，不写按类型名猜。单位：worker、soldier（剑盾兵，盔上有本队颜色的缨）、infantry（同样的剑盾兵、盔上没缨，
    * 给规则包自己加头饰）、spearman、archer、cavalry、scout、cannon、wagon、animal；

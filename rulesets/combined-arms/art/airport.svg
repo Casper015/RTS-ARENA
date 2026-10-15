@@ -1,9 +1,38 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="-0.5 -0.5 1 1">
-  <!-- 机场：起降坪、塔台（按 3×2 拉伸）；currentColor 是所属玩家的颜色 -->
-  <rect x="-0.46" y="-0.1" width="0.62" height="0.5" rx="0.04" fill="#5c6463" stroke="#182123" stroke-width="0.03"/>
-  <path d="M-0.3 0.03 L-0.3 0.27 M-0.06 0.03 L-0.06 0.27 M-0.3 0.15 L-0.06 0.15" stroke="#e8e2d0" stroke-width="0.04"/>
-  <path d="M-0.42 -0.06 L0.12 -0.06 M-0.42 0.36 L0.12 0.36" stroke="currentColor" stroke-width="0.035" stroke-dasharray="0.06 0.05"/>
-  <rect x="0.22" y="-0.3" width="0.14" height="0.7" fill="#7d8583" stroke="#182123" stroke-width="0.025"/>
-  <path d="M0.16 -0.3 L0.42 -0.3 L0.38 -0.44 L0.2 -0.44 Z" fill="#9fe0ff" stroke="#182123" stroke-width="0.02"/>
-  <circle cx="0.29" cy="-0.47" r="0.03" fill="currentColor"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-0.56 -0.66 1.12 1.2">
+<defs>
+  <linearGradient id="armor" x2=".35" y2="1"><stop stop-color="#b0c5d2"/><stop offset=".42" stop-color="#60798d"/><stop offset="1" stop-color="#30465a"/></linearGradient>
+  <linearGradient id="dark" x2=".25" y2="1"><stop stop-color="#394f62"/><stop offset="1" stop-color="#111e2e"/></linearGradient>
+  <linearGradient id="team" x2=".2" y2="1"><stop stop-color="currentColor"/><stop offset="1" stop-color="currentColor" stop-opacity=".48"/></linearGradient>
+  <linearGradient id="glass" x2=".5" y2="1"><stop stop-color="#edffff"/><stop offset=".35" stop-color="#79e6f5"/><stop offset="1" stop-color="#237695"/></linearGradient>
+  <radialGradient id="power"><stop stop-color="#eaffff"/><stop offset=".36" stop-color="#6ee6ff"/><stop offset="1" stop-color="#3291c5" stop-opacity=".12"/></radialGradient>
+</defs>
+<g transform="scale(.01)">
+  <path d="M-47-25-33-39 32-39 47-24 47 32 33 45-34 45-47 30Z" fill="url(#dark)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-47-25-33-39 32-39 47-24 33-10-33-10Z" fill="#6c8292" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-42 29-30 39H30L42 29" fill="none" stroke="#83a6b7" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M-44-20-30-35 30-35 44-19 43 32-42 32Z" fill="url(#dark)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-42-18-28-31 27-31 41-18 29-4-29-4Z" fill="url(#team)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-32-7 25-7 36 4 34 29-34 29-39 3Z" fill="#364f61" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-24 0 18 0 26 7 25 23-26 23-30 6Z" fill="#1b2e40" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-14 5v14M8 5v14M-14 12H8" fill="none" stroke="#97b8c5" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M-41-27-31-42-18-42-9-27-16-15-37-15Z" fill="url(#armor)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-34-39-20-39-16-29-23-24-34-25Z" fill="url(#glass)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M29-14 39-25 45-17 45 24 34 30Z" fill="url(#team)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-38-26-39-53M-43-50-33-50" fill="none" stroke="#c2d6df" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="-39" cy="-54" r="2" fill="#ffc16c"/>
+  <rect x="-37" y="29" width="8" height="2" rx="0.5" fill="#9beef5" stroke="#0c1826" stroke-width="1.7"/>
+  <rect x="-16" y="29" width="8" height="2" rx="0.5" fill="#9beef5" stroke="#0c1826" stroke-width="1.7"/>
+  <rect x="5" y="29" width="8" height="2" rx="0.5" fill="#9beef5" stroke="#0c1826" stroke-width="1.7"/>
+  <rect x="26" y="29" width="8" height="2" rx="0.5" fill="#9beef5" stroke="#0c1826" stroke-width="1.7"/>
+  <path d="M-24 -4h3l-3 6h-3Z" fill="#e9ba58" stroke="none" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-19 -4h3l-3 6h-3Z" fill="#e9ba58" stroke="none" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-14 -4h3l-3 6h-3Z" fill="#e9ba58" stroke="none" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-9 -4h3l-3 6h-3Z" fill="#e9ba58" stroke="none" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-4 -4h3l-3 6h-3Z" fill="#e9ba58" stroke="none" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M1 -4h3l-3 6h-3Z" fill="#e9ba58" stroke="none" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M6 -4h3l-3 6h-3Z" fill="#e9ba58" stroke="none" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M11 -4h3l-3 6h-3Z" fill="#e9ba58" stroke="none" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M16 -4h3l-3 6h-3Z" fill="#e9ba58" stroke="none" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-39 12-34 10M34 12 40 10" fill="none" stroke="#d5e7ea" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
 </svg>

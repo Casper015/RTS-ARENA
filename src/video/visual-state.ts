@@ -1,5 +1,19 @@
 import type { EntSnap, Frame, Replay, RuleFx } from "../core/types.ts"
-import type { BattlePose } from "./battle-art.ts"
+import type { BattlePose, BattleType } from "./battle-art.ts"
+
+/** Resolve presentation from the active mode for both the live viewer and exported video. */
+export function battleTypeOf(replay: Replay, name: string, md?: string): BattleType {
+  const t = replay.types[name], m = md ? t.modes?.find(m => m.id === md) : undefined
+  return { name, kind: t.kind, label: m?.look?.label ?? t.look?.label, shape: t.look?.shape, worker: t.worker,
+    range: m ? m.attack?.range : t.attack?.range, splash: m ? m.attack?.splash : t.attack?.splash,
+    art: m?.look?.art ? { ...t.look?.art, ...m.look.art } : t.look?.art, layer: m?.layer ?? t.layer }
+}
+
+/** Mode switches resolve before combat; the replay delta has not been applied by the video renderer yet. */
+export function shotTypeOf(replay: Replay, frame: Frame, e: EntSnap): BattleType {
+  const changed = frame.md?.find(([id]) => id === e.id)
+  return battleTypeOf(replay, e.type, changed ? changed[1] ?? undefined : e.md)
+}
 
 function distance(replay: Replay, a: EntSnap, b: EntSnap): number {
   const at = replay.types[a.type], bt = replay.types[b.type]
@@ -86,7 +100,7 @@ export function legacySplashEffects(replay: Replay, frame: Frame, entities: Map<
   for (let i = 0; i < shots.length; i += 2) {
     const source = entities.get(shots[i]) ?? frame.spawn?.find((e) => e.id === shots[i])
     const target = entities.get(shots[i + 1]) ?? frame.spawn?.find((e) => e.id === shots[i + 1])
-    const radius = source && replay.types[source.type]?.attack?.splash
+    const radius = source && shotTypeOf(replay, frame, source).splash
     const type = target && replay.types[target.type]
     if (!radius || !target || !type) continue
     // Combat resolves before movement. Callers supply the positions at the start of this tick.

@@ -1,10 +1,35 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="-0.65 -0.45 1.3 0.8">
-  <!-- 空中战舰：长船身、舰桥、前炮、尾部引擎（平台按 2×2 放大、画在空中）；currentColor 是所属玩家的颜色 -->
-  <path d="M-0.56 0.04 L-0.45 -0.13 L0.36 -0.13 L0.6 0 L0.36 0.15 L-0.45 0.15 Z" fill="#6f7a7a" stroke="#182123" stroke-width="0.03" stroke-linejoin="round"/>
-  <path d="M-0.43 -0.03 L0.42 -0.03 L0.5 0.02 L0.42 0.06 L-0.43 0.06 Z" fill="currentColor"/>
-  <rect x="-0.22" y="-0.3" width="0.26" height="0.18" rx="0.03" fill="currentColor" stroke="#182123" stroke-width="0.03"/>
-  <rect x="-0.17" y="-0.25" width="0.16" height="0.05" fill="#9fe0ff"/>
-  <path d="M0.16 -0.13 L0.44 -0.22" stroke="#3d4546" stroke-width="0.045" stroke-linecap="round"/>
-  <circle cx="-0.58" cy="-0.05" r="0.055" fill="#7fd8ff" stroke="#182123" stroke-width="0.02"/>
-  <circle cx="-0.58" cy="0.1" r="0.055" fill="#7fd8ff" stroke="#182123" stroke-width="0.02"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-0.82 -0.64 1.68 1.1">
+<defs>
+  <linearGradient id="armor" x2=".35" y2="1"><stop stop-color="#b0c5d2"/><stop offset=".42" stop-color="#60798d"/><stop offset="1" stop-color="#30465a"/></linearGradient>
+  <linearGradient id="dark" x2=".25" y2="1"><stop stop-color="#394f62"/><stop offset="1" stop-color="#111e2e"/></linearGradient>
+  <linearGradient id="team" x2=".2" y2="1"><stop stop-color="currentColor"/><stop offset="1" stop-color="currentColor" stop-opacity=".48"/></linearGradient>
+  <linearGradient id="glass" x2=".5" y2="1"><stop stop-color="#edffff"/><stop offset=".35" stop-color="#79e6f5"/><stop offset="1" stop-color="#237695"/></linearGradient>
+  <radialGradient id="power"><stop stop-color="#eaffff"/><stop offset=".36" stop-color="#6ee6ff"/><stop offset="1" stop-color="#3291c5" stop-opacity=".12"/></radialGradient>
+</defs>
+<g transform="scale(.01)">
+  <path d="M-46-29-31-37 8-31 29-15 66-8 76 2 58 13 22 20-9 32-46 24-61 9-60-13Z" fill="url(#dark)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-47-30-30-39 9-32 31-17 64-10 76 2 53 3 22-5-10-5-39-12Z" fill="url(#armor)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-32-25-9-29 17-17 41-10 22-5-13-7-37-14Z" fill="url(#team)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-38 11-8 4 24 10 50 7 64 11 43 21 10 24-10 34-45 26Z" fill="url(#team)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-12-18 0-34 16-32 32-20 21-8 0-6Z" fill="url(#dark)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M0-28 13-27 24-19 15-13 0-13Z" fill="url(#glass)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-50-32-41-44-9-38-4-28-17-20-49-24ZM-49 17-33 10-8 19-12 33-46 35-57 28Z" fill="url(#armor)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-44-38-14-34-10-29-20-25-47-28ZM-42 20-32 16-16 22-20 28-46 29Z" fill="url(#team)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <rect x="-58" y="-17" width="19" height="10" rx="3" fill="url(#dark)" stroke="#0c1826" stroke-width="1.7"/>
+  <rect x="-58" y="9" width="18" height="10" rx="3" fill="url(#dark)" stroke="#0c1826" stroke-width="1.7"/>
+  <rect x="-58" y="-15" width="5" height="6" rx="1" fill="url(#glass)" stroke="#0c1826" stroke-width="1.7"/>
+  <rect x="-58" y="11" width="5" height="6" rx="1" fill="url(#glass)" stroke="#0c1826" stroke-width="1.7"/>
+  <path d="M30-4 55-2 64 3 56 9 31 7Z" fill="url(#dark)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <circle cx="58" cy="3" r="7" fill="url(#power)"/>
+  <circle cx="58" cy="3" r="2" fill="#eaffff"/>
+  <path d="M-34 -18v10" fill="none" stroke="#0d1e2b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M-30 -18v10" fill="none" stroke="#0d1e2b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M-26 -18v10" fill="none" stroke="#0d1e2b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M-4 14 17 17 39 14M33-12 52-8" fill="none" stroke="#a1bbc8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="16" y="19" width="8" height="2" rx="0.5" fill="#9beef5" stroke="#0c1826" stroke-width="1.7"/>
+  <circle cx="-31" cy="-33" r="1.5" fill="#c0d1d6"/>
+  <circle cx="-37" cy="25" r="1.5" fill="#c0d1d6"/>
+  <circle cx="26" cy="-13" r="1.5" fill="#c0d1d6"/>
+  <circle cx="41" cy="9" r="1.5" fill="#c0d1d6"/>
+</g>
 </svg>

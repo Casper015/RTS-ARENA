@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-0.56 -0.66 1.12 1.2">
+<defs>
+  <linearGradient id="armor" x2=".35" y2="1"><stop stop-color="#b0c5d2"/><stop offset=".42" stop-color="#60798d"/><stop offset="1" stop-color="#30465a"/></linearGradient>
+  <linearGradient id="dark" x2=".25" y2="1"><stop stop-color="#394f62"/><stop offset="1" stop-color="#111e2e"/></linearGradient>
+  <linearGradient id="team" x2=".2" y2="1"><stop stop-color="currentColor"/><stop offset="1" stop-color="currentColor" stop-opacity=".48"/></linearGradient>
+  <linearGradient id="glass" x2=".5" y2="1"><stop stop-color="#edffff"/><stop offset=".35" stop-color="#79e6f5"/><stop offset="1" stop-color="#237695"/></linearGradient>
+  <radialGradient id="power"><stop stop-color="#eaffff"/><stop offset=".36" stop-color="#6ee6ff"/><stop offset="1" stop-color="#3291c5" stop-opacity=".12"/></radialGradient>
+</defs>
+<g transform="scale(.01)">
+  <path d="M-47-25-33-39 32-39 47-24 47 32 33 45-34 45-47 30Z" fill="url(#dark)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-47-25-33-39 32-39 47-24 33-10-33-10Z" fill="#6c8292" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-42 29-30 39H30L42 29" fill="none" stroke="#83a6b7" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M-41-17-22-35 29-35 43-20 40 30-39 30Z" fill="url(#dark)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-40-19-23-38 26-38 41-21 26-5-26-5Z" fill="url(#team)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-25-35 8-35 19-22 7-10-26-10-34-20Z" fill="url(#armor)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <rect x="-35" y="-2" width="68" height="31" rx="2" fill="url(#team)" stroke="#0c1826" stroke-width="1.7"/>
+  <rect x="-17" y="2" width="33" height="28" rx="1" fill="url(#dark)" stroke="#0c1826" stroke-width="1.7"/>
+  <path d="M-13 6H12M-13 12H12M-13 18H12M-13 24H12" fill="none" stroke="#678394" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M-5-30 5-30 11-22 5-15-5-15-11-22Z" fill="url(#dark)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M0-27v9M-4-22H4" fill="none" stroke="#a4eafa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="27" y="-31" width="13" height="23" rx="2" fill="url(#armor)" stroke="#0c1826" stroke-width="1.7"/>
+  <path d="M29 -27h14" fill="none" stroke="#0d1e2b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M29 -23h14" fill="none" stroke="#0d1e2b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M29 -19h14" fill="none" stroke="#0d1e2b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M29 -15h14" fill="none" stroke="#0d1e2b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M-40 29-21 29-18 40-39 40Z" fill="#566d7b" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M20 29 37 29 41 40 18 40Z" fill="#566d7b" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-14 30h3l-3 6h-3Z" fill="#e9ba58" stroke="none" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-9 30h3l-3 6h-3Z" fill="#e9ba58" stroke="none" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-4 30h3l-3 6h-3Z" fill="#e9ba58" stroke="none" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M1 30h3l-3 6h-3Z" fill="#e9ba58" stroke="none" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M6 30h3l-3 6h-3Z" fill="#e9ba58" stroke="none" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M11 30h3l-3 6h-3Z" fill="#e9ba58" stroke="none" stroke-width="2" stroke-linejoin="round"/>
+  <rect x="-31" y="-4" width="8" height="2" rx="0.5" fill="#9beef5" stroke="#0c1826" stroke-width="1.7"/>
+  <rect x="23" y="-4" width="8" height="2" rx="0.5" fill="#9beef5" stroke="#0c1826" stroke-width="1.7"/>
+  <circle cx="-32" cy="-21" r="1.5" fill="#c0d1d6"/>
+  <circle cx="20" cy="-26" r="1.5" fill="#c0d1d6"/>
+  <circle cx="-30" cy="21" r="1.5" fill="#c0d1d6"/>
+  <circle cx="27" cy="21" r="1.5" fill="#c0d1d6"/>
+</g>
+</svg>

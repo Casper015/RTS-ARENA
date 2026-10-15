@@ -3,7 +3,6 @@ import type { Replay } from "../../src/core/types.ts"
 import { applyFrame, ReplayModel, type State } from "./model.ts"
 import { initArena } from "./arena.ts"
 import { playerColor, Renderer } from "./render.ts"
-import { createBattleArt } from "../../src/video/battle-art.ts"
 import { trainingQueue } from "../../src/video/visual-state.ts"
 import type { BattleCamera } from "../../src/video/battle-camera.ts"
 import { directorTrack } from "../../src/video/fights.ts"
@@ -18,7 +17,6 @@ const speedSel = $<HTMLSelectElement>("speed")
 const povSel = $<HTMLSelectElement>("pov")
 
 const renderer = new Renderer()
-const art = createBattleArt()
 let model: ReplayModel | null = null
 let state: State | null = null
 /** 带小数的当前 tick（动画用） */
@@ -250,20 +248,15 @@ function updateUI(force = false): void {
             ? html`<span class="muted">回血</span><span>${renderer.healingAt(e.id, e.type, state.tick) ? "正在回血" : e.hp >= (e.st?.maxHp ?? info.maxHp) ? "满血" : "没在回血（出手或挨打后要歇一会儿）"}</span>`
             : ""
         }</div>`.s
-      const icon=$<HTMLCanvasElement>("entity-icon").getContext("2d")!
-      const scale=60/Math.max(1,info.w,info.h)
-      icon.translate(56-info.w*scale/2,60-info.h*scale/2);icon.scale(scale,scale)
-      art.entity(icon,{name:e.type,kind:info.kind,worker:info.worker,range:info.attack?.range,splash:info.attack?.splash},0,0,info.w,info.h,info.look?.color??hex(playerColor(e.owner)),{angle:0},e.bp??100)
+      renderer.drawIcon($<HTMLCanvasElement>("entity-icon"), e.type, e.owner, e.md, e.bp ?? 100)
       if(info.produces?.length || e.queue!==undefined) {
         const hidden=pov!==null&&(r.players[e.owner]?.team??e.owner)!==pov
         const queue=hidden?undefined:trainingQueue(r,e)
         const content=hidden?html`<p class="muted">敌方生产队列不可见</p>`:queue===undefined?html`<p class="muted">旧回放未记录生产队列</p>`:queue.length===0?html`<p class="muted">当前没有训练任务</p>`:html`<ol>${queue.map((q,i)=>html`<li class="${q.active?"training":"waiting"}"><canvas data-queue-type="${q.type}" width="80" height="80" aria-hidden="true"></canvas><div><b>${r.types[q.type]?.look?.name??names[q.type]??q.type}</b><small>${q.blocked?"训练完成 · 等待出口":q.active?`训练中 · 剩余 ${Math.ceil(q.ticksLeft/Math.max(1,r.tickRate))} 秒`:(e.bp??100)<100?"等待建筑完工":`排队中 · 第 ${i+1} 位`}</small><progress max="1" value="${q.progress}" aria-label="训练进度"></progress></div></li>`)}</ol>`
         $("selected").insertAdjacentHTML("beforeend",html`<section class="production-queue"><h4>训练队列 <span>${queue?.length??"—"}</span></h4>${content}</section>`.s)
         for(const canvas of $("selected").querySelectorAll<HTMLCanvasElement>("[data-queue-type]")) {
-          const name=canvas.dataset.queueType!,type=r.types[name];if(!type)continue
-          const ctx=canvas.getContext("2d")!,scale=43/Math.max(1,type.w,type.h)
-          ctx.translate(40-type.w*scale/2,44-type.h*scale/2);ctx.scale(scale,scale)
-          art.entity(ctx,{name,kind:type.kind,worker:type.worker,range:type.attack?.range,splash:type.attack?.splash},0,0,type.w,type.h,hex(playerColor(e.owner)),{angle:0})
+          const name=canvas.dataset.queueType!;if(!r.types[name])continue
+          renderer.drawIcon(canvas, name, e.owner)
         }
       }
     }

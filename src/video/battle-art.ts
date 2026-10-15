@@ -1,3 +1,5 @@
+import type { LookArt } from "../core/types.ts"
+
 /** Shared, deterministic Canvas artwork. The factory is also serialized into the video browser. */
 export interface BattleType {
   name?: string
@@ -18,14 +20,9 @@ export interface BattleType {
  * and sprite replaces it. currentColor becomes the owner's colour. The viewBox is in tiles around the centre of a unit, or in
  * footprints (-0.5..0.5) around the centre of a building or resource.
  */
-export interface BattleArtLayers {
-  base?: string
-  under?: string
-  over?: string
-  sprite?: string
-}
+export type BattleArtLayers = LookArt
 
-export type AttackStyle = "slash" | "thrust" | "arrow" | "shell" | "musket"
+export type AttackStyle = "slash" | "thrust" | "arrow" | "shell" | "musket" | NonNullable<LookArt["weapon"]>
 export interface BattlePose {
   angle?: number
   walk?: number
@@ -48,6 +45,9 @@ export interface BattleAttack {
   style: AttackStyle
   age: number
   duration: number
+  /** Sprite muzzle and target heights, in tiles, including large footprints and flight. */
+  muzzle?: [number, number]
+  targetLift?: number
 }
 
 /** No runtime imports or browser globals here: keep this factory safe to call via toString(). */
@@ -83,11 +83,25 @@ export function createBattleArt() {
     return "soldier"
   }
   function attackStyle(t: BattleType): AttackStyle {
+    if (t.art?.weapon) return t.art.weapon
     const r = role(t)
     if (r === "cannon") return "shell"
     if (r === "musketeer") return "musket"
     if ((t.range ?? 0) > 1 || r === "archer" || r === "tower" || r === "base") return "arrow"
     return r === "spearman" || r === "cavalry" ? "thrust" : "slash"
+  }
+  function attackSeconds(style: AttackStyle): number {
+    return style === "siege-shell" ? .85 : style === "missile" ? .8 : style === "detonation" ? .75 : style === "plasma" ? .6 : style === "autocannon" ? .38 : style === "shell" ? 1.3 : style === "musket" ? 1 : .7
+  }
+  /** Visual origin follows the same pose and footprint scaling as entity(). */
+  function weaponMount(t: BattleType, w = 1, h = 1, dx = 1): { muzzle?: [number, number] } {
+    if (!t.art?.weapon) return {}
+    const k = t.kind === "unit" ? Math.min(w, h) : 1
+    const side = dx < 0 ? -1 : 1
+    const lift = t.layer === "air" ? .42 * k : 0
+    const x = t.art.weapon === "autocannon" ? .54 : t.art.weapon === "siege-shell" ? .73 : t.art.weapon === "plasma" ? .60 : t.art.weapon === "missile" ? (t.art.motion === "walker" ? .47 : .24) : 0
+    const y = t.kind === "building" ? -.27 * h : (t.art.motion === "hover" ? .03 : t.art.motion === "walker" ? -.30 : -.23) * k - lift
+    return { muzzle: [side * x * (t.kind === "building" ? w : k), y] }
   }
   function polygon(g: Ink, pts: number[], fill: string, outline = ink, width = 0.035): void {
     g.beginPath()
@@ -154,6 +168,29 @@ export function createBattleArt() {
           if (e) waits.push(e.img.decode().catch(() => undefined))
         }
     await Promise.all(waits)
+  }
+
+  /** Fit the complete figure, flight offset and SVG protrusions inside a sidebar canvas. */
+  function thumbnail(g: Ink, t: BattleType, w: number, h: number, color: string, width: number, height: number, progress = 100): void {
+    const unit = t.kind === "unit", k = Math.min(w, h)
+    const sx = unit ? k : w, sy = unit ? k : h
+    const lift = unit && t.layer === "air" ? .42 * k : 0
+    // Leave room for default figures (weapons, tools and mounted units) when no sprite replaces them.
+    let x0 = (t.art?.sprite ? -.62 : -.9) * sx, x1 = (t.art?.sprite ? .65 : 1.15) * sx
+    let y0 = (t.art?.sprite ? 0 : -1.15) * sy - lift, y1 = .58 * sy
+    for (const svg of [t.art?.under, t.art?.sprite, t.art?.over]) if (svg) {
+      const [x, y, bw, bh] = viewBoxOf(svg)
+      x0 = Math.min(x0, x * sx); x1 = Math.max(x1, (x + bw) * sx)
+      y0 = Math.min(y0, y * sy - lift); y1 = Math.max(y1, (y + bh) * sy - lift)
+    }
+    const padding = Math.min(width, height) * .08
+    const scale = Math.min((width - padding * 2) / (x1 - x0), (height - padding * 2) / (y1 - y0))
+    g.save()
+    g.clearRect(0, 0, width, height)
+    g.translate(width / 2 - (x0 + x1) / 2 * scale, height / 2 - (y0 + y1) / 2 * scale)
+    g.scale(scale, scale)
+    entity(g, t, -w / 2, -h / 2, w, h, color, { angle: 0 }, progress)
+    g.restore()
   }
 
   // Three-quarter silhouettes keep the face, clothing, tools and horse readable at game scale.
@@ -458,8 +495,39 @@ export function createBattleArt() {
         g.save()
         if (a?.sprite) {
           const strike = (pose.attack ?? -1) < 0 ? 0 : Math.sin(Math.PI * clamp(pose.attack! / .7))
-          g.scale(facing,1); g.translate(strike*.055, Math.abs(pose.walk ?? 0)*.025)
+          g.scale(facing,1)
+          const walk = pose.walk ?? 0, motion = a.motion
+          // Heavy weapons kick backwards; mechanical frames sway around planted feet.
+          g.translate(motion ? -strike * (motion === "tracked" ? .11 : .055) : strike*.055, Math.abs(walk) * (motion === "walker" ? .055 : .025))
+          if (motion === "walker" || motion === "armored") g.rotate(walk * .035)
+          if (motion === "hover") {
+            const thrust = .18 + Math.abs(walk) * .12
+            for (const yy of [-.09, .16]) {
+              polygon(g, [-.48,yy-.055,-.62-thrust,yy,-.48,yy+.055], "#3fafff", "", 0)
+              line(g,-.50,yy,-.60-thrust*.7,yy,"#d6fcff",.035)
+            }
+          }
           svgLayer(g,a.sprite,color)
+          if (motion === "tracked" && Math.abs(walk) > .1) {
+            for (let j=0;j<3;j++) ellipse(g,-.4-j*.10,.30-j*.025,.07+j*.018,.035,`rgba(156,143,116,${.22-j*.05})`)
+          }
+          if (motion === "burrow") {
+            g.globalAlpha *= .55
+            g.beginPath();g.ellipse(0,.13,.43,.18,0,0,TAU);g.strokeStyle=color;g.lineWidth=.025;g.setLineDash([.06,.06]);g.stroke();g.setLineDash([])
+          }
+          if (motion === "armored" && (pose.work ?? -1) >= 0) {
+            const q=pose.work!, yy=-.13+Math.sin(q*TAU)*.04
+            line(g,.40,-.20,.67,yy,"#8eefff",.035)
+            for(let j=0;j<3;j++)line(g,.66,yy,.72+j*.035,yy+(j-1)*.085,"#fff1a8",.018)
+          }
+          if (motion && pose.carrying) {
+            polygon(g,[-.30,-.08,-.22,-.24,-.11,-.18,-.13,.03,-.27,.06],"#f2ca75",ink,.02)
+          }
+          if (motion && (pose.hit ?? 0) > .5) {
+            g.globalAlpha *= .7
+            line(g,-.18,-.35,.12,-.03,"#fff4d5",.065)
+            line(g,-.10,-.02,.19,-.32,"#b4edff",.04)
+          }
         } else if (r === "worker") villager(g,color,pose)
         else if (r === "scout" || r === "cavalry") scout(g,color,pose,r === "cavalry")
         else if (r === "cannon" || r === "wagon") vehicle(g,r,color,pose)
@@ -765,9 +833,87 @@ export function createBattleArt() {
     g.restore()
   }
 
+  function mechanicalAttack(g: Ink, a: BattleAttack, color: string, p: number): void {
+    const blast = a.style === "detonation", siege = a.style === "siege-shell", rocket = a.style === "missile", plasma = a.style === "plasma"
+    const impact = blast ? .04 : siege ? .56 : rocket ? .62 : plasma ? .44 : .25
+    const sx=a.x1+(a.muzzle?.[0] ?? 0), sy=a.y1+(a.muzzle?.[1] ?? -.2)
+    const tx=a.x2, ty=a.y2-(a.targetLift ?? 0), dx=tx-sx, dy=ty-sy
+    const angle=Math.atan2(dy,dx), travel=clamp(p/impact), arc=siege?.70:rocket?.24:0
+    g.save();g.lineCap="round";g.lineJoin="round"
+    if (!blast && p < impact) {
+      const px=sx+dx*travel, py=sy+dy*travel-Math.sin(travel*Math.PI)*arc
+      if (plasma) {
+        g.globalAlpha=.2
+        line(g,sx,sy,px,py,"#69e7ff",.16)
+        g.globalAlpha=1
+        line(g,px-Math.cos(angle)*.38,py-Math.sin(angle)*.38,px,py,"#70eaff",.08)
+        ellipse(g,px,py,.12,.075,"#d5ffff")
+        ellipse(g,px,py,.22,.15,"rgba(68,178,255,.23)")
+      } else if (siege || rocket) {
+        for (let j=1;j<=6;j++) {
+          const q=Math.max(0,travel-j*.028), xx=sx+dx*q, yy=sy+dy*q-Math.sin(q*Math.PI)*arc
+          ellipse(g,xx,yy,.045+j*.015,.035+j*.012,`rgba(182,192,195,${.25-j*.025})`)
+        }
+        g.save();g.translate(px,py);g.rotate(Math.atan2(dy-Math.cos(travel*Math.PI)*Math.PI*arc,dx))
+        polygon(g,[-.18,-.04,.09,-.04,.19,0,.09,.04,-.18,.04],rocket?"#e0eaf0":"#ffc36e",ink,.018)
+        polygon(g,[-.16,-.045,-.35,0,-.16,.045],"#ff9d42","",0)
+        line(g,-.16,0,-.26,0,"#fff4ca",.03)
+        if(rocket) { line(g,-.10,-.045,-.18,-.10,color,.035);line(g,-.10,.045,-.18,.10,color,.035) }
+        g.restore()
+      } else {
+        // Two offset tracers suggest a short burst without multiplying recorded damage events.
+        for (const offset of [-.025,.025]) {
+          const back=Math.min(.42,Math.hypot(dx,dy)*travel)
+          line(g,px-Math.cos(angle)*back,py-Math.sin(angle)*back+offset,px,py+offset,"#ffd27d",.035)
+          line(g,px-Math.cos(angle)*back*.5,py-Math.sin(angle)*back*.5+offset,px,py+offset,"#fff9d9",.014)
+        }
+      }
+      if (p < .16) {
+        const q=1-p/.16
+        g.save();g.translate(sx,sy);g.rotate(angle);g.globalAlpha=q
+        polygon(g,[0,-.06,.13,-.11,.09,-.03,.30,0,.09,.03,.13,.11,0,.06],plasma?"#7defff":"#ffbf5b","",0)
+        ellipse(g,.045,0,.07*q,.05*q,"#f2ffff")
+        g.restore()
+      }
+    }
+    if (p >= impact) {
+      const q=(p-impact)/(1-impact), fade=1-q, big=blast?1.25:siege?1.05:rocket?.55:plasma?.42:.22
+      g.save();g.translate(tx,ty)
+      if (siege || blast || rocket) {
+        // A ground shock ring, hot core, rising smoke and angular fragments distinguish ordnance.
+        g.globalAlpha=fade*.7
+        g.beginPath();g.ellipse(0,.06,(.12+q*big)*1.2,(.08+q*big)*.55,0,0,TAU)
+        g.strokeStyle=blast?"#ffdc8b":"#ffaf62";g.lineWidth=.055*fade+.012;g.stroke()
+        for(let j=0;j<6;j++) {
+          const ang=j*2.399+a.source*.71, rr=(.08+q*big)*.75
+          ellipse(g,Math.cos(ang)*rr,Math.sin(ang)*rr*.55-q*.27,.10+q*.22,.09+q*.19,`rgba(78,88,100,${fade*.42})`)
+        }
+        g.globalAlpha=fade
+        ellipse(g,0,-q*.08,big*.4*fade,big*.30*fade,"#ff873f")
+        ellipse(g,0,-q*.08,big*.22*fade,big*.22*fade,"#fff0ba")
+      } else if(plasma) {
+        g.globalAlpha=fade
+        g.beginPath();g.arc(0,0,.08+q*.4,0,TAU);g.strokeStyle="#71eaff";g.lineWidth=.035*fade;g.stroke()
+        ellipse(g,0,0,.18*fade,.18*fade,"#c6ffff")
+      }
+      g.globalAlpha=fade
+      for(let j=0;j<(siege||blast?9:4);j++) {
+        const ang=j*2.399+a.target*.31, rr=.03+q*big
+        const xx=Math.cos(ang)*rr, yy=Math.sin(ang)*rr*.8-q*.10
+        line(g,xx,yy,xx+Math.cos(ang)*.10*fade,yy+Math.sin(ang)*.10*fade,plasma?"#a7f9ff":j%3?"#ffc879":color,.025*fade+.008)
+      }
+      g.restore()
+    }
+    g.restore()
+  }
+
   function attack(g: Ink, a: BattleAttack, color: string): void {
     const p=clamp(a.age/a.duration)
     if(p>=1||a.age<0)return
+    if (["autocannon","siege-shell","missile","plasma","detonation"].includes(a.style)) {
+      mechanicalAttack(g,a,color,p)
+      return
+    }
     const dx=a.x2-a.x1,dy=a.y2-a.y1,angle=Math.atan2(dy,dx)
     const ranged=a.style==="arrow"||a.style==="shell"||a.style==="musket"
     // Musket balls arrive fast; the smoke at the muzzle and the dust at the impact linger.
@@ -877,5 +1023,5 @@ export function createBattleArt() {
     }
     g.restore()
   }
-  return { role, attackStyle, entity, terrain, attack, fallen, headroom, prepare }
+  return { role, attackStyle, attackSeconds, weaponMount, entity, thumbnail, terrain, attack, fallen, headroom, prepare }
 }

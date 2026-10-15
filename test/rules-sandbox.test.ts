@@ -483,7 +483,7 @@ test("规则包自带的素材（D-233）：look.art 的 SVG 由宿主读进来�
   await assert.rejects(play(withArt(`{ over: "art/flag.png" }`)), /要写规则包目录里的 \.svg 文件路径/)
   await assert.rejects(play(withArt(`{ over: "art/none.svg" }`)), /找不到 art\/none\.svg/)
   await assert.rejects(play(withArt(`{ sprite: "art/plain.svg" }`, ["art/plain.svg", "<svg></svg>"])), /要写 viewBox/)
-  await assert.rejects(play(withArt(`{ cape: "art/flag.svg" }`, ["art/flag.svg", svg])), /只能写 base、under、over、sprite（多了 cape）/)
+  await assert.rejects(play(withArt(`{ cape: "art/flag.svg" }`, ["art/flag.svg", svg])), /只能写 base、under、over、sprite、weapon、motion（多了 cape）/)
   // 弑君歼灭的领主：没缨的剑盾兵打底，身后披风、身前王冠和金盾，都从规则包目录的 art/ 读进来
   for (const r of [await importRuleset("regicide-annihilation"), await loadSandboxedRuleset(join(ROOT, "rulesets", "regicide-annihilation"), quiet)]) {
     const art = r.types.lord.look.art!

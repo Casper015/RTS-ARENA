@@ -1,11 +1,32 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="-0.5 -0.5 1 1">
-  <!-- 地堡：沙袋圆顶、射击孔、门；currentColor 是所属玩家的颜色 -->
-  <path d="M-0.46 0.38 L-0.46 0.0 Q-0.46 -0.42 0 -0.42 Q0.46 -0.42 0.46 0.0 L0.46 0.38 Z" fill="#8a8466" stroke="#182123" stroke-width="0.03"/>
-  <path d="M-0.44 -0.12 L0.44 -0.12" stroke="#5f5b45" stroke-width="0.02"/>
-  <path d="M-0.44 0.08 L0.44 0.08" stroke="#5f5b45" stroke-width="0.02"/>
-  <path d="M-0.44 0.26 L0.44 0.26" stroke="#5f5b45" stroke-width="0.02"/>
-  <path d="M-0.4 -0.06 L0.4 -0.06" stroke="currentColor" stroke-width="0.07"/>
-  <rect x="-0.3" y="-0.24" width="0.22" height="0.07" rx="0.02" fill="#151b1c"/>
-  <rect x="0.08" y="-0.24" width="0.22" height="0.07" rx="0.02" fill="#151b1c"/>
-  <rect x="-0.12" y="0.12" width="0.24" height="0.26" rx="0.03" fill="#2d3536" stroke="#182123" stroke-width="0.02"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-0.56 -0.66 1.12 1.2">
+<defs>
+  <linearGradient id="armor" x2=".35" y2="1"><stop stop-color="#b0c5d2"/><stop offset=".42" stop-color="#60798d"/><stop offset="1" stop-color="#30465a"/></linearGradient>
+  <linearGradient id="dark" x2=".25" y2="1"><stop stop-color="#394f62"/><stop offset="1" stop-color="#111e2e"/></linearGradient>
+  <linearGradient id="team" x2=".2" y2="1"><stop stop-color="currentColor"/><stop offset="1" stop-color="currentColor" stop-opacity=".48"/></linearGradient>
+  <linearGradient id="glass" x2=".5" y2="1"><stop stop-color="#edffff"/><stop offset=".35" stop-color="#79e6f5"/><stop offset="1" stop-color="#237695"/></linearGradient>
+  <radialGradient id="power"><stop stop-color="#eaffff"/><stop offset=".36" stop-color="#6ee6ff"/><stop offset="1" stop-color="#3291c5" stop-opacity=".12"/></radialGradient>
+</defs>
+<g transform="scale(.01)">
+  <path d="M-47-25-33-39 32-39 47-24 47 32 33 45-34 45-47 30Z" fill="url(#dark)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-47-25-33-39 32-39 47-24 33-10-33-10Z" fill="#6c8292" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-42 29-30 39H30L42 29" fill="none" stroke="#83a6b7" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M-43-12-28-31 27-31 44-12 39 29 24 38-27 38-41 27Z" fill="url(#armor)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-43-12-28-33 27-33 44-12 25 4-26 4Z" fill="url(#team)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-28-17-17-28 15-28 28-17 17-7-17-7Z" fill="url(#dark)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-20-17-12-24 10-24 20-16 11-10-12-10Z" fill="url(#armor)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <rect x="-31" y="10" width="18" height="6" rx="1" fill="#111e2c" stroke="#0c1826" stroke-width="1.7"/>
+  <rect x="-8" y="15" width="18" height="6" rx="1" fill="#111e2c" stroke="#0c1826" stroke-width="1.7"/>
+  <rect x="16" y="10" width="18" height="6" rx="1" fill="#111e2c" stroke="#0c1826" stroke-width="1.7"/>
+  <path d="M-28 11h11M-5 16H7M19 11H31" fill="none" stroke="#84d5e7" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M-44 0-35 4-33 24-40 29-46 22ZM37 4 45-1 47 22 41 29 34 24Z" fill="url(#dark)" stroke="#0c1826" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-10 29h3l-3 6h-3Z" fill="#e9ba58" stroke="none" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M-5 29h3l-3 6h-3Z" fill="#e9ba58" stroke="none" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M0 29h3l-3 6h-3Z" fill="#e9ba58" stroke="none" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M5 29h3l-3 6h-3Z" fill="#e9ba58" stroke="none" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M10 29h3l-3 6h-3Z" fill="#e9ba58" stroke="none" stroke-width="2" stroke-linejoin="round"/>
+  <circle cx="-33" cy="-13" r="1.5" fill="#c0d1d6"/>
+  <circle cx="34" cy="-13" r="1.5" fill="#c0d1d6"/>
+  <circle cx="-28" cy="25" r="1.5" fill="#c0d1d6"/>
+  <circle cx="29" cy="25" r="1.5" fill="#c0d1d6"/>
+</g>
 </svg>

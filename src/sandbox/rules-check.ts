@@ -18,6 +18,17 @@ export const RULES_HARD = {
 const SHAPES = ["circle", "square", "triangle", "diamond", "hex"]
 const LAYERS = ["ground", "air", "under"]
 
+function checkArt(art: unknown, at: string, bad: (msg: string) => void): void {
+  if (!isObj(art)) return bad(`${at} 要写成 { base?, under?, over?, sprite?, weapon?, motion? }`)
+  for (const k of Object.keys(art)) if (!["base", "under", "over", "sprite", "weapon", "motion"].includes(k)) bad(`${at} 只能写 base、under、over、sprite、weapon、motion（多了 ${k}）`)
+  if (art.base !== undefined && (typeof art.base !== "string" || !NAME.test(art.base))) bad(`${at}.base 要写平台造型的名字（小写英文，比如 soldier、cavalry、tower）`)
+  for (const k of ["under", "over", "sprite"])
+    if (art[k] !== undefined && (typeof art[k] !== "string" || !(/\.svg$/i.test(art[k] as string) || /^\s*</.test(art[k] as string))))
+      bad(`${at}.${k} 要写规则包目录里的 .svg 文件路径（相对规则包目录，比如 "art/lord.svg"）`)
+  if (art.weapon !== undefined && !["autocannon", "siege-shell", "missile", "plasma", "detonation"].includes(art.weapon as string)) bad(`${at}.weapon 要是 autocannon、siege-shell、missile、plasma、detonation 之一`)
+  if (art.motion !== undefined && !["armored", "tracked", "walker", "hover", "burrow"].includes(art.motion as string)) bad(`${at}.motion 要是 armored、tracked、walker、hover、burrow 之一`)
+}
+
 /** 攻击的写法：伤害、射程、冷却、溅射、命中率、克制倍数，能打哪一层、打一下就没了（D-269） */
 function checkAttack(a: unknown, at: string, names: Set<string>, bad: (msg: string) => void): void {
   if (!isObj(a) || !isInt(a.damage, 0) || !isInt(a.range, 1, 16) || !isInt(a.cooldown, 1)) bad(`${at}.attack 要写成 { damage ≥ 0, range 1～16, cooldown ≥ 1 }（整数）`)
@@ -148,7 +159,7 @@ export function checkRulesetData(d: unknown, callbacks: string[]): string[] {
               const l = m.look
               if (!isObj(l) || Object.keys(l).some((k) => !["label", "art"].includes(k))) bad(`${w}.look 只能写 label、art`)
               else if (l.label !== undefined && (typeof l.label !== "string" || [...l.label].length > 2)) bad(`${w}.look.label 最多 2 个字`)
-              else if (l.art !== undefined && (!isObj(l.art) || Object.keys(l.art).some((k) => !["base", "under", "over", "sprite"].includes(k)))) bad(`${w}.look.art 要写成 { base?, under?, over?, sprite? }`)
+              else if (l.art !== undefined) checkArt(l.art, `${w}.look.art`, bad)
             }
           })
         }
@@ -184,16 +195,7 @@ export function checkRulesetData(d: unknown, callbacks: string[]): string[] {
         if (look.name !== undefined && (typeof look.name !== "string" || [...look.name].length < 1 || [...look.name].length > 6)) bad(`${at}.look.name 要写 1～6 个字`)
         // 规则包自带的素材（D-233）：这里只查写法，文件由加载规则包的宿主去读（inlineRulesetArt）
         const art = look.art
-        if (art !== undefined) {
-          if (!isObj(art)) bad(`${at}.look.art 要写成 { base?, under?, over?, sprite? }`)
-          else {
-            for (const k of Object.keys(art)) if (!["base", "under", "over", "sprite"].includes(k)) bad(`${at}.look.art 只能写 base、under、over、sprite（多了 ${k}）`)
-            if (art.base !== undefined && (typeof art.base !== "string" || !NAME.test(art.base))) bad(`${at}.look.art.base 要写平台造型的名字（小写英文，比如 soldier、cavalry、tower）`)
-            for (const k of ["under", "over", "sprite"])
-              if (art[k] !== undefined && (typeof art[k] !== "string" || !(/\.svg$/i.test(art[k] as string) || /^\s*</.test(art[k] as string))))
-                bad(`${at}.look.art.${k} 要写规则包目录里的 .svg 文件路径（相对规则包目录，比如 "art/lord.svg"）`)
-          }
-        }
+        if (art !== undefined) checkArt(art, `${at}.look.art`, bad)
       }
     }
   }

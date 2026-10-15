@@ -5,7 +5,7 @@ import type { EntSnap, Marker, Replay } from "../../src/core/types.ts"
 import { createBattleArt, type BattleAttack, type BattlePose, type BattleType } from "../../src/video/battle-art.ts"
 import { interpolateBattleCamera, type BattleCamera } from "../../src/video/battle-camera.ts"
 import { FACTION_COLORS } from "../../src/video/battle-colors.ts"
-import { faceToward, farmWorkers, homeFacing, legacySplashEffects, trainingQueue, workerPose } from "../../src/video/visual-state.ts"
+import { battleTypeOf, faceToward, farmWorkers, homeFacing, legacySplashEffects, trainingQueue, workerPose } from "../../src/video/visual-state.ts"
 import type { Delta, State } from "./model.ts"
 import { Vision } from "./vision.ts"
 
@@ -143,7 +143,7 @@ export class Renderer {
     this.fit()
     this.jump(state)
     // 规则包自带的素材（D-233）：SVG 解码好以后，把已经按没有素材的样子做好的单位贴图清掉、重摆一遍
-    const artTypes = Object.keys(replay.types).map((k) => this.battleType(k)).filter((t) => t.art)
+    const artTypes = Object.keys(replay.types).flatMap(k => [this.battleType(k), ...(replay.types[k].modes ?? []).map(m => this.battleType(k, m.id))]).filter(t => t.art)
     if (artTypes.length) {
       const hexOf = (owner: number) => "#" + playerColor(owner).toString(16).padStart(6, "0")
       const colors = [...replay.players.map((_, p) => hexOf(p)), hexOf(-1), ...Object.values(replay.types).flatMap((t) => (t.look?.color ? [t.look.color] : []))]
@@ -152,6 +152,8 @@ export class Renderer {
         for (const texture of this.skins.values()) texture.destroy(true)
         this.skins.clear()
         this.jump(this.state)
+        // The selected portrait and training queue use this same decoded artwork cache.
+        if (this.selected !== null) this.onSelect(this.selected)
       })
     }
   }
@@ -357,10 +359,13 @@ export class Renderer {
       if (!a || !b) continue
       const ta = this.replay.types[a.type], tb = this.replay.types[b.type]
       if (!ta || !tb) continue
-      const style = this.art.attackStyle(this.battleType(a.type))
-      const duration = Math.max(4, this.replay.tickRate * (style === "shell" ? 1.3 : style === "musket" ? 1 : .7))
+      const appearance = this.battleType(a.type, a.md)
+      const style = this.art.attackStyle(appearance)
+      const duration = Math.max(4, this.replay.tickRate * this.art.attackSeconds(style))
       const x1 = a.x + ta.w / 2, y1 = a.y + ta.h / 2, x2 = b.x + tb.w / 2, y2 = b.y + tb.h / 2
-      this.combatFx.push({ source: a.id, target: b.id, x1, y1, x2, y2, owner: a.owner, style, age: 0, duration, tick: t })
+      const mount = this.art.weaponMount(appearance, ta.w, ta.h, x2 - x1)
+      const targetLift = layerOf(this.replay, b) === "air" ? .42 * Math.min(tb.w, tb.h) : 0
+      this.combatFx.push({ source: a.id, target: b.id, x1, y1, x2, y2, owner: a.owner, style, age: 0, duration, tick: t, ...mount, targetLift })
       const av = this.views.get(a.id), bv = this.views.get(b.id)
       if (av) { av.angle = faceToward(av.angle, x2 - x1); av.attackAt = t; av.attackDuration = duration }
       if (bv) bv.hitAt = t
@@ -372,10 +377,11 @@ export class Renderer {
       const a = beforeMovement.get(d.misses[j])
       const ta = a && this.replay.types[a.type]
       if (!a || !ta || fired.has(a.id)) continue
-      const style = this.art.attackStyle(this.battleType(a.type))
-      const duration = Math.max(4, this.replay.tickRate * (style === "musket" ? 1 : .7))
+      const appearance = this.battleType(a.type, a.md)
+      const style = this.art.attackStyle(appearance)
+      const duration = Math.max(4, this.replay.tickRate * this.art.attackSeconds(style))
       const x1 = a.x + ta.w / 2, y1 = a.y + ta.h / 2, x2 = d.misses[j + 1] + .5, y2 = d.misses[j + 2] + .5
-      this.combatFx.push({ source: a.id, target: -1, x1, y1, x2, y2, owner: a.owner, style, age: 0, duration, tick: t })
+      this.combatFx.push({ source: a.id, target: -1, x1, y1, x2, y2, owner: a.owner, style, age: 0, duration, tick: t, ...this.art.weaponMount(appearance, ta.w, ta.h, x2 - x1) })
       const av = this.views.get(a.id)
       if (av) { av.angle = faceToward(av.angle, x2 - x1); av.attackAt = t; av.attackDuration = duration }
     }
@@ -412,11 +418,14 @@ export class Renderer {
   }
 
   private battleType(name: string, md?: string): BattleType {
+    return battleTypeOf(this.replay, name, md)
+  }
+
+  /** Portraits and training icons resolve the same modes, layers and colours as the battlefield. */
+  drawIcon(canvas: HTMLCanvasElement, name: string, owner: number, md?: string, progress = 100): void {
     const info = this.replay.types[name]
-    const m = md ? info.modes?.find((x) => x.id === md) : undefined
-    if (m)
-      return { name, kind: info.kind, label: m.look?.label ?? info.look?.label, shape: info.look?.shape, worker: info.worker, range: m.attack?.range, splash: m.attack?.splash, art: m.look?.art ? { ...info.look?.art, ...m.look.art } : info.look?.art, layer: m.layer }
-    return { name, kind: info.kind, label: info.look?.label, shape: info.look?.shape, worker: info.worker, range: info.attack?.range, splash: info.attack?.splash, art: info.look?.art, layer: info.layer }
+    const color = info.look?.color ?? "#" + playerColor(owner).toString(16).padStart(6, "0")
+    this.art.thumbnail(canvas.getContext("2d")!, this.battleType(name, md), info.w, info.h, color, canvas.width, canvas.height, progress)
   }
 
   private skin(e: EntSnap, angle = 0, walk = 0, attack = -1, hit = 0, labor?: BattlePose): { key: string; texture: Texture } {

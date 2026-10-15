@@ -10,7 +10,7 @@ import { checkScript, codeFacts, botTag, contestantNames, highlightPlayerWarning
 import { installVideoPage, type ReplayFrame, type SceneData } from "./page.ts"
 import { createBattleArt, type BattleAttack } from "./battle-art.ts"
 import { FACTION_COLORS, FACTION_COLOR_NAMES } from "./battle-colors.ts"
-import { faceToward, farmWorkers, homeFacing, legacySplashEffects, trainingQueue, workerPose } from "./visual-state.ts"
+import { faceToward, farmWorkers, homeFacing, legacySplashEffects, shotTypeOf, trainingQueue, workerPose } from "./visual-state.ts"
 import { battleCameraTrack } from "./battle-camera.ts"
 import { excitement, gameFacts } from "../cli/highlights.ts"
 import { fighterTest, groupBattles, isRout } from "../cli/battles.ts"
@@ -662,11 +662,15 @@ export function replayScene(
         const ta = replay.types[a.type], tb = replay.types[b.type]
         if (!ta || !tb) continue
         const x1 = a.x + ta.w / 2, y1 = a.y + ta.h / 2, x2 = b.x + tb.w / 2, y2 = b.y + tb.h / 2
-        const style = art.attackStyle({ name: a.type, kind: ta.kind, worker: ta.worker, range: a.st?.attack?.range ?? ta.attack?.range, splash: ta.attack?.splash })
-        const duration = Math.max(3, Math.round(fps * (style === "shell" ? .48 : style === "musket" ? .42 : style === "arrow" ? .30 : .24)))
+        const appearance = shotTypeOf(replay, f, a)
+        const style = art.attackStyle({ ...appearance, range: a.st?.attack?.range ?? appearance.range })
+        const modern = !!appearance.art?.weapon
+        const duration = Math.max(3, Math.round(fps * (modern ? art.attackSeconds(style) : style === "shell" ? .48 : style === "musket" ? .42 : style === "arrow" ? .30 : .24)))
         const frame = displayedAt[k]
         const angle = Math.atan2(y2 - y1, x2 - x1)
-        attacks.push({ source: a.id, target: b.id, x1, y1, x2, y2, owner: a.owner, style, age: 0, duration, frame })
+        const mount = art.weaponMount(appearance, ta.w, ta.h, x2 - x1)
+        const targetLift = shotTypeOf(replay, f, b).layer === "air" ? .42 * Math.min(tb.w, tb.h) : 0
+        attacks.push({ source: a.id, target: b.id, x1, y1, x2, y2, owner: a.owner, style, age: 0, duration, frame, ...mount, targetLift })
         attacking.set(a.id, { angle, frame, duration })
         facing.set(a.id, faceToward(facing.get(a.id) ?? homeFace(a), x2 - x1))
         hitAt.set(b.id, frame)
@@ -680,10 +684,11 @@ export function replayScene(
         const ta = a && replay.types[a.type]
         if (!a || !ta || fired.has(a.id)) continue
         const x1 = a.x + ta.w / 2, y1 = a.y + ta.h / 2, x2 = ms[j + 1] + .5, y2 = ms[j + 2] + .5
-        const style = art.attackStyle({ name: a.type, kind: ta.kind, worker: ta.worker, range: a.st?.attack?.range ?? ta.attack?.range, splash: ta.attack?.splash })
-        const duration = Math.max(3, Math.round(fps * (style === "musket" ? .42 : .30)))
+        const appearance = shotTypeOf(replay, f, a)
+        const style = art.attackStyle({ ...appearance, range: a.st?.attack?.range ?? appearance.range })
+        const duration = Math.max(3, Math.round(fps * (appearance.art?.weapon ? art.attackSeconds(style) : style === "musket" ? .42 : .30)))
         const frame = displayedAt[k]
-        attacks.push({ source: a.id, target: -1, x1, y1, x2, y2, owner: a.owner, style, age: 0, duration, frame })
+        attacks.push({ source: a.id, target: -1, x1, y1, x2, y2, owner: a.owner, style, age: 0, duration, frame, ...art.weaponMount(appearance, ta.w, ta.h, x2 - x1) })
         attacking.set(a.id, { angle: Math.atan2(y2 - y1, x2 - x1), frame, duration })
         facing.set(a.id, faceToward(facing.get(a.id) ?? homeFace(a), x2 - x1))
       }
