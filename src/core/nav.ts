@@ -84,6 +84,51 @@ export class FlowCache {
     })
   }
 
+  /**
+   * 大型地面单位（D-266，占 fw×fh 格）：按左上角算的流场，左上角放在这一格时整块占地都要能站（地形能走、没有建筑和资源点）。
+   * 种子是离矩形 r 不超过 range 的左上角；一个都没有（目标在一片障碍里）就把 range 放宽，最多再加 8 格
+   */
+  toRectSized(key: string, r: Rect, range: number, fw: number, fh: number): Int32Array {
+    return this.get(`s${fw}x${fh}:${key}`, (field) => {
+      const w = this.w
+      const W = w.width
+      const H = w.height
+      const fits = (x: number, y: number) => {
+        if (x < 0 || y < 0 || x + fw > W || y + fh > H) return false
+        for (let yy = y; yy < y + fh; yy++) for (let xx = x; xx < x + fw; xx++) if (!w.staticFree(yy * W + xx)) return false
+        return true
+      }
+      let seeds: number[] = []
+      for (let extra = 0; extra <= 8 && seeds.length === 0; extra++) {
+        const rr = range + extra
+        for (let y = Math.max(0, r.y - rr - fh + 1); y <= Math.min(H - fh, r.y + r.h - 1 + rr); y++)
+          for (let x = Math.max(0, r.x - rr - fw + 1); x <= Math.min(W - fw, r.x + r.w - 1 + rr); x++)
+            if (rectDist({ x, y, w: fw, h: fh }, r) <= rr && fits(x, y)) seeds.push(y * W + x)
+      }
+      const q = this.queue
+      let head = 0
+      let tail = 0
+      for (const sd of seeds) {
+        field[sd] = 0
+        q[tail++] = sd
+      }
+      seeds = []
+      while (head < tail) {
+        const cur = q[head++]
+        const cx = cur % W
+        const cy = (cur - cx) / W
+        for (let d = 0; d < 4; d++) {
+          const nx = cx + DX[d]
+          const ny = cy + DY[d]
+          const ni = ny * W + nx
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H || field[ni] !== UNREACHABLE || !fits(nx, ny)) continue
+          field[ni] = field[cur] + 1
+          q[tail++] = ni
+        }
+      }
+    })
+  }
+
   /** 多源 BFS。seedsWalkable 为 false 时种子在障碍里：障碍格只能从障碍格扩展过来 */
   private bfs(field: Int32Array, seeds: number[], seedsWalkable: boolean): void {
     const w = this.w

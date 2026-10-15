@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-0.45 -0.45 0.9 0.9">
+  <!-- 地雷（移动）：带轮子的刺雷；currentColor 是所属玩家的颜色 -->
+  <circle cx="-0.18" cy="0.3" r="0.08" fill="#3b4243" stroke="#182123" stroke-width="0.025"/>
+  <circle cx="0.18" cy="0.3" r="0.08" fill="#3b4243" stroke="#182123" stroke-width="0.025"/>
+  <path d="M0.200 0.050 L0.320 0.050" stroke="#59625f" stroke-width="0.05" stroke-linecap="round"/>
+  <path d="M0.100 0.223 L0.160 0.327" stroke="#59625f" stroke-width="0.05" stroke-linecap="round"/>
+  <path d="M-0.100 0.223 L-0.160 0.327" stroke="#59625f" stroke-width="0.05" stroke-linecap="round"/>
+  <path d="M-0.200 0.050 L-0.320 0.050" stroke="#59625f" stroke-width="0.05" stroke-linecap="round"/>
+  <path d="M-0.100 -0.123 L-0.160 -0.227" stroke="#59625f" stroke-width="0.05" stroke-linecap="round"/>
+  <path d="M0.100 -0.123 L0.160 -0.227" stroke="#59625f" stroke-width="0.05" stroke-linecap="round"/>
+  <circle cx="0" cy="0.05" r="0.22" fill="currentColor" stroke="#182123" stroke-width="0.035"/>
+  <circle cx="0" cy="0.05" r="0.09" fill="#2c3334"/>
+  <circle cx="0" cy="0.05" r="0.04" fill="#ff5a4a"/>
+</svg>

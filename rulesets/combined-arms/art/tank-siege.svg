@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-0.8 -0.75 1.6 1.2">
+  <!-- 坦克（架炮）：支脚撑开、炮管加长抬高；currentColor 是所属玩家的颜色 -->
+  <path d="M-0.32 0.14 L-0.66 0.4 M0.32 0.14 L0.66 0.4" stroke="#3a4344" stroke-width="0.075" stroke-linecap="round"/>
+  <rect x="-0.76" y="0.38" width="0.2" height="0.06" rx="0.02" fill="#59625f" stroke="#182123" stroke-width="0.02"/>
+  <rect x="0.56" y="0.38" width="0.2" height="0.06" rx="0.02" fill="#59625f" stroke="#182123" stroke-width="0.02"/>
+  <rect x="-0.48" y="0.16" width="0.96" height="0.2" rx="0.1" fill="#2f3637" stroke="#182123" stroke-width="0.035"/>
+  <path d="M-0.45 0.17 L-0.37 -0.03 L0.38 -0.03 L0.47 0.17 Z" fill="currentColor" stroke="#182123" stroke-width="0.035" stroke-linejoin="round"/>
+  <rect x="-0.24" y="-0.3" width="0.46" height="0.28" rx="0.06" fill="currentColor" stroke="#182123" stroke-width="0.035"/>
+  <rect x="-0.2" y="-0.23" width="0.38" height="0.05" fill="rgba(0,0,0,0.25)"/>
+  <path d="M0.1 -0.2 L0.72 -0.56" stroke="#4a5354" stroke-width="0.085" stroke-linecap="round"/>
+  <path d="M0.64 -0.53 L0.78 -0.61" stroke="#182123" stroke-width="0.12" stroke-linecap="butt"/>
+</svg>

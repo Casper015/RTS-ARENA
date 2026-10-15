@@ -33,7 +33,7 @@ function stable(r: Replay): string {
   return JSON.stringify({ ...r, perf: null, bots: r.bots.map((b) => ({ ...b, ms: 0 })) })
 }
 
-for (const id of ["annihilation", "koth", "harvest", "melee", "frontier", "gunpowder", "beacons", "wild-herd", "caravan-raid", "flag-run", "counter-annihilation", "counter-frontier", "regicide-annihilation", "siege-frontier"]) {
+for (const id of ["annihilation", "koth", "harvest", "melee", "frontier", "gunpowder", "beacons", "wild-herd", "caravan-raid", "flag-run", "counter-annihilation", "counter-frontier", "regicide-annihilation", "siege-frontier", "combined-arms"]) {
   test(`自带规则包「${id}」放进沙箱，回放和直接跑完全一样`, async () => {
     const native = await importRuleset(id)
     const boxed = await loadSandboxedRuleset(join(ROOT, "rulesets", id))
@@ -94,7 +94,7 @@ test("ctx.entities 的筛选：沙箱里不管有没有全量快照，结果都�
 })
 
 test("自带规则包的定义都能通过沙箱规则包的格式检查", async () => {
-  for (const id of ["annihilation", "koth", "harvest", "melee", "frontier", "gunpowder", "beacons", "wild-herd", "caravan-raid", "flag-run", "counter-annihilation", "counter-frontier", "regicide-annihilation", "siege-frontier"]) {
+  for (const id of ["annihilation", "koth", "harvest", "melee", "frontier", "gunpowder", "beacons", "wild-herd", "caravan-raid", "flag-run", "counter-annihilation", "counter-frontier", "regicide-annihilation", "siege-frontier", "combined-arms"]) {
     const r = await importRuleset(id)
     const fns = ["setup", "onTick", "objectives", "result", "timeUp", "buildCheck", "onCast"].filter((f) => typeof (r as unknown as Record<string, unknown>)[f] === "function")
     assert.deepEqual(checkRulesetData(JSON.parse(JSON.stringify(r)), fns), [], id)
@@ -243,11 +243,11 @@ test("沙箱规则包：实体数有硬上限", async () => {
 })
 
 test("沙箱规则包：定义不对在加载时列出所有问题", async () => {
-  const dir = rules({ players: "{ min: 2, max: 20 }", types: `{ hq: { kind: "building", maxHp: -1, look }, u: { kind: "unit", w: 2, look: { shape: "star" } } }` })
+  const dir = rules({ players: "{ min: 2, max: 20 }", types: `{ hq: { kind: "building", maxHp: -1, look }, u: { kind: "unit", w: 4, look: { shape: "star" } } }` })
   await assert.rejects(loadSandboxedRuleset(dir, quiet), (e: Error) => {
     assert.match(e.message, /players/)
     assert.match(e.message, /maxHp/)
-    assert.match(e.message, /单位只能是 1×1/)
+    assert.match(e.message, /单位最大 3×3/)
     assert.match(e.message, /look\.shape/)
     return true
   })

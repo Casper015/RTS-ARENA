@@ -322,6 +322,16 @@ function typeDetail(t: Replay["types"][string], spec?: TypeSpecs[string], nameOf
   if (cost) parts.push(`${cost} 金`)
   if (t.maxHp) parts.push(`${t.maxHp} 血`)
   const attack = t.attack ?? spec?.attack
+  // 层、能打哪一层、几种状态、驻扎、探测（D-266）：这些是这种东西最特别的地方，排在前面
+  const special: string[] = []
+  if (t.layer === "air") special.push("空中")
+  if (t.modes?.length) special.push(t.modes.map((m) => m.name).join("/"))
+  const hits = (attack as { hits?: string[] } | null | undefined)?.hits
+  if (hits?.includes("air")) special.push(hits.includes("ground") ? "对地对空" : "只打空中")
+  if (t.garrison) special.push(`驻扎 ${t.garrison.capacity}`)
+  if (t.detect) special.push(`探测 ${t.detect}`)
+  if (t.kind === "unit" && (t.w > 1 || t.h > 1)) special.push(`${t.w}×${t.h}`)
+  parts.push(...special)
   // 命中率（D-257，线列步兵这类）：不到 100% 才写，放在克制前面（图例被截断时先留住它，这是这种兵最特别的地方）
   const acc = (attack as { accuracy?: number } | undefined)?.accuracy
   if (acc !== undefined && acc < 100) parts.push(`命中 ${acc}%`)
@@ -490,8 +500,16 @@ export function replayScene(
   const homeFace = homeFacing(replay)
   const types = typeNames.map((name) => {
     const t = replay.types[name]
-    return { name, kind: t.kind, shape: t.look?.shape ?? "circle", label: t.look?.label ?? "", color: t.look?.color ?? null, worker: t.worker === true, base: name === baseType, range: t.attack?.range, splash: t.attack?.splash, art: t.look?.art }
+    return { name, kind: t.kind, shape: t.look?.shape ?? "circle", label: t.look?.label ?? "", color: t.look?.color ?? null, worker: t.worker === true, base: name === baseType, range: t.attack?.range, splash: t.attack?.splash, art: t.look?.art, layer: t.layer as string | undefined }
   })
+  // 换了状态的实体（D-266）：每种「类型@状态」另排一个下标，带那个状态的样子、射程和层
+  const modeIndex = new Map<string, number>()
+  for (const [i, name] of typeNames.entries())
+    for (const m of (replay.types[name].modes ?? []).slice(1)) {
+      modeIndex.set(`${name}@${m.id}`, types.length)
+      const b = types[i]
+      types.push({ ...b, label: m.look?.label ?? b.label, range: m.attack?.range, splash: m.attack?.splash, art: m.look?.art ? { ...b.art, ...m.look.art } : b.art, layer: m.layer })
+    }
   // 实时胜率（D-177）：两方对打、有胜率模型时，每 WIN_STEP tick 一个点；两方各取第一个座位的名字和颜色
   const sides = twoSides(replay)
   const curve = weights && sides ? winCurve(replay, weights, WIN_STEP) : null
@@ -684,13 +702,14 @@ export function replayScene(
     const knockFx: number[] = []
     for (const e of state.ents.values()) {
       const ty = replay.types[e.type]
-      if (!ty) continue
+      // 驻扎在建筑里的（D-266）不画
+      if (!ty || e.in) continue
       const max = e.st?.maxHp ?? ty.maxHp
       const hp = ty.kind === "resource" || !max ? 100 : Math.max(0, Math.min(100, Math.round((100 * e.hp) / max)))
       const d = drawnAt(e.id, e, i)
       const kn = knocks.get(e.id)
       if (kn && d.p < 1) knockFx.push(kn.x0, kn.y0, d.x, d.y, d.p)
-      ents.push(d.x, d.y, ty.w, ty.h, e.owner, typeNames.indexOf(e.type), hp, e.bp ?? 100)
+      ents.push(d.x, d.y, ty.w, ty.h, e.owner, e.md ? (modeIndex.get(`${e.type}@${e.md}`) ?? typeNames.indexOf(e.type)) : typeNames.indexOf(e.type), hp, e.bp ?? 100)
       const queue=trainingQueue(replay,e)
       if(queue?.length)production.push({x:d.x,y:d.y,w:ty.w,h:ty.h,count:queue.length,active:queue.filter(q=>q.active).map(q=>({progress:q.progress,blocked:q.blocked}))})
       const act = attacking.get(e.id)

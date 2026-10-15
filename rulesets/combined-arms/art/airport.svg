@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-0.5 -0.5 1 1">
+  <!-- 机场：起降坪、塔台（按 3×2 拉伸）；currentColor 是所属玩家的颜色 -->
+  <rect x="-0.46" y="-0.1" width="0.62" height="0.5" rx="0.04" fill="#5c6463" stroke="#182123" stroke-width="0.03"/>
+  <path d="M-0.3 0.03 L-0.3 0.27 M-0.06 0.03 L-0.06 0.27 M-0.3 0.15 L-0.06 0.15" stroke="#e8e2d0" stroke-width="0.04"/>
+  <path d="M-0.42 -0.06 L0.12 -0.06 M-0.42 0.36 L0.12 0.36" stroke="currentColor" stroke-width="0.035" stroke-dasharray="0.06 0.05"/>
+  <rect x="0.22" y="-0.3" width="0.14" height="0.7" fill="#7d8583" stroke="#182123" stroke-width="0.025"/>
+  <path d="M0.16 -0.3 L0.42 -0.3 L0.38 -0.44 L0.2 -0.44 Z" fill="#9fe0ff" stroke="#182123" stroke-width="0.02"/>
+  <circle cx="0.29" cy="-0.47" r="0.03" fill="currentColor"/>
+</svg>

@@ -51,11 +51,19 @@ function applyOne(w: World, p: number, c: unknown): string | null {
   if (c === null || typeof c !== "object") return "命令格式不对"
   const cmd = c as Record<string, unknown>
   const kind = cmd.kind
-  const actorId = kind === "produce" || kind === "cancel" ? cmd.building : cmd.unit
+  const actorId = kind === "produce" || kind === "cancel" || kind === "unload" ? cmd.building : cmd.unit
   if (!isInt(actorId)) return "unit / building 必须是实体或整数 id"
   const e = w.ents.get(actorId)
   // 不存在和不是你的用同一句话，否则 bot 能拿 id 探测看不见的敌人是否还活着
   if (!e || e.owner !== p) return `你没有 #${actorId} 这个实体（可能已经死了）`
+  // 正在换状态（D-266）：只能再下 mode（改主意）和 stop 之外的不走路、不打的命令
+  if (e.switchTo !== null && (kind === "move" || kind === "attackMove" || kind === "attack" || kind === "gather" || kind === "build" || kind === "enter"))
+    return `#${e.id}（${e.type}）正在换状态（换到 ${e.switchTo}，还要 ${e.switchLeft} tick），换好之前不能走、不能打`
+  // 驻扎在建筑里的（D-266）：要走路的命令先出来；stop 留在里面；attack 只能打建筑射程里的
+  if (e.inside && (kind === "move" || kind === "attackMove" || kind === "gather" || kind === "build" || kind === "enter" || kind === "mode")) {
+    const b = w.ents.get(e.inside)
+    if (b && !w.unboard(e, b)) return `#${e.id} 从 #${b.id}（${b.type}）里出不来：旁边没有空位`
+  }
 
   switch (kind) {
     case "move": {
@@ -79,8 +87,14 @@ function applyOne(w: World, p: number, c: unknown): string | null {
       const t = w.ents.get(cmd.target)
       if (!t || !w.visibleTo(p, t)) return `看不到目标 #${cmd.target}`
       if (t.owner !== p && w.isAlly(p, t.owner)) return `不能攻击盟友的 #${t.id}（${t.type}）`
+      if (t.def.layer === "air" && !(e.def.attack.hits ?? ["ground"]).includes("air")) return `#${e.id}（${e.type}）打不到空中的 #${t.id}（${t.type}）`
+      if (t.def.layer !== "air" && !(e.def.attack.hits ?? ["ground"]).includes("ground")) return `#${e.id}（${e.type}）只能打空中的，打不到 #${t.id}（${t.type}）`
       if (!canHit(w, e, t)) return `不能攻击 #${t.id}（${t.type}）：自己的、资源点或无敌`
-      if (e.def.moveTicks <= 0 && w.dist(e, t) > e.def.attack.range) return `#${e.id} 不能移动，#${t.id} 在射程外`
+      if (e.inside) {
+        const b = w.ents.get(e.inside)
+        const r = e.def.attack.range + (b?.def.garrison?.rangeBonus ?? 0)
+        if (b && w.dist(b, t) > r) return `#${e.id} 驻扎在 #${b.id} 里，#${t.id} 在射程外（从建筑算 ${r} 格）：要追就先 unload 或下 move`
+      } else if (e.def.moveTicks <= 0 && w.dist(e, t) > e.def.attack.range) return `#${e.id} 不能移动，#${t.id} 在射程外`
       resetOrder(e, { kind: "attack", target: t.id })
       return null
     }
@@ -149,6 +163,47 @@ function applyOne(w: World, p: number, c: unknown): string | null {
     }
     case "cast":
       return castSkill(w, p, e, cmd)
+    case "mode": {
+      const modes = e.def.modes
+      if (modes.length === 0) return `#${e.id}（${e.type}）没有几种状态`
+      const m = modes.find((x) => x.id === cmd.mode)
+      if (!m) return `#${e.id}（${e.type}）没有 "${String(cmd.mode)}" 这个状态，有：${modes.map((x) => x.id).join("、")}`
+      if (e.switchTo === null && e.mode === m.id) return null
+      if (e.switchTo === m.id) return null
+      resetOrder(e, { kind: "idle" })
+      // 正在换的时候又换回原来的状态：马上就是原样
+      if (e.switchTo !== null && m.id === e.mode) {
+        e.switchTo = null
+        e.switchLeft = 0
+        return null
+      }
+      e.switchTo = m.id
+      e.switchLeft = m.switchTicks
+      return null
+    }
+    case "enter": {
+      if (!isInt(cmd.target)) return "target 必须是实体或整数 id"
+      const b = w.ents.get(cmd.target)
+      if (!b || !w.visibleTo(p, b)) return `看不到 #${cmd.target}`
+      if (b.owner !== p) return `#${b.id}（${b.type}）不是你的，只能进自己的建筑`
+      const g = b.def.garrison
+      if (!g) return `#${b.id}（${b.type}）不能驻扎`
+      if (b.construction) return `#${b.id}（${b.type}）还没建好`
+      if (e.def.kind !== "unit" || e.def.moveTicks <= 0 || e.def.layer !== "ground" || e.w > 1 || e.h > 1) return `#${e.id}（${e.type}）进不去：只有能走的 1×1 地面单位能驻扎`
+      if (g.types.length > 0 && !g.types.includes(e.type)) return `#${b.id}（${b.type}）只能进 ${g.types.join("、")}`
+      if (b.cargo.length >= g.capacity) return `#${b.id}（${b.type}）满了（最多 ${g.capacity} 个）`
+      resetOrder(e, { kind: "enter", target: b.id })
+      return null
+    }
+    case "unload": {
+      if (!e.def.garrison) return `#${e.id}（${e.type}）不能驻扎`
+      if (e.cargo.length === 0) return `#${e.id}（${e.type}）里面没有单位`
+      for (const id of [...e.cargo]) {
+        const u = w.ents.get(id)
+        if (u && !w.unboard(u, e)) return `#${e.id} 旁边没有空位，还有 ${e.cargo.length} 个单位没出来`
+      }
+      return null
+    }
     default:
       return `未知命令 "${String(kind)}"`
   }

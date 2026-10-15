@@ -58,7 +58,34 @@ export function resolveType(name: string, s: TypeSpec): TypeDef {
       defensePct: a.defensePct ?? 0,
     })),
     passives: (s.passives ?? []).map((x) => ({ ...x })),
+    layer: s.kind === "unit" ? (s.layer ?? "ground") : "ground",
+    detect: s.detect ?? 0,
+    modes:
+      s.kind === "unit"
+        ? (s.modes ?? []).map((m, i) => ({
+            id: m.id,
+            name: m.name,
+            switchTicks: m.switchTicks ?? 0,
+            moveTicks: i === 0 || m.moveTicks === undefined ? (s.moveTicks ?? 0) : m.moveTicks,
+            sight: i === 0 || m.sight === undefined ? (s.sight ?? 0) : m.sight,
+            attack: i === 0 || m.attack === undefined ? (s.attack ?? null) : m.attack,
+            layer: i === 0 || m.layer === undefined ? (s.layer ?? "ground") : m.layer,
+          }))
+        : [],
+    garrison: s.kind === "building" && s.garrison ? { capacity: s.garrison.capacity, types: s.garrison.types ?? [], rangeBonus: s.garrison.rangeBonus ?? 0 } : null,
   }
+}
+
+/** 换到某个状态（D-266）的数值：moveTicks、sight、attack、layer 换成那个状态的 */
+export function modeDef(base: TypeDef, mode: string): TypeDef {
+  const m = base.modes.find((x) => x.id === mode)
+  if (!m || m === base.modes[0]) return base
+  return { ...base, moveTicks: m.moveTicks, sight: m.sight, attack: m.attack, layer: m.layer }
+}
+
+/** 攻击能不能打这一层（D-266）：不写 hits 是只打地面；地下的算地面 */
+export function hitsLayer(atk: NonNullable<TypeDef["attack"]>, layer: TypeDef["layer"]): boolean {
+  return (atk.hits ?? ["ground"]).includes(layer === "air" ? "air" : "ground")
 }
 
 /** 增益合计的上下限：伤害最多减到 0，减伤最多 90%（不会无敌） */
@@ -160,7 +187,7 @@ export function statDiff(d: TypeDef, base: TypeDef): StatDiff | undefined {
 }
 
 export function attackable(e: EntityState): boolean {
-  return e.def.kind !== "resource" && e.def.maxHp > 0
+  return e.def.kind !== "resource" && e.def.maxHp > 0 && e.inside === 0
 }
 
 export class World implements SetupContext, RuleContext {
@@ -207,6 +234,13 @@ export class World implements SetupContext, RuleContext {
   status = ""
   /** 每个玩家的视野格（tick 开始时算） */
   vis: Uint8Array[] = []
+  /** 每个玩家（按队伍共用）的探测格（D-266，有地下单位的规则包才算） */
+  det: Uint8Array[] = []
+  /** 规则包里有没有空中、地下的单位，有没有几种状态、能驻扎的（没有的话相关的结算都跳过） */
+  readonly hasOffGrid: boolean
+  readonly hasUnder: boolean
+  readonly hasModes: boolean
+  readonly hasGarrison: boolean
   pf!: PathFinder
   flow!: FlowCache
   /** 建筑、资源点每增减一次加 1，流场缓存据此作废 */
@@ -255,6 +289,11 @@ export class World implements SetupContext, RuleContext {
     this.hasAuras = defs.some((d) => d.auras.length > 0)
     this.hasSkills = defs.some((d) => d.skills.length > 0)
     this.hasPassives = defs.some((d) => d.passives.length > 0)
+    const layers = defs.flatMap((d) => [d.layer, ...d.modes.map((m) => m.layer)])
+    this.hasOffGrid = layers.some((l) => l !== "ground")
+    this.hasUnder = layers.includes("under")
+    this.hasModes = defs.some((d) => d.modes.length > 0)
+    this.hasGarrison = defs.some((d) => d.garrison !== null)
     this.players = names.map((name, id) => ({
       id,
       name,
@@ -302,6 +341,12 @@ export class World implements SetupContext, RuleContext {
       if (!byTeam.has(t)) byTeam.set(t, new Uint8Array(n))
       return byTeam.get(t)!
     })
+    const detByTeam = new Map<number, Uint8Array>()
+    this.det = this.players.map((p) => {
+      const t = this.teams[p.id]
+      if (!detByTeam.has(t)) detByTeam.set(t, new Uint8Array(n))
+      return detByTeam.get(t)!
+    })
   }
 
   inBounds(x: number, y: number): boolean {
@@ -314,6 +359,8 @@ export class World implements SetupContext, RuleContext {
   }
 
   canPlace(def: TypeDef, x: number, y: number): boolean {
+    // 空中单位（D-266）：只要整个占地在地图里
+    if (def.kind === "unit" && def.layer === "air") return this.inBounds(x, y) && this.inBounds(x + def.w - 1, y + def.h - 1)
     for (let yy = y; yy < y + def.h; yy++)
       for (let xx = x; xx < x + def.w; xx++) {
         if (!this.inBounds(xx, yy)) return false
@@ -323,18 +370,38 @@ export class World implements SetupContext, RuleContext {
     return true
   }
 
+  /** 占不占地面的格子（D-266）：空中、地下的单位和驻扎在建筑里的单位不占 */
+  onGrid(e: EntityState): boolean {
+    return e.def.kind !== "unit" || (e.def.layer === "ground" && e.inside === 0)
+  }
+
   private occupy(e: EntityState, val: number): void {
+    if (!this.onGrid(e)) return
     if (e.def.kind !== "unit") this.staticVersion++
     const grid = e.def.kind === "unit" ? this.unitOcc : this.staticOcc
     for (let yy = e.y; yy < e.y + e.h; yy++)
       for (let xx = e.x; xx < e.x + e.w; xx++) grid[yy * this.width + xx] = val
   }
 
+  /** 把单位挪到左上角是 to 这一格（大型单位整块挪；空中、地下的不占格子，只改位置） */
   moveUnit(e: EntityState, to: number): void {
-    this.unitOcc[e.y * this.width + e.x] = 0
+    this.occupy(e, 0)
     e.x = to % this.width
     e.y = (to - e.x) / this.width
-    this.unitOcc[to] = e.id
+    this.occupy(e, e.id)
+  }
+
+  /** 地面单位能不能站到左上角 (x, y)：占地都在图里、地形能走、没有建筑，也没有别的单位（自己占着的格子不算） */
+  footFree(e: EntityState, x: number, y: number): boolean {
+    for (let yy = y; yy < y + e.h; yy++)
+      for (let xx = x; xx < x + e.w; xx++) {
+        if (!this.inBounds(xx, yy)) return false
+        const i = yy * this.width + xx
+        if (!this.staticFree(i)) return false
+        const u = this.unitOcc[i]
+        if (u !== 0 && u !== e.id) return false
+      }
+    return true
   }
 
   // ---------- 实体 ----------
@@ -377,6 +444,11 @@ export class World implements SetupContext, RuleContext {
       defPct: 0,
       lastCombat: -1_000_000,
       stunUntil: 0,
+      mode: def.modes[0]?.id ?? "",
+      switchTo: null,
+      switchLeft: 0,
+      inside: 0,
+      cargo: [],
     }
     this.ents.set(e.id, e)
     this.occupy(e, e.id)
@@ -422,6 +494,22 @@ export class World implements SetupContext, RuleContext {
     e.alive = false
     this.occupy(e, 0)
     this.ents.delete(e.id)
+    // 驻扎（D-266）：在里面的被放到旁边（建筑的占地已经空出来了），放不下的跟着死；自己在里面的从建筑里拿掉
+    if (e.inside) {
+      const b = this.ents.get(e.inside)
+      if (b) b.cargo = b.cargo.filter((id) => id !== e.id)
+    }
+    for (const id of e.cargo.splice(0)) {
+      const u = this.ents.get(id)
+      if (!u) continue
+      if (!this.unboard(u, e)) {
+        u.inside = 0
+        u.lastHitBy = e.lastHitBy
+        u.lastHitNeutral = e.lastHitNeutral
+        u.lastHitType = e.lastHitType
+        this.destroy(u, killer, removed, byNeutral)
+      }
+    }
     this.entPatches.delete(e.id)
     this.ruleBuffs.delete(e.id)
     if (removed) this.removed.add(e.id)
@@ -431,6 +519,34 @@ export class World implements SetupContext, RuleContext {
     for (const p of this.players) {
       if (p.id === e.owner || this.visibleTo(p.id, e)) this.pushEvent(p.id, { kind: "died", tick: this.tick, id: e.id, type: e.type, owner: e.owner, x: e.x, y: e.y, ...flags })
     }
+  }
+
+  /** 单位钻进建筑（D-266）：不占格子、位置记成建筑左上角，命令变 idle */
+  board(u: EntityState, b: EntityState): void {
+    this.occupy(u, 0)
+    u.inside = b.id
+    u.x = b.x
+    u.y = b.y
+    resetOrder(u, { kind: "idle" })
+    b.cargo.push(u.id)
+  }
+
+  /** 单位从建筑 b 里出来，放到旁边；放不下返回 false（还在里面） */
+  unboard(u: EntityState, b: EntityState): boolean {
+    const was = u.inside
+    u.inside = 0
+    const spot = this.findSpotAround(u.def, b, 4)
+    if (!spot) {
+      u.inside = was
+      return false
+    }
+    u.x = spot.x
+    u.y = spot.y
+    this.occupy(u, u.id)
+    b.cargo = b.cargo.filter((id) => id !== u.id)
+    u.path.length = 0
+    u.pathKey = ""
+    return true
   }
 
   pushEvent(player: number, ev: GameEvent): void {
@@ -444,7 +560,7 @@ export class World implements SetupContext, RuleContext {
    * 最多 maxRing 步；多格实体：按曼哈顿圈找。同样远的选离地图中心最近的，再一样随机挑（对称地图上两边一样）。
    */
   findSpotAround(def: TypeDef, around: Rect, maxRing: number): { x: number; y: number } | null {
-    if (def.w === 1 && def.h === 1) return this.findUnitSpot(around, maxRing)
+    if (def.w === 1 && def.h === 1 && !(def.kind === "unit" && def.layer === "air")) return this.findUnitSpot(around, maxRing)
     const cx2 = this.width - def.w
     const cy2 = this.height - def.h
     const ties: { x: number; y: number }[] = []
@@ -540,9 +656,20 @@ export class World implements SetupContext, RuleContext {
   // ---------- 视野 ----------
 
   computeVisibility(): void {
+    // 驻扎在建筑里的单位从建筑的占地算视野、探测（D-266）
+    const rectOf = (e: EntityState) => (e.inside ? (this.ents.get(e.inside) ?? e) : e)
+    if (this.hasUnder) {
+      for (const d of new Set(this.det)) d.fill(0)
+      for (const e of this.ents.values()) if (e.owner >= 0 && e.def.detect > 0 && !e.construction) markSight(this.det[e.owner], this.width, this.height, rectOf(e), e.def.detect)
+    }
     if (!this.rules.fog) return
     for (const v of new Set(this.vis)) v.fill(0)
-    for (const e of this.ents.values()) if (e.owner >= 0) markSight(this.vis[e.owner], this.width, this.height, e, e.def.sight)
+    for (const e of this.ents.values()) if (e.owner >= 0) markSight(this.vis[e.owner], this.width, this.height, rectOf(e), e.def.sight)
+  }
+
+  /** player 那一队探测得到 e 吗（D-266：地下的东西要在探测范围里） */
+  detectedBy(player: number, e: EntityState): boolean {
+    return player >= 0 && rectSeen(this.det[player], this.width, e)
   }
 
   isAlly(a: number, b: number): boolean {
@@ -552,8 +679,11 @@ export class World implements SetupContext, RuleContext {
   /** 资源点和地形一样始终可见（位置、储量都公开）；盟友的实体总是看得见，盟友看得见的你也看得见 */
   visibleTo(player: number, e: EntityState): boolean {
     // 中立实体（规则包指挥的野怪）什么都看得见
-    if (player < 0 || !this.rules.fog || this.isAlly(e.owner, player) || e.def.kind === "resource") return true
-    return rectSeen(this.vis[player], this.width, e)
+    if (player < 0 || this.isAlly(e.owner, player) || e.def.kind === "resource") return true
+    // 驻扎在建筑里的看不见；地下的要探测到（D-266）
+    if (e.inside) return false
+    if (e.def.layer === "under" && !this.detectedBy(player, e)) return false
+    return !this.rules.fog || rectSeen(this.vis[player], this.width, e)
   }
 
   // ---------- 给 bot 的静态信息 ----------
@@ -759,12 +889,23 @@ export class World implements SetupContext, RuleContext {
 
   // ---------- 局中改数值（D-153） ----------
 
-  /** owner 的 type 类实体现在的数值（再叠上实体 id 单独的改动） */
-  private defFor(owner: number, type: string, id?: number): TypeDef {
+  /** 这类实体在某个状态下没被改过的数值（D-266；第一个状态就是 world.types 里那一份） */
+  private modeCache = new Map<string, TypeDef>()
+  baseDef(type: string, mode: string): TypeDef {
     const base = this.types[type]
-    const key = `${owner}|${type}`
+    if (!mode || base.modes.length === 0 || mode === base.modes[0].id) return base
+    const key = `${type}@${mode}`
+    let d = this.modeCache.get(key)
+    if (!d) this.modeCache.set(key, (d = modeDef(base, mode)))
+    return d
+  }
+
+  /** owner 的 type 类实体（在 mode 状态下）现在的数值（再叠上实体 id 单独的改动） */
+  private defFor(owner: number, type: string, id?: number, mode = ""): TypeDef {
+    const base = this.baseDef(type, mode)
+    const key = `${owner}|${type}|${mode}`
     let d = base
-    const tp = this.typePatches.get(key)
+    const tp = this.typePatches.get(`${owner}|${type}`)
     if (tp) {
       d = this.defCache.get(key) ?? applyPatch(base, tp)
       this.defCache.set(key, d)
@@ -773,10 +914,22 @@ export class World implements SetupContext, RuleContext {
     return ep ? applyPatch(d, ep) : d
   }
 
+  /** 换好状态（D-266）：换数值；层变了要改占格（回到地面的那一格被占着时返回 false，等下一 tick 再试） */
+  applyMode(e: EntityState, mode: string): boolean {
+    const was = this.onGrid(e)
+    const next = this.defFor(e.owner, e.type, e.id, mode)
+    if (!was && next.layer === "ground" && e.inside === 0 && !this.footFree(e, e.x, e.y)) return false
+    this.occupy(e, 0)
+    e.mode = mode
+    this.refreshDef(e)
+    this.occupy(e, e.id)
+    return true
+  }
+
   /** 重新算实体的数值；生命上限变大时当前生命加上差值，变小时去掉超出的 */
   private refreshDef(e: EntityState): void {
     const old = e.def.maxHp
-    e.def = this.defFor(e.owner, e.type, e.id)
+    e.def = this.defFor(e.owner, e.type, e.id, e.mode)
     const now = e.def.maxHp
     if (now > old) e.hp = Math.min(now, e.hp + (now - old))
     else if (now < old) e.hp = Math.max(1, Math.min(e.hp, now))
@@ -795,7 +948,7 @@ export class World implements SetupContext, RuleContext {
       if (statDiff(applyPatch(base, merged), base)) this.typePatches.set(key, merged)
       else this.typePatches.delete(key)
     }
-    this.defCache.delete(key)
+    for (const k of [...this.defCache.keys()]) if (k.startsWith(`${key}|`)) this.defCache.delete(k)
     for (const e of this.ents.values()) if (e.owner === player && e.type === type) this.refreshDef(e)
   }
 

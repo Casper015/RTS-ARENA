@@ -11,6 +11,7 @@ import { compileBot, createBot } from "../src/sandbox/quickjs.ts"
 import annihilation from "../rulesets/annihilation/index.ts"
 import frontier from "../rulesets/frontier/index.ts"
 import gunpowder from "../rulesets/gunpowder/index.ts"
+import combinedArms from "../rulesets/combined-arms/index.ts"
 import harvest from "../rulesets/harvest/index.ts"
 import koth from "../rulesets/koth/index.ts"
 import melee from "../rulesets/melee/index.ts"
@@ -34,7 +35,7 @@ const load = async (rules: Ruleset, file: string, p: number) => {
   return { name: file, file, runner: await createBot(c.code, p, { fuel: rules.fuel }) }
 }
 
-for (const rules of [annihilation, koth, harvest, melee, frontier, gunpowder, beacons, wildHerd, caravanRaid, flagRun, counterAnnihilation, counterFrontier, regicideAnnihilation, siegeFrontier] as Ruleset[]) {
+for (const rules of [annihilation, koth, harvest, melee, frontier, gunpowder, beacons, wildHerd, caravanRaid, flagRun, counterAnnihilation, counterFrontier, regicideAnnihilation, siegeFrontier, combinedArms] as Ruleset[]) {
   test(`示例 bot 能通过「${rules.name}」生成的 arena.d.ts 类型检查`, () => {
     const dir = join(ROOT, "rulesets", rules.id, "bots")
     const files = [join(ROOT, "bots", "idle.ts"), ...readdirSync(dir).map((f) => join(dir, f))]

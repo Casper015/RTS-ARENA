@@ -119,6 +119,20 @@ export function applyFrame(s: State, f: Frame): Delta {
     if (bf) e.bf = bf
     else delete e.bf
   }
+  // 状态、驻扎（D-266）
+  for (const [id, md] of f.md ?? []) {
+    const e = s.ents.get(id)
+    if (!e) continue
+    if (md) e.md = md
+    else delete e.md
+  }
+  const ins = f.in ?? []
+  for (let i = 0; i < ins.length; i += 2) {
+    const e = s.ents.get(ins[i])
+    if (!e) continue
+    if (ins[i + 1]) e.in = ins[i + 1]
+    else delete e.in
+  }
   const bp = f.bp ?? []
   for (let i = 0; i < bp.length; i += 2) {
     const e = s.ents.get(bp[i])
@@ -136,4 +150,14 @@ export function applyFrame(s: State, f: Frame): Delta {
   if (f.status !== undefined) s.status = f.status
   s.tick = f.t
   return d
+}
+
+/** 实体现在的状态（D-266，第一个状态和没有状态的类型返回 undefined） */
+export function modeOf(replay: Replay, e: EntSnap): NonNullable<Replay["types"][string]["modes"]>[number] | undefined {
+  return e.md ? replay.types[e.type]?.modes?.find((m) => m.id === e.md) : undefined
+}
+
+/** 实体现在在哪一层（D-266）：换了状态的按那个状态 */
+export function layerOf(replay: Replay, e: EntSnap): "ground" | "air" | "under" {
+  return modeOf(replay, e)?.layer ?? replay.types[e.type]?.layer ?? "ground"
 }

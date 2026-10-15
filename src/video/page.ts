@@ -997,8 +997,9 @@ export function installVideoPage(artFactory: typeof createBattleArt): void {
     const workers = new Map<number, BattlePose>((f.workers ?? []).map((w: { index: number; pose: BattlePose }) => [w.index, w.pose]))
     // Paint from back to front; neighboring soldiers overlap naturally, with buildings behind units.
     const order = Array.from({ length: e.length / 8 }, (_, k) => k * 8).sort((a, b) => {
-      const ak = s.types[e[a + 5]].kind === "unit" ? 1 : 0
-      const bk = s.types[e[b + 5]].kind === "unit" ? 1 : 0
+      // 建筑最先、地面单位其次、空中单位（D-266）最后画
+      const ak = s.types[e[a + 5]].kind === "unit" ? (s.types[e[a + 5]].layer === "air" ? 2 : 1) : 0
+      const bk = s.types[e[b + 5]].kind === "unit" ? (s.types[e[b + 5]].layer === "air" ? 2 : 1) : 0
       return ak - bk || e[a + 1] + e[a + 3] - e[b + 1] - e[b + 3] || e[a] - e[b]
     })
     for (const k of order) {

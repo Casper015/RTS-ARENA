@@ -23,6 +23,9 @@ export function fnBot(onTick: (view: View, cmd: Commands) => void): BotRunner {
           else if (typeof t === "number" || "id" in t) out.push({ kind: "cast", unit: idOf(u), skill, target: idOf(t as Entity | number) })
           else out.push({ kind: "cast", unit: idOf(u), skill, x: t.x, y: t.y })
         },
+        mode: (u, mode) => out.push({ kind: "mode", unit: idOf(u), mode }),
+        enter: (u, b) => out.push({ kind: "enter", unit: idOf(u), target: idOf(b) }),
+        unload: (b) => out.push({ kind: "unload", building: idOf(b) }),
       }
       onTick(JSON.parse(viewJson) as View, cmd)
       return { commands: out, logs: [], fuel: 0, ms: 0 }

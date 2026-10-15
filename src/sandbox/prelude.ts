@@ -71,7 +71,11 @@ export function preludeSource(maxCommands: number, maxLines: number, maxLine: nu
         else { c.x = num(t.x); c.y = num(t.y); }
       }
       push(c);
-    }
+    },
+    // 状态、驻扎（D-266）
+    mode: function (u, m) { push({ kind: "mode", unit: idOf(u), mode: typeof m === "string" ? m : null }); },
+    enter: function (u, b) { push({ kind: "enter", unit: idOf(u), target: idOf(b) }); },
+    unload: function (b) { push({ kind: "unload", building: idOf(b) }); }
   });
 
   function dist(a, b) {

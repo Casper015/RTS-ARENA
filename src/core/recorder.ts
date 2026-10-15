@@ -4,6 +4,8 @@ import type { EntityState, EntSnap, Frame, PlayerSnap, Snapshot, StatDiff } from
 import { statDiff, type World } from "./world.ts"
 
 export function orderText(e: EntityState): string {
+  // 正在换状态（D-266）：命令是 idle，写成「换状态 → siege」
+  if (e.switchTo !== null) return `mode→${e.switchTo}`
   const o: Order = e.order
   switch (o.kind) {
     case "idle":
@@ -18,6 +20,8 @@ export function orderText(e: EntityState): string {
       return o.returning ? `gather #${o.target} 回程` : `gather #${o.target}`
     case "build":
       return `build #${o.target}`
+    case "enter":
+      return `enter #${o.target}`
   }
 }
 
@@ -25,11 +29,14 @@ function snapOf(e: EntityState, w: World): EntSnap {
   const s: EntSnap = { id: e.id, type: e.type, owner: e.owner, x: e.x, y: e.y, hp: e.def.kind === "resource" ? e.amount : e.hp, ord: orderText(e) }
   if (e.construction) s.bp = Math.floor((100 * e.construction.done) / e.construction.total)
   if (e.def.produces.length || e.queue.length) s.queue = e.queue.map(q => ({ ...q }))
-  const st = statDiff(e.def, w.types[e.type])
+  const st = statDiff(e.def, w.baseDef(e.type, e.mode))
   if (st) s.st = st
   // 眩晕（D-207）跟增益记在一起，播放器显示成「眩晕」
   const stun = w.stunLeft(e) > 0
   if (e.buffs.length || stun) s.bf = [...e.buffs.map((b) => b.name), ...(stun ? ["眩晕"] : [])]
+  // 状态、驻扎（D-266）
+  if (e.def.modes.length && e.mode !== e.def.modes[0].id) s.md = e.mode
+  if (e.inside) s.in = e.inside
   return s
 }
 
@@ -67,6 +74,8 @@ export class Recorder {
     const owner: number[] = []
     const st: [number, StatDiff | null][] = []
     const bf: [number, string[] | null][] = []
+    const md: [number, string | null][] = []
+    const inside: number[] = []
     for (const e of w.ents.values()) {
       const prev = this.last.get(e.id)
       const cur = snapOf(e, w)
@@ -83,6 +92,8 @@ export class Recorder {
       if (prev.owner !== cur.owner) owner.push(e.id, cur.owner)
       if ((prev.st || cur.st) && JSON.stringify(prev.st) !== JSON.stringify(cur.st)) st.push([e.id, cur.st ?? null])
       if ((prev.bf || cur.bf) && (prev.bf ?? []).join("|") !== (cur.bf ?? []).join("|")) bf.push([e.id, cur.bf ?? null])
+      if (prev.md !== cur.md) md.push([e.id, cur.md ?? null])
+      if (prev.in !== cur.in) inside.push(e.id, cur.in ?? 0)
       this.last.set(e.id, cur)
     }
     const die: number[] = []
@@ -104,6 +115,8 @@ export class Recorder {
     if (owner.length) f.owner = owner
     if (st.length) f.st = st
     if (bf.length) f.bf = bf
+    if (md.length) f.md = md
+    if (inside.length) f.in = inside
     if (w.heals.length) f.heal = w.heals.splice(0)
     if (w.fx.length) f.fx = w.fx.splice(0)
     if (w.casts.length) f.casts = w.casts.splice(0).map((c) => ({ u: c.unit, s: c.skill, ...(c.x !== undefined ? { x: c.x, y: c.y } : {}), ...(c.target !== undefined ? { t: c.target } : {}) }))

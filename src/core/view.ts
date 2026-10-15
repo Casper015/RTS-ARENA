@@ -13,7 +13,7 @@ export function buildView(w: World, p: number): View {
     const v: Entity = { id: e.id, type: e.type, owner: e.owner, x: e.x, y: e.y, w: e.w, h: e.h, hp: e.hp, maxHp: e.def.maxHp }
     if (e.def.kind === "resource") v.amount = e.amount
     // 规则包改过的数值（科技、增益……）：只给和 game.types 不一样的项，生命上限已经在 maxHp 里
-    const st = statDiff(e.def, w.types[e.type])
+    const st = statDiff(e.def, w.baseDef(e.type, e.mode))
     if (st) {
       const { maxHp: _, ...rest } = st
       if (Object.keys(rest).length) v.stats = rest
@@ -24,8 +24,14 @@ export function buildView(w: World, p: number): View {
     // 眩晕（D-207）：看得到实体就看得到还剩几 tick
     const stun = w.stunLeft(e)
     if (stun > 0) v.stunned = stun
+    // 状态、层、驻扎（D-266）
+    if (e.def.modes.length) v.mode = e.mode
+    if (e.switchTo !== null) v.switching = { to: e.switchTo, ticksLeft: e.switchLeft }
+    if (e.def.layer !== "ground") v.layer = e.def.layer
+    if (e.def.garrison && w.isAlly(e.owner, p)) v.garrison = [...e.cargo]
     if (e.owner === p) {
       v.order = copyOrder(e.order)
+      if (e.inside) v.inside = e.inside
       if (e.carrying) v.carrying = { ...e.carrying }
       if (e.def.produces.length > 0) v.queue = e.queue.map((q) => ({ ...q }))
       if (e.def.attack) v.cooldown = e.attackCd

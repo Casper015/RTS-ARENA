@@ -716,6 +716,9 @@ export function onTick(view: View, cmd: Commands): void {
         cmd.cast(u, skill, { x, y })
       } else cmd.cast(u, skill, t)
     },
+    mode: (u, m) => cmd.mode(u, m),
+    enter: (u, b) => cmd.enter(u, b),
+    unload: (b) => cmd.unload(b),
   }
   ;(globalThis as unknown as { game: Game }).game = turnedGame
   try {

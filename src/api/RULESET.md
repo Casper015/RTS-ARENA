@@ -100,6 +100,14 @@ export default ruleset
 - 叠加层 `setMarkers([...])`（回放里画，bot 看不到）：区域 `{ kind: "zone", x, y, w, h, owner, label?, color? }`（owner 是玩家编号或 null，按它上色；写了 `color: "#rrggbb"` 就用这个颜色），文字 `{ kind: "label", x, y, text, owner? }`；文字最多 40 字，最多 500 个。每次调用整个替换，不变就不用每 tick 都设。
 - 溅射伤害：类型的 `attack.splash`（1～3，D-217）——打中目标时，目标占的格子往外扩这么多格的方圈里别的敌方实体也挨一下，伤害按各自的类型算 `vs`、算增益，打玩家的东西时不溅到中立的；平台在落点放一个橙色的画面特效。
 - 命中率：类型的 `attack.accuracy`（1～100 的整数，D-257，不写就是 100）——每一下有这么多机会打中目标，打偏时落在目标周围一圈里随机的一格，那格有能打的敌方实体就打中它，没有就打空；打偏的那一下不溅射。回放记下落点（`frame.miss`），播放器和视频画子弹打到那一格。`setTypeStats` / `setStats` 能改 `attack.accuracy`（只有原来就写了命中率的类型能改）。
+- 层、大型单位、状态、驻扎（D-266，平台实现，规则包只在类型里写；bot 怎么用见 PLATFORM.md「层、大型单位、状态、驻扎」）：
+  - `layer`（只有单位能写）：`"ground"`（默认）、`"air"`（空中：飞过一切、不挡路，只有 `attack.hits` 里有 `"air"` 的打得到）、`"under"`（地下：不挡路，对手要探测到才看得见、打得到）。
+  - `attack.hits`：`["ground"]`（默认）、`["air"]`、`["ground", "air"]`；`attack.suicide: true` 是打一下自己就没了（地雷这类，不算被谁打死）。
+  - `detect`：探测半径（0～16）：这个范围里对手地下的东西看得见、打得到。
+  - 单位的 `w`、`h` 最大 3（大型单位）：地面的整块站得下才走，空中的不管地形。
+  - `modes`（只有单位能写，2～4 个）：`[{ id: "move", name: "行进", switchTicks: 30 }, { id: "siege", name: "架炮", switchTicks: 40, moveTicks: 0, attack: { ... }, layer?, sight?, look: { label?, art? } }]`。第一个是刚造出来时的状态，只能写 id、name、switchTicks、look，数值就是类型上的；后面的写和类型不一样的 `moveTicks`、`sight`、`attack`（null 是这个状态不能打）、`layer`，`switchTicks` 是换到这个状态要几 tick。`look.art` 是这个状态下的素材（规则包目录里的 .svg，和类型的 look.art 一样由平台读进来）。`setTypeStats` 的改动叠在每个状态的数值上（改 attack.damage 会把每个状态的伤害都改成同一个数，有状态的类型别这么改）。
+  - `garrison`（只有建筑能写）：`{ capacity: 1～12, types?: [单位类型], rangeBonus?: 0～4 }`。bot 用 `cmd.enter`、`cmd.unload` 进出；在里面的对手看不见、打不到，从建筑开火射程加 rangeBonus；建筑没了里面的被放到旁边。
+  - 回放记下状态（`md`）和驻扎（`in`），播放器和视频按状态的素材画、空中的画在高处带影子、地下的画成半透明、驻扎在里面的不画；`rts-arena docs` 的单位表后面自动列出这些。
 - 画面特效：`effect({ x, y, w?, h?, text?, color?, radius? })` 在左上角 (x, y)、w×h 的区域爆开一圈光、飘一行字（最多 12 字，比如击退的「击退」），播放器和联赛视频会画，bot 看不到；color 写 `#rrggbb`，不写是金色；radius 是光圈往外扩散多少格（1～24，不写是 2～3 格，比如击退写视野格数，冲击波扩散到视野边上）。
 - 改实体：`setHp(id, hp)`（改到 0 或以下就死，击杀者算 -1）、`teleport(id, x, y)`（把单位瞬间挪过去，击退、传送用；目标格要地形能走、没有任何实体，不然抛错；命令不变，回放里记成一次移动）、`stun(id, ticks)`（眩晕单位 1～600 tick：不能走、不能打、不能采集、不能建造，命令不变、过后接着做，技能照样能放；已经在眩晕的取剩得多的；bot 看到 `entity.stunned`，播放器显示「眩晕」）、`setOwner(id, player)`（占领、招降、变成中立 -1；命令变成 idle，生产队列清空不退钱；换主人的那一刻不检查单位上限，之后照常算进新主人的单位数，满了新主人就造不了兵）。回放会记下换主人：播放器按新主人上色，战报的关键事件里有"换主人"。
 - **兵种克制**（D-166）：`attack: { damage: 9, range: 1, cooldown: 8, vs: { cavalry: 3 } }` 是打 `cavalry` 时伤害乘 3（四舍五入；倍数 0～10，可以是小数，小于 1 就是打这类吃亏）。bot 从 `game.types` 看到倍数，说明书的单位表和视频的单位图例会自动标出来。倍数不能局中改（`setTypeStats` 改的 damage 照样乘倍数）。例子：自带的「克制歼灭」「克制拓荒」规则包，枪兵克骑兵、骑兵克弓兵、弓兵克枪兵。

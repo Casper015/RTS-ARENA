@@ -6,6 +6,7 @@ import { createRequire } from "node:module"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { resolveType, World } from "../core/world.ts"
+import type { TypeDef } from "../api/bot-api.ts"
 import type { EntityState, Ruleset } from "../core/types.ts"
 import { PKG_ROOT } from "../paths.ts"
 import { referenceBots } from "./catalog.ts"
@@ -120,7 +121,36 @@ export function unitTable(rules: Ruleset): string {
   }
   const abilities = abilityText(defs.map(({ d }) => d))
   if (abilities) rows.push("", abilities)
+  const layers = layerText(defs.map(({ d }) => d))
+  if (layers) rows.push("", layers)
   return rows.join("\n")
+}
+
+/** 层、能打哪一层、探测、几种状态、驻扎、大型单位（D-266）：有用到的才写 */
+function layerText(defs: TypeDef[]): string {
+  const out: string[] = []
+  const atk = (a: TypeDef["attack"]) =>
+    a ? `攻击 ${a.damage} / ${a.range} / ${a.cooldown}${a.splash ? `（溅射 ${a.splash} 格）` : ""}${a.suicide ? "（打一下自己就没了）" : ""}，打${(a.hits ?? ["ground"]).map((h) => (h === "air" ? "空中" : "地面")).join("和")}` : "不能攻击"
+  const layerName = { ground: "地面", air: "空中", under: "地下" }
+  const air = defs.filter((d) => d.layer === "air" || d.modes.some((m) => m.layer === "air"))
+  const under = defs.filter((d) => d.layer === "under" || d.modes.some((m) => m.layer === "under"))
+  const hitsAir = defs.filter((d) => d.attack?.hits?.includes("air") || d.modes.some((m) => m.attack?.hits?.includes("air")))
+  if (air.length) out.push(`- **空中**（${air.map((d) => "`" + d.name + "`").join("、")}）：飞过水、墙、建筑和别的单位，不挡路；只有攻击能打空中的打得到它（${hitsAir.map((d) => "`" + d.name + "`").join("、") || "没有"}）。`)
+  if (under.length) {
+    const det = defs.filter((d) => d.detect > 0)
+    out.push(`- **地下**（${under.map((d) => "`" + d.name + "`").join("、")}）：不挡路；对手要在自己的探测范围里才看得见、打得到（能探测的：${det.map((d) => "`" + d.name + "`（" + d.detect + " 格）").join("、") || "没有"}）。`)
+  }
+  const big = defs.filter((d) => d.kind === "unit" && (d.w > 1 || d.h > 1))
+  if (big.length) out.push(`- **大型单位**（${big.map((d) => "`" + d.name + "`（" + d.w + "×" + d.h + "）").join("、")}）：x、y 是占地左上角，射程、视野从占地最近的格子算；地面的大型单位走路要整块站得下，窄路口过不去。`)
+  for (const d of defs.filter((x) => x.modes.length)) {
+    const list = d.modes.map((m, i) => `\`${m.id}\`（${m.name}${i === 0 ? "，刚造出来是它" : ""}，换过来 ${m.switchTicks} tick）：${m.layer !== "ground" ? layerName[m.layer] + "，" : ""}${m.moveTicks ? `走一格 ${m.moveTicks} tick` : "不能动"}，视野 ${m.sight}，${atk(m.attack)}`)
+    out.push(`- **\`${d.name}\` 的状态**（\`cmd.mode(单位, 状态 id)\` 切换，切换中不能走、不能打）：${list.join("；")}。`)
+  }
+  for (const d of defs.filter((x) => x.garrison)) {
+    const g = d.garrison!
+    out.push(`- **\`${d.name}\` 能驻扎**：最多 ${g.capacity} 个（${g.types.length ? g.types.map((t) => "`" + t + "`").join("、") : "能走的 1×1 地面单位"}），\`cmd.enter(单位, 建筑)\` 进、\`cmd.unload(建筑)\` 全部出来；在里面的对手看不见、打不到，从建筑开火射程 +${g.rangeBonus}。`)
+  }
+  return out.length ? ["层、状态、驻扎（D-266，见平台说明里的「层、大型单位、状态、驻扎」）：", ...out].join("\n") : ""
 }
 
 const pct = (n: number) => (n > 0 ? `+${n}%` : `${n}%`)

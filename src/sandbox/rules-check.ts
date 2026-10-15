@@ -16,6 +16,24 @@ export const RULES_HARD = {
 }
 
 const SHAPES = ["circle", "square", "triangle", "diamond", "hex"]
+const LAYERS = ["ground", "air", "under"]
+
+/** 攻击的写法：伤害、射程、冷却、溅射、命中率、克制倍数，能打哪一层、打一下就没了（D-266） */
+function checkAttack(a: unknown, at: string, names: Set<string>, bad: (msg: string) => void): void {
+  if (!isObj(a) || !isInt(a.damage, 0) || !isInt(a.range, 1, 16) || !isInt(a.cooldown, 1)) bad(`${at}.attack 要写成 { damage ≥ 0, range 1～16, cooldown ≥ 1 }（整数）`)
+  else if (a.splash !== undefined && !isInt(a.splash, 1, 3)) bad(`${at}.attack.splash（溅射）要是 1～3 的整数`)
+  else if (a.accuracy !== undefined && !isInt(a.accuracy, 1, 100)) bad(`${at}.attack.accuracy（命中率，百分数）要是 1～100 的整数`)
+  else if (a.hits !== undefined && (!Array.isArray(a.hits) || a.hits.length === 0 || a.hits.some((x) => x !== "ground" && x !== "air") || new Set(a.hits).size !== a.hits.length))
+    bad(`${at}.attack.hits 要是 ["ground"]、["air"] 或 ["ground", "air"]`)
+  else if (a.suicide !== undefined && a.suicide !== true) bad(`${at}.attack.suicide 只能写 true（打一下就没了）`)
+  else if (a.vs !== undefined) {
+    // 克制倍数（D-166）：打这些类型时伤害乘几倍
+    if (!isObj(a.vs)) bad(`${at}.attack.vs 要写成 { 类型名: 倍数 }，比如 { cavalry: 3 }`)
+    else
+      for (const [k, m] of Object.entries(a.vs))
+        if (!names.has(k) || typeof m !== "number" || !Number.isFinite(m) || m < 0 || m > 10) bad(`${at}.attack.vs.${k}：类型要是已定义的类型名，倍数是 0～10 的数`)
+  }
+}
 const KINDS = ["unit", "building", "resource"]
 const NAME = /^[a-z][a-z0-9_]{0,31}$/
 
@@ -93,27 +111,55 @@ export function checkRulesetData(d: unknown, callbacks: string[]): string[] {
         bad(`${at}.kind 要是 unit、building、resource 之一`)
         continue
       }
-      const side = kind === "unit" ? 1 : RULES_HARD.buildingSide
-      for (const k of ["w", "h"]) if (s[k] !== undefined && !isInt(s[k], 1, side)) bad(`${at}.${k} 要是 1～${side} 的整数${kind === "unit" ? "（单位只能是 1×1）" : ""}`)
+      // 单位最大 3×3（D-266：大型单位）
+      const side = kind === "unit" ? 3 : RULES_HARD.buildingSide
+      for (const k of ["w", "h"]) if (s[k] !== undefined && !isInt(s[k], 1, side)) bad(`${at}.${k} 要是 1～${side} 的整数${kind === "unit" ? "（单位最大 3×3）" : ""}`)
+      // 层、探测、状态、驻扎（D-266）
+      if (s.layer !== undefined && (kind !== "unit" || !LAYERS.includes(s.layer as string))) bad(`${at}.layer：只有单位能写，要是 ${LAYERS.join("、")} 之一`)
+      if (s.detect !== undefined && !isInt(s.detect, 0, 16)) bad(`${at}.detect（探测半径）要是 0～16 的整数`)
+      if (s.garrison !== undefined) {
+        const g = s.garrison
+        if (kind !== "building") bad(`${at}.garrison：只有建筑能驻扎单位`)
+        else if (!isObj(g) || !isInt(g.capacity, 1, 12) || (g.rangeBonus !== undefined && !isInt(g.rangeBonus, 0, 4))) bad(`${at}.garrison 要写成 { capacity: 1～12, types?: [单位类型], rangeBonus?: 0～4 }`)
+        else if (g.types !== undefined && (!Array.isArray(g.types) || g.types.some((x) => typeof x !== "string" || (types[x as string] as Obj | undefined)?.kind !== "unit")))
+          bad(`${at}.garrison.types 要是单位类型名的数组`)
+      }
+      if (s.modes !== undefined) {
+        const ms = s.modes
+        if (kind !== "unit") bad(`${at}.modes：只有单位能有几种状态`)
+        else if (!Array.isArray(ms) || ms.length < 2 || ms.length > 4) bad(`${at}.modes 要是 2～4 个状态的数组（第一个是刚造出来时的状态）`)
+        else {
+          const ids = new Set<string>()
+          ms.forEach((m, i) => {
+            const w = `${at}.modes[${i}]`
+            if (!isObj(m) || typeof m.id !== "string" || !/^[a-z][a-zA-Z0-9]{0,15}$/.test(m.id)) return bad(`${w}.id 要是小写字母开头的英文名（cmd.mode 用它）`)
+            if (ids.has(m.id)) bad(`${w}.id "${m.id}" 重复了`)
+            ids.add(m.id)
+            if (typeof m.name !== "string" || [...m.name].length < 1 || [...m.name].length > 6) bad(`${w}.name 要写 1～6 个字`)
+            if (m.switchTicks !== undefined && !isInt(m.switchTicks, 0, 600)) bad(`${w}.switchTicks 要是 0～600 的整数`)
+            const extra = Object.keys(m).filter((k) => !["id", "name", "switchTicks", "look"].includes(k))
+            if (i === 0 && extra.length) bad(`${w}：第一个状态的数值就是类型上写的，只能写 id、name、switchTicks、look（多了 ${extra.join("、")}）`)
+            for (const k of extra) if (!["moveTicks", "sight", "attack", "layer"].includes(k)) bad(`${w} 只能写 id、name、switchTicks、moveTicks、sight、attack、layer、look（多了 ${k}）`)
+            if (m.moveTicks !== undefined && !isInt(m.moveTicks, 0)) bad(`${w}.moveTicks 要是非负整数`)
+            if (m.sight !== undefined && !isInt(m.sight, 0, 32)) bad(`${w}.sight 要是 0～32 的整数`)
+            if (m.layer !== undefined && !LAYERS.includes(m.layer as string)) bad(`${w}.layer 要是 ${LAYERS.join("、")} 之一`)
+            if (m.attack !== undefined && m.attack !== null) checkAttack(m.attack, w, names, bad)
+            if (m.look !== undefined) {
+              const l = m.look
+              if (!isObj(l) || Object.keys(l).some((k) => !["label", "art"].includes(k))) bad(`${w}.look 只能写 label、art`)
+              else if (l.label !== undefined && (typeof l.label !== "string" || [...l.label].length > 2)) bad(`${w}.look.label 最多 2 个字`)
+              else if (l.art !== undefined && (!isObj(l.art) || Object.keys(l.art).some((k) => !["base", "under", "over", "sprite"].includes(k)))) bad(`${w}.look.art 要写成 { base?, under?, over?, sprite? }`)
+            }
+          })
+        }
+      }
       for (const k of ["maxHp", "buildTicks", "moveTicks", "amount"]) if (s[k] !== undefined && !isInt(s[k], 0)) bad(`${at}.${k} 要是非负整数`)
       if (s.sight !== undefined && !isInt(s.sight, 0, 32)) bad(`${at}.sight 要是 0～32 的整数`)
       if (s.cost !== undefined) {
         if (!isObj(s.cost)) bad(`${at}.cost 要写成 { 资源名: 数量 }`)
         else for (const [r, n] of Object.entries(s.cost)) if (!resSet.has(r) || !isInt(n, 0)) bad(`${at}.cost.${r}：资源要在 resources 里，数量是非负整数`)
       }
-      if (s.attack !== undefined && s.attack !== null) {
-        const a = s.attack
-        if (!isObj(a) || !isInt(a.damage, 0) || !isInt(a.range, 1, 16) || !isInt(a.cooldown, 1)) bad(`${at}.attack 要写成 { damage ≥ 0, range 1～16, cooldown ≥ 1 }（整数）`)
-        else if (a.splash !== undefined && !isInt(a.splash, 1, 3)) bad(`${at}.attack.splash（溅射）要是 1～3 的整数`)
-        else if (a.accuracy !== undefined && !isInt(a.accuracy, 1, 100)) bad(`${at}.attack.accuracy（命中率，百分数）要是 1～100 的整数`)
-        else if (a.vs !== undefined) {
-          // 克制倍数（D-166）：打这些类型时伤害乘几倍
-          if (!isObj(a.vs)) bad(`${at}.attack.vs 要写成 { 类型名: 倍数 }，比如 { cavalry: 3 }`)
-          else
-            for (const [k, m] of Object.entries(a.vs))
-              if (!names.has(k) || typeof m !== "number" || !Number.isFinite(m) || m < 0 || m > 10) bad(`${at}.attack.vs.${k}：类型要是已定义的类型名，倍数是 0～10 的数`)
-        }
-      }
+      if (s.attack !== undefined && s.attack !== null) checkAttack(s.attack, at, names, bad)
       if (s.gather !== undefined && s.gather !== null) {
         const g = s.gather
         if (kind !== "unit") bad(`${at}.gather：只有单位能采集`)

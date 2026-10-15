@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-0.45 -0.2 0.9 0.6">
+  <!-- 地雷（埋设）：半埋在土里，只露出顶盖和红灯；currentColor 是所属玩家的颜色 -->
+  <ellipse cx="0" cy="0.2" rx="0.4" ry="0.13" fill="#6b5a3e" stroke="#4a3d29" stroke-width="0.02"/>
+  <path d="M-0.24 0.12 L-0.24 0.02" stroke="#59625f" stroke-width="0.045" stroke-linecap="round"/>
+  <path d="M-0.08 0.12 L-0.08 0.02" stroke="#59625f" stroke-width="0.045" stroke-linecap="round"/>
+  <path d="M0.08 0.12 L0.08 0.02" stroke="#59625f" stroke-width="0.045" stroke-linecap="round"/>
+  <path d="M0.24 0.12 L0.24 0.02" stroke="#59625f" stroke-width="0.045" stroke-linecap="round"/>
+  <ellipse cx="0" cy="0.13" rx="0.27" ry="0.08" fill="currentColor" stroke="#182123" stroke-width="0.03"/>
+  <circle cx="0" cy="0.12" r="0.035" fill="#ff5a4a"/>
+</svg>

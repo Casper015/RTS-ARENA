@@ -1,5 +1,6 @@
 // PixiJS 画面：地形、实体、攻击线、叠加层；拖动平移、滚轮缩放、点击选中；可以按某一队的视野看（迷雾）
 import { Application, CanvasSource, Container, Graphics, Sprite, Text, Texture } from "pixi.js"
+import { layerOf } from "../../src/core/replay-model.ts"
 import type { EntSnap, Marker, Replay } from "../../src/core/types.ts"
 import { createBattleArt, type BattleAttack, type BattlePose, type BattleType } from "../../src/video/battle-art.ts"
 import { interpolateBattleCamera, type BattleCamera } from "../../src/video/battle-camera.ts"
@@ -234,7 +235,7 @@ export class Renderer {
     const team = this.team
     const vision = this.vision
     if (team === null || !vision) {
-      for (const v of this.views.values()) v.root.visible = true
+      for (const [id, v] of this.views) v.root.visible = !this.state.ents.get(id)?.in
       this.fogLayer.visible = false
       return
     }
@@ -410,9 +411,12 @@ export class Renderer {
     this.refreshVision()
   }
 
-  private battleType(name: string): BattleType {
+  private battleType(name: string, md?: string): BattleType {
     const info = this.replay.types[name]
-    return { name, kind: info.kind, label: info.look?.label, shape: info.look?.shape, worker: info.worker, range: info.attack?.range, splash: info.attack?.splash, art: info.look?.art }
+    const m = md ? info.modes?.find((x) => x.id === md) : undefined
+    if (m)
+      return { name, kind: info.kind, label: m.look?.label ?? info.look?.label, shape: info.look?.shape, worker: info.worker, range: m.attack?.range, splash: m.attack?.splash, art: m.look?.art ? { ...info.look?.art, ...m.look.art } : info.look?.art, layer: m.layer }
+    return { name, kind: info.kind, label: info.look?.label, shape: info.look?.shape, worker: info.worker, range: info.attack?.range, splash: info.attack?.splash, art: info.look?.art, layer: info.layer }
   }
 
   private skin(e: EntSnap, angle = 0, walk = 0, attack = -1, hit = 0, labor?: BattlePose): { key: string; texture: Texture } {
@@ -424,7 +428,7 @@ export class Renderer {
     const work = labor?.work === undefined || labor.work < 0 ? -1 : Math.min(9, Math.floor(labor.work * 10))
     const progress = e.bp === undefined ? 100 : Math.floor(e.bp / 25) * 25
     const color = info.look?.color ?? "#" + playerColor(e.owner).toString(16).padStart(6, "0")
-    const key = [e.type, color, turn, step, swing, flash, progress, work, labor?.job, labor?.carrying ? 1 : 0].join("|")
+    const key = [e.type, e.md ?? "", color, turn, step, swing, flash, progress, work, labor?.job, labor?.carrying ? 1 : 0].join("|")
     let texture = this.skins.get(key)
     if (!texture) {
       const canvas = document.createElement("canvas")
@@ -432,7 +436,7 @@ export class Renderer {
       canvas.height = (info.h + 2) * TILE * 2
       const g = canvas.getContext("2d")!
       g.scale(TILE * 2, TILE * 2)
-      this.art.entity(g, this.battleType(e.type), 1, 1, info.w, info.h, color, { angle: turn * Math.PI / 4, walk: step, attack: swing < 0 ? -1 : swing / 6, hit: flash, work: work < 0 ? -1 : work / 10, job: labor?.job, carrying: labor?.carrying }, progress)
+      this.art.entity(g, this.battleType(e.type, e.md), 1, 1, info.w, info.h, color, { angle: turn * Math.PI / 4, walk: step, attack: swing < 0 ? -1 : swing / 6, hit: flash, work: work < 0 ? -1 : work / 10, job: labor?.job, carrying: labor?.carrying }, progress)
       texture = new Texture({ source: new CanvasSource({ resource: canvas }) })
       this.skins.set(key, texture)
     }
@@ -506,7 +510,7 @@ export class Renderer {
       const e = this.state.ents.get(id)
       if (e) {
         const unit = this.replay.types[e.type]?.kind === "unit"
-        v.root.zIndex = (unit ? this.replay.map.height + 1 : 0) + py + v.h
+        v.root.zIndex = (unit ? this.replay.map.height + 1 : 0) + py + v.h + (unit && layerOf(this.replay, e) === "air" ? 2 * (this.replay.map.height + 1) : 0)
         if (v.root.visible) {
           const walking = unit && p < 1 && (v.x !== v.fx || v.y !== v.fy) ? Math.sin(now / v.dur * Math.PI + id * 1.7) : 0
           const attack = now - v.attackAt < v.attackDuration ? Math.max(0, (now - v.attackAt) / v.attackDuration) : -1
@@ -516,7 +520,8 @@ export class Renderer {
           if (skin.key !== v.skin) { v.body.texture = skin.texture; v.skin = skin.key }
         }
       }
-      const queueKey=JSON.stringify([e?.queue,this.team])
+      const cargo = e && this.replay.types[e.type]?.garrison ? [...this.state.ents.values()].filter((u) => u.in === id).length : 0
+      const queueKey=JSON.stringify([e?.queue,this.team,cargo])
       if (e && (e.hp !== v.lastHp || (e.bp ?? 100) !== v.lastBp || queueKey!==v.lastQueue)) {
         v.lastHp = e.hp
         v.lastBp = e.bp ?? 100
@@ -723,6 +728,12 @@ export class Renderer {
         g.rect(1,y+1,w*q.progress,1.5).fill(q.blocked?0xde806b:0xdfb76d)
       })
       queue.forEach((q,i)=>g.rect(1+i*4,v.h*TILE+4+active.length*4,2.5,2.5).fill(q.active?0xdfb76d:0x617780))
+    }
+    // 驻扎（D-266）：自己这边（或看全局时）在建筑顶上画几个小点，几个兵在里面
+    const g2 = this.replay.types[e.type]?.garrison
+    if (g2 && (this.team === null || (this.replay.players[e.owner]?.team ?? e.owner) === this.team)) {
+      const n = [...this.state.ents.values()].filter((u) => u.in === e.id).length
+      for (let i = 0; i < g2.capacity; i++) g.circle(4 + i * 5, 4, 1.8).fill(i < n ? 0xf2c14e : 0x2a3438)
     }
     if (!max || e.hp >= max) return // 满血不画
     const frac = Math.max(0, e.hp / max)

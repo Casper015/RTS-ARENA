@@ -1,7 +1,7 @@
-// 每 tick 的结算：技能冷却和光环 → 生产 → 战斗（同时结算）→ 死亡 → 被动（回血）→ 移动（随机先后）→ 建造 → 采集
-// 眩晕中的单位（ctx.stun，D-207）不打、不走、不建造、不采集
+// 每 tick 的结算：技能冷却和光环 → 换状态 → 生产 → 战斗（同时结算）→ 死亡 → 被动（回血）→ 移动（随机先后）→ 驻扎 → 建造 → 采集
+// 眩晕中的单位（ctx.stun，D-207）不打、不走、不建造、不采集；正在换状态的（D-266）不打、不走
 import { flowStep, UNREACHABLE } from "./nav.ts"
-import { attackable, buffedDamage, rectDist, type World } from "./world.ts"
+import { attackable, buffedDamage, hitsLayer, rectDist, type World } from "./world.ts"
 import type { EntityState, Rect } from "./types.ts"
 import type { TypeDef } from "../api/bot-api.ts"
 
@@ -23,12 +23,54 @@ export function step(w: World): void {
   w.shots = []
   w.misses = []
   if (w.hasSkills || w.hasAuras || w.ruleBuffs.size > 0 || w.buffed.size > 0) abilities(w)
+  if (w.hasModes) switching(w)
   production(w)
+  offGrid = w.hasOffGrid ? listOffGrid(w) : []
   combat(w)
   if (w.hasPassives) passives(w)
   movement(w)
+  if (w.hasGarrison) boarding(w)
   construction(w)
   gathering(w)
+}
+
+/** 这一 tick 不占格子的单位（D-266：空中、地下的；驻扎在建筑里的不算，它们不能被打），找目标时另外扫一遍 */
+let offGrid: EntityState[] = []
+
+function listOffGrid(w: World): EntityState[] {
+  const out: EntityState[] = []
+  for (const e of w.ents.values()) if (e.def.kind === "unit" && e.inside === 0 && e.def.layer !== "ground") out.push(e)
+  return out
+}
+
+// ---------- 换状态（D-266） ----------
+
+/** 切换倒计时；到了就换数值（回到地面的那一格被占着就等下一 tick） */
+function switching(w: World): void {
+  for (const e of w.ents.values()) {
+    if (e.switchTo === null) continue
+    if (e.switchLeft > 0) e.switchLeft--
+    if (e.switchLeft > 0) continue
+    if (w.applyMode(e, e.switchTo)) e.switchTo = null
+  }
+}
+
+// ---------- 驻扎（D-266） ----------
+
+/** 下了 enter 命令、走到建筑旁边的单位钻进去；建筑没了、满了就停下 */
+function boarding(w: World): void {
+  for (const e of w.ents.values()) {
+    const o = e.order
+    if (o.kind !== "enter" || e.inside) continue
+    const b = w.ents.get(o.target)
+    if (!b || b.owner !== e.owner || b.construction || !b.def.garrison) {
+      setIdle(e)
+      continue
+    }
+    if (rectDist(e, b) > 1) continue
+    if (b.cargo.length >= b.def.garrison.capacity) setIdle(e)
+    else w.board(e, b)
+  }
 }
 
 // ---------- 技能冷却、增益、光环（D-186） ----------
@@ -131,71 +173,88 @@ function production(w: World): void {
 
 // ---------- 战斗 ----------
 
-/** 敌人：属于别的队伍的玩家、能被攻击（中立的不会被自动攻击） */
-function isEnemy(w: World, e: EntityState, o: EntityState): boolean {
-  return o.owner >= 0 && !w.isAlly(e.owner, o.owner) && attackable(o)
+/** 攻击打得到这一层吗（D-266）：空中的要 hits 里有 air；地下的要先探测到（算地面） */
+export function layerOk(w: World, e: EntityState, o: EntityState): boolean {
+  const atk = e.def.attack
+  if (!atk) return false
+  if (o.def.layer === "under" && !w.detectedBy(e.owner, o)) return false
+  return hitsLayer(atk, o.def.layer)
 }
 
-/** 指定攻击的合法目标：不是自己和盟友的、能被攻击（中立的可以） */
+/** 敌人：属于别的队伍的玩家、能被攻击、打得到这一层（中立的不会被自动攻击） */
+function isEnemy(w: World, e: EntityState, o: EntityState): boolean {
+  return o.owner >= 0 && !w.isAlly(e.owner, o.owner) && attackable(o) && layerOk(w, e, o)
+}
+
+/** 指定攻击的合法目标：不是自己和盟友的、能被攻击、打得到这一层（中立的可以） */
 export function canHit(w: World, e: EntityState, o: EntityState): boolean {
-  return o.owner !== e.owner && !w.isAlly(e.owner, o.owner) && attackable(o)
+  return o.owner !== e.owner && !w.isAlly(e.owner, o.owner) && attackable(o) && layerOk(w, e, o)
 }
 
 /**
  * radius 内最好打的敌人：最近 → 血最少 → id 最小（id 是随机分配的，所以最后这条等于随机）。
  * neutral：也算中立实体（attackMove 的 neutral 选项，D-191），但有对手的东西就先打对手的
  */
-function bestEnemyWithin(w: World, e: EntityState, radius: number, neutral = false): EntityState | null {
+function bestEnemyWithin(w: World, e: EntityState, radius: number, neutral = false, from: Rect = e): EntityState | null {
   let best: EntityState | null = null
   let bestD = 0
   let side: EntityState | null = null
   let sideD = 0
+  const consider = (o: EntityState) => {
+    const foe = isEnemy(w, e, o)
+    if (!foe && !(neutral && o.owner < 0 && attackable(o) && layerOk(w, e, o))) return
+    const d = rectDist(from, o)
+    if (d > radius) return
+    if (foe) {
+      if (!best || d < bestD || (d === bestD && (o.hp < best.hp || (o.hp === best.hp && o.id < best.id)))) {
+        best = o
+        bestD = d
+      }
+    } else if (!side || d < sideD || (d === sideD && (o.hp < side.hp || (o.hp === side.hp && o.id < side.id)))) {
+      side = o
+      sideD = d
+    }
+  }
   const W = w.width
-  const y0 = Math.max(0, e.y - radius)
-  const y1 = Math.min(w.height - 1, e.y + e.h - 1 + radius)
+  const y0 = Math.max(0, from.y - radius)
+  const y1 = Math.min(w.height - 1, from.y + from.h - 1 + radius)
   for (let y = y0; y <= y1; y++) {
-    const dy = Math.max(0, e.y - y, y - (e.y + e.h - 1))
+    const dy = Math.max(0, from.y - y, y - (from.y + from.h - 1))
     const rem = radius - dy
-    const x0 = Math.max(0, e.x - rem)
-    const x1 = Math.min(W - 1, e.x + e.w - 1 + rem)
+    const x0 = Math.max(0, from.x - rem)
+    const x1 = Math.min(W - 1, from.x + from.w - 1 + rem)
     for (let x = x0; x <= x1; x++) {
       const i = y * W + x
       const id = w.unitOcc[i] || w.staticOcc[i]
       if (id === 0) continue
-      const o = w.ents.get(id)!
-      const foe = isEnemy(w, e, o)
-      if (!foe && !(neutral && o.owner < 0 && attackable(o))) continue
-      const d = rectDist(e, o)
-      if (d > radius) continue
-      if (foe) {
-        if (!best || d < bestD || (d === bestD && (o.hp < best.hp || (o.hp === best.hp && o.id < best.id)))) {
-          best = o
-          bestD = d
-        }
-      } else if (!side || d < sideD || (d === sideD && (o.hp < side.hp || (o.hp === side.hp && o.id < side.id)))) {
-        side = o
-        sideD = d
-      }
+      // 大型单位、建筑占好几格：同一个实体会扫到好几次，结果一样
+      consider(w.ents.get(id)!)
     }
   }
+  // 空中、地下的单位不占格子（D-266）
+  for (const o of offGrid) if (o.alive) consider(o)
   return best ?? side
 }
 
 function attackTarget(w: World, e: EntityState): EntityState | null {
-  const range = e.def.attack!.range
+  // 驻扎在建筑里的（D-266）：从建筑的占地开火，射程加 rangeBonus
+  const b = e.inside ? w.ents.get(e.inside) : undefined
+  if (e.inside && !b) return null
+  const from: Rect = b ?? e
+  const range = e.def.attack!.range + (b?.def.garrison?.rangeBonus ?? 0)
   const o = e.order
   switch (o.kind) {
     case "attack": {
       const t = w.ents.get(o.target)
       // 目标没了、看不见了，或者自己不能动而目标出了射程：命令结束，这一 tick 照常自动攻击
-      if (!t || !canHit(w, e, t) || !w.visibleTo(e.owner, t) || (e.def.moveTicks <= 0 && rectDist(e, t) > range)) {
+      if (!t || !canHit(w, e, t) || !w.visibleTo(e.owner, t) || ((e.def.moveTicks <= 0 || b) && rectDist(from, t) > range)) {
         setIdle(e)
-        return bestEnemyWithin(w, e, range)
+        return bestEnemyWithin(w, e, range, false, from)
       }
-      return rectDist(e, t) <= range ? t : null
+      return rectDist(from, t) <= range ? t : null
     }
     case "idle":
-      return bestEnemyWithin(w, e, range)
+      return bestEnemyWithin(w, e, range, false, from)
     case "attackMove":
       return bestEnemyWithin(w, e, range, o.neutral === true)
     default:
@@ -215,7 +274,7 @@ function combat(w: World): void {
     const atk = e.def.attack
     if (!atk || e.construction) continue
     if (e.attackCd > 0) e.attackCd--
-    if (e.attackCd > 0 || e.stunUntil > w.tick) continue
+    if (e.attackCd > 0 || e.stunUntil > w.tick || e.switchTo !== null) continue
     const t = attackTarget(w, e)
     if (!t) continue
     hits.push(e, t)
@@ -223,6 +282,8 @@ function combat(w: World): void {
   }
   // 先全部算完再扣血：同一 tick 互相攻击的双方都能打出伤害
   const splashed: EntityState[] = []
+  /** 打一下就没了的（D-266，地雷这类） */
+  const spent: EntityState[] = []
   for (let i = 0; i < hits.length; i += 2) {
     const a = hits[i]
     let t = hits[i + 1]
@@ -245,7 +306,9 @@ function combat(w: World): void {
     w.shots.push(a.id, t.id)
     if (t.owner >= 0) w.pushEvent(t.owner, { kind: "damaged", tick: w.tick, id: t.id, by: a.id, byOwner: a.owner, byType: a.type, damage: dmg })
     if (a.def.attack!.splash && t === hits[i + 1]) splash(w, a, t, a.def.attack!.splash, splashed)
+    if (a.def.attack!.suicide) spent.push(a)
   }
+  for (const a of spent) w.destroy(a, -1)
   for (let i = 1; i < hits.length; i += 2) {
     const t = hits[i]
     if (t.alive && t.hp <= 0) w.destroy(t, t.lastHitBy, false, t.lastHitNeutral)
@@ -268,7 +331,7 @@ function scatter(w: World, a: EntityState, t: EntityState): EntityState | null {
   if (ring.length === 0) return null
   const [x, y] = ring[w.simRng.int(ring.length)]
   w.misses.push(a.id, x, y)
-  for (const o of w.entitiesIn(x, y, 1, 1)) if (o.alive && o !== a && canHit(w, a, o) && !(o.owner < 0 && t.owner >= 0)) return o
+  for (const o of w.entitiesIn(x, y, 1, 1)) if (o.alive && o !== a && o.inside === 0 && canHit(w, a, o) && !(o.owner < 0 && t.owner >= 0)) return o
   return null
 }
 
@@ -306,15 +369,19 @@ interface Goal {
   field?: () => Int32Array
   /** 追会动的目标 */
   chase?: { target: EntityState; range: number }
+  /** 要走到离 rect 不超过 range 的地方（空中、大型单位直接用它，D-266） */
+  rect: Rect
+  range: number
 }
 
 function tileGoal(w: World, x: number, y: number, key = `t${x},${y}`): Goal {
-  return { key, giveUp: true, field: () => w.flow.toTile(x, y) }
+  return { key, giveUp: true, field: () => w.flow.toTile(x, y), rect: { x, y, w: 1, h: 1 }, range: 0 }
 }
 
 function nearGoal(w: World, t: EntityState, range: number): Goal {
-  if (t.def.kind === "unit") return { key: `c${t.id}r${range}`, giveUp: false, chase: { target: t, range } }
-  return { key: `r${t.id}r${range}`, giveUp: false, field: () => w.flow.toRect(t.id, t, range) }
+  const rect = { x: t.x, y: t.y, w: t.w, h: t.h }
+  if (t.def.kind === "unit") return { key: `c${t.id}r${range}`, giveUp: false, chase: { target: t, range }, rect, range }
+  return { key: `r${t.id}r${range}`, giveUp: false, field: () => w.flow.toRect(t.id, t, range), rect, range }
 }
 
 function nearestDropOff(w: World, e: EntityState): EntityState | null {
@@ -384,6 +451,14 @@ function moveGoal(w: World, e: EntityState): Goal | null {
       }
       return rectDist(e, site) <= 1 ? null : nearGoal(w, site, 1)
     }
+    case "enter": {
+      const b = w.ents.get(o.target)
+      if (!b || b.owner !== e.owner) {
+        setIdle(e)
+        return null
+      }
+      return rectDist(e, b) <= 1 ? null : nearGoal(w, b, 1)
+    }
   }
 }
 
@@ -405,7 +480,7 @@ function doMove(w: World, e: EntityState, to: number): StepResult {
 function trySwap(w: World, e: EntityState, ni: number): boolean {
   if (ni < 0) return false
   const o = w.ents.get(w.unitOcc[ni])
-  if (!o || o.owner !== e.owner || o.def.moveTicks <= 0) return false
+  if (!o || o.owner !== e.owner || o.def.moveTicks <= 0 || o.w > 1 || o.h > 1 || o.switchTo !== null) return false
   const here = e.y * w.width + e.x
   const idle = o.order.kind === "idle"
   if (!idle && o.want !== here) return false
@@ -534,15 +609,78 @@ function stepByChase(w: World, e: EntityState, goal: Goal): StepResult {
   return doMove(w, e, next)
 }
 
+/** 到了目标附近（空中、大型单位用）：move、attackMove 的终点算走到了，命令结束 */
+function arrived(e: EntityState, goal: Goal): StepResult {
+  if (goal.giveUp) setIdle(e)
+  return "done"
+}
+
+/** 空中单位（D-266）：不看地形和别的单位，每步往离目标更近的方向走一格，一样近随机挑 */
+function stepAir(w: World, e: EntityState, goal: Goal): StepResult {
+  const d = rectDist(e, goal.rect)
+  if (d <= goal.range) return arrived(e, goal)
+  let n = 0
+  for (const [dx, dy] of DIRS) {
+    const nx = e.x + dx
+    const ny = e.y + dy
+    if (nx < 0 || ny < 0 || nx + e.w > w.width || ny + e.h > w.height) continue
+    if (rectDist({ x: nx, y: ny, w: e.w, h: e.h }, goal.rect) < d) pick[n++] = ny * w.width + nx
+  }
+  if (n === 0) return arrived(e, goal)
+  return doMove(w, e, n === 1 ? pick[0] : pick[w.simRng.int(n)])
+}
+
+/** 大型地面单位（D-266）：按占地算的流场走一步（整块都要站得下）；被别的单位挡住就等，不换位、不绕行 */
+function stepBig(w: World, e: EntityState, goal: Goal): StepResult {
+  const r = goal.rect
+  const key = goal.chase ? `c${r.x},${r.y},${r.w},${r.h}r${goal.range}` : goal.key
+  const field = w.flow.toRectSized(key, r, goal.range, e.w, e.h)
+  const here = e.y * w.width + e.x
+  const cur = field[here]
+  if (cur === UNREACHABLE) return "unreachable"
+  if (cur === 0 || rectDist(e, r) <= goal.range) return arrived(e, goal)
+  let best = Number.MAX_SAFE_INTEGER
+  let n = 0
+  let closer = false
+  for (const [dx, dy] of DIRS) {
+    const nx = e.x + dx
+    const ny = e.y + dy
+    if (nx < 0 || ny < 0 || nx + e.w > w.width || ny + e.h > w.height) continue
+    const ni = ny * w.width + nx
+    const nd = field[ni]
+    if (nd === UNREACHABLE || nd >= cur) continue
+    closer = true
+    if (!w.footFree(e, nx, ny)) continue
+    if (nd < best) {
+      best = nd
+      n = 0
+    }
+    if (nd === best) pick[n++] = ni
+  }
+  if (n > 0) return doMove(w, e, n === 1 ? pick[0] : pick[w.simRng.int(n)])
+  if (!closer) return arrived(e, goal)
+  return "blocked"
+}
+
+const DIRS: [number, number][] = [
+  [0, -1],
+  [1, 0],
+  [0, 1],
+  [-1, 0],
+]
+const pick = new Int32Array(4)
+
 function stepToward(w: World, e: EntityState): StepResult {
   const goal = moveGoal(w, e)
   if (!goal) return "done"
-  const r = goal.field ? stepByField(w, e, goal.field(), goal.key, goal.giveUp) : stepByChase(w, e, goal)
+  if (e.def.layer === "air") return stepAir(w, e, goal)
+  const big = e.w > 1 || e.h > 1
+  const r = big ? stepBig(w, e, goal) : goal.field ? stepByField(w, e, goal.field(), goal.key, goal.giveUp) : stepByChase(w, e, goal)
   if (r !== "unreachable") return r
   const o = e.order
   // attackMove 被看得见却到不了的敌人（比如隔着水）引过去：不管它，继续去终点
   if (o.kind === "attackMove" && goal.key !== `a${o.x},${o.y}`) {
-    const r2 = stepByField(w, e, w.flow.toTile(o.x, o.y), `a${o.x},${o.y}`, true)
+    const r2 = big ? stepBig(w, e, tileGoal(w, o.x, o.y, `a${o.x},${o.y}`)) : stepByField(w, e, w.flow.toTile(o.x, o.y), `a${o.x},${o.y}`, true)
     if (r2 !== "unreachable") return r2
   }
   setIdle(e) // 从这里到不了
@@ -554,7 +692,7 @@ function movement(w: World): void {
   for (const e of w.ents.values()) {
     if (e.def.moveTicks <= 0) continue
     if (e.moveCd > 0) e.moveCd--
-    if (e.moveCd > 0 || e.order.kind === "idle" || e.stunUntil > w.tick) continue
+    if (e.moveCd > 0 || e.order.kind === "idle" || e.stunUntil > w.tick || e.inside || e.switchTo !== null) continue
     movers.push(e)
   }
   w.simRng.shuffle(movers)

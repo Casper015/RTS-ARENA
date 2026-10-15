@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-0.5 -0.5 1 1">
+  <!-- 防空塔：底座、导弹巢、雷达；currentColor 是所属玩家的颜色 -->
+  <rect x="-0.38" y="0.12" width="0.76" height="0.3" rx="0.05" fill="#6f7a7a" stroke="#182123" stroke-width="0.03"/>
+  <rect x="-0.08" y="-0.08" width="0.16" height="0.22" fill="#4a5354" stroke="#182123" stroke-width="0.02"/>
+  <rect x="-0.3" y="-0.3" width="0.6" height="0.24" rx="0.05" fill="currentColor" stroke="#182123" stroke-width="0.03"/>
+  <circle cx="-0.2" cy="-0.18" r="0.045" fill="#e8e2d0" stroke="#182123" stroke-width="0.015"/>
+  <circle cx="-0.06" cy="-0.18" r="0.045" fill="#e8e2d0" stroke="#182123" stroke-width="0.015"/>
+  <circle cx="0.08" cy="-0.18" r="0.045" fill="#e8e2d0" stroke="#182123" stroke-width="0.015"/>
+  <circle cx="0.22" cy="-0.18" r="0.045" fill="#e8e2d0" stroke="#182123" stroke-width="0.015"/>
+  <path d="M0.3 -0.3 L0.42 -0.46" stroke="#2d3536" stroke-width="0.03"/>
+  <path d="M0.32 -0.48 Q0.46 -0.5 0.5 -0.36" stroke="#b9c3c0" stroke-width="0.04" fill="none"/>
+</svg>
